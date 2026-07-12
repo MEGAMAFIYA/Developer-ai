@@ -1,7 +1,7 @@
-"""Combine all bot routers into one."""
+"""Combine all handlers into one aiogram router."""
 
 from aiogram import Router
-from bot.handlers import start, admin, games
+from handlers import start, admin, games
 
 main_router = Router()
 main_router.include_router(start.router)

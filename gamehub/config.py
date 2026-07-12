@@ -19,11 +19,9 @@ class Config:
 
     SECRET_KEY: str = os.getenv("SECRET_KEY", "")
 
-    # Public URL for WebApp — prefer WEBAPP_URL from .env, fall back to Replit domain
-    WEBAPP_URL: str = os.getenv(
-        "WEBAPP_URL",
-        f"https://{os.getenv('REPLIT_DEV_DOMAIN', 'localhost:8000')}",
-    )
+    # Public URL for WebApp — prefer WEBAPP_URL from .env if non-empty, else Replit domain
+    WEBAPP_URL: str = os.getenv("WEBAPP_URL", "").strip() or \
+        f"https://{os.getenv('REPLIT_DEV_DOMAIN', 'localhost:8000')}"
 
     HOST: str = "0.0.0.0"
     PORT: int = int(os.getenv("PORT", "8000"))

@@ -1,4 +1,4 @@
-"""Game PostgreSQL database — stores player scores."""
+"""Game PostgreSQL database — player scores."""
 
 import asyncpg
 from config import config
@@ -55,7 +55,6 @@ async def get_top_scores(game_name: str, limit: int = 10) -> list[dict]:
         """,
         game_name,
     )
-    # Sort by score desc after dedup and take top N
     top = sorted(rows, key=lambda r: r["score"], reverse=True)[:limit]
     return [dict(r) for r in top]
 

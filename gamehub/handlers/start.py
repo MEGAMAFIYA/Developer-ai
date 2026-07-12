@@ -12,8 +12,8 @@ async def cmd_start(message: Message) -> None:
         f"👋 Salom, <b>{name}</b>!\n\n"
         "🎮 <b>Mini O'yinlar Botiga xush kelibsiz!</b>\n\n"
         "📋 Mavjud buyruqlar:\n"
-        "  /oyinlar — barcha o'yinlar ro'yxati\n"
-        "  /oyinlar &lt;nom&gt; — o'yinni boshlash\n\n"
+        "  /oyinlar — barcha o'yinlar\n"
+        "  /oyinlar &lt;slug&gt; — bitta o'yin kartochkasi\n\n"
         "🕹 O'ynashni boshlang!",
         parse_mode="HTML",
     )

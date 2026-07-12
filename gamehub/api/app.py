@@ -1,20 +1,14 @@
-"""FastAPI application — serves WebApp HTML files and REST API."""
+"""FastAPI application — serves WebApp static files and REST API."""
 
-import os
 from pathlib import Path
 
 from fastapi import FastAPI
-from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
 from api.routes import scores as scores_router
 
-# ---------------------------------------------------------------------------
-# App
-# ---------------------------------------------------------------------------
-
-app = FastAPI(title="Mini O'yinlar", version="1.0.0", docs_url=None, redoc_url=None)
+app = FastAPI(title="Mini O'yinlar", version="2.0.0", docs_url=None, redoc_url=None)
 
 app.add_middleware(
     CORSMiddleware,
@@ -24,14 +18,16 @@ app.add_middleware(
 )
 
 # ---------------------------------------------------------------------------
-# Static: serve game HTML files
+# Static files
 # ---------------------------------------------------------------------------
 
 WEBAPP_DIR = Path(__file__).parent.parent / "webapp"
 
+# Ensure assets directory exists before mounting
+(WEBAPP_DIR / "assets" / "games").mkdir(parents=True, exist_ok=True)
+
 if WEBAPP_DIR.exists():
     app.mount("/webapp", StaticFiles(directory=str(WEBAPP_DIR), html=True), name="webapp")
-
 
 # ---------------------------------------------------------------------------
 # API routes

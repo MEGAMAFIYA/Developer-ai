@@ -1,4 +1,4 @@
-"""Entry point — runs aiogram bot (polling) + FastAPI (uvicorn) together."""
+"""Entry point — runs aiogram bot (polling) + FastAPI (uvicorn) concurrently."""
 
 import asyncio
 import logging
@@ -11,7 +11,7 @@ from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
 
 from config import config
-from db import init_databases, close_global_pool, close_game_pool
+from database import init_databases, close_global_pool, close_game_pool
 from bot.router import main_router
 from api.app import app as fastapi_app
 
@@ -46,7 +46,7 @@ async def start_server() -> None:
         log_level="info",
     )
     server = uvicorn.Server(server_config)
-    logger.info("Starting FastAPI server on %s:%s...", config.HOST, config.PORT)
+    logger.info("Starting FastAPI on %s:%s...", config.HOST, config.PORT)
     await server.serve()
 
 
@@ -55,17 +55,14 @@ async def main() -> None:
     await init_databases()
     logger.info("Databases ready.")
 
-    await asyncio.gather(
-        start_bot(),
-        start_server(),
-    )
+    await asyncio.gather(start_bot(), start_server())
 
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
-        logger.info("Shutting down...")
+        logger.info("Shutting down.")
     finally:
         asyncio.run(close_global_pool())
         asyncio.run(close_game_pool())
