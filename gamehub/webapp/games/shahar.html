@@ -1,0 +1,969 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Samolyot Jangi</title>
+<style>
+  /* ================= NEGIZ / RESET ================= */
+  * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; user-select:none; }
+  html,body { width:100%; height:100%; overflow:hidden; background:#04050c; }
+  body {
+    font-family:'Segoe UI', system-ui, -apple-system, sans-serif;
+    color:#eaf6ff;
+    background:
+      radial-gradient(circle at 15% 15%, rgba(0,255,231,0.07), transparent 40%),
+      radial-gradient(circle at 85% 75%, rgba(255,0,150,0.08), transparent 45%),
+      #04050c;
+    height:100vh; position:relative;
+  }
+  #app { width:100%; height:100%; position:relative; }
+
+  /* ================= EKRANLAR ================= */
+  .screen {
+    position:absolute; inset:0; display:none; flex-direction:column;
+    align-items:center; justify-content:flex-start;
+    overflow-y:auto; overflow-x:hidden;
+    padding:24px 16px 40px;
+  }
+  .screen.active { display:flex; }
+
+  .neon-title {
+    font-size:clamp(26px,7vw,50px); font-weight:800; letter-spacing:3px;
+    text-transform:uppercase; text-align:center; color:#baf8ff;
+    text-shadow:0 0 6px #23f3ff, 0 0 18px #23f3ff, 0 0 40px #ff2ee6, 0 0 2px #fff;
+    animation:flicker 3.6s infinite ease-in-out; margin-bottom:6px;
+  }
+  .sub-title { color:#8fb6c9; letter-spacing:2px; font-size:13px; margin-bottom:26px; text-transform:uppercase; }
+  @keyframes flicker { 0%,19%,21%,23%,54%,56%,100%{opacity:1;} 20%,22%,55%{opacity:.82;} }
+
+  .menu-list { display:flex; flex-direction:column; gap:16px; width:100%; max-width:360px; }
+  .neon-btn {
+    position:relative; background:linear-gradient(160deg, rgba(15,20,40,.9), rgba(10,12,26,.9));
+    border:1px solid rgba(35,243,255,.55); color:#d9fbff; padding:16px 20px; font-size:16px;
+    letter-spacing:1.5px; border-radius:10px; cursor:pointer; text-transform:uppercase; font-weight:600;
+    box-shadow:0 0 10px rgba(35,243,255,.25), inset 0 0 12px rgba(35,243,255,.06);
+    transition:transform .15s ease, box-shadow .15s ease, border-color .15s ease;
+  }
+  .neon-btn:active { transform:scale(.96); }
+  .neon-btn:hover { border-color:#ff2ee6; box-shadow:0 0 18px rgba(255,46,230,.45), inset 0 0 14px rgba(255,46,230,.08); }
+  .neon-btn.pink { border-color:rgba(255,46,230,.6); box-shadow:0 0 10px rgba(255,46,230,.25); }
+  .neon-btn.small { padding:10px 14px; font-size:13px; }
+
+  .back-btn {
+    position:absolute; top:14px; left:14px; width:44px; height:44px; border-radius:50%;
+    background:rgba(15,18,34,.85); border:1px solid rgba(35,243,255,.5); color:#baf8ff; font-size:20px;
+    display:flex; align-items:center; justify-content:center; cursor:pointer;
+    box-shadow:0 0 10px rgba(35,243,255,.3); z-index:20;
+  }
+
+  .panel {
+    background:rgba(10,13,26,.75); border:1px solid rgba(35,243,255,.3); border-radius:14px;
+    padding:20px; width:100%; max-width:520px; box-shadow:0 0 24px rgba(0,0,0,.5); backdrop-filter:blur(6px);
+  }
+  .panel h3 { color:#ff6ee8; letter-spacing:1px; margin-bottom:10px; text-shadow:0 0 8px rgba(255,110,232,.6); }
+  .panel p, .panel li { color:#c9e6f2; line-height:1.65; font-size:14.5px; margin-bottom:8px; }
+  .panel ul { padding-left:20px; margin-bottom:14px; }
+  .kbd { display:inline-block; background:#0f1526; border:1px solid #2af; border-radius:5px; padding:1px 8px; margin:0 2px; font-size:12.5px; color:#9df; }
+
+  /* ================= ENG YAXSHI NATIJA ================= */
+  .stat-box { text-align:center; margin-top:14px; }
+  .stat-big { font-size:44px; font-weight:800; color:#23f3ff; text-shadow:0 0 14px #23f3ff; margin:8px 0; }
+
+  /* ================= SOZLAMALAR ================= */
+  .switch-row { display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; }
+  .switch { position:relative; width:50px; height:26px; }
+  .switch input { opacity:0; width:0; height:0; }
+  .slider-tg { position:absolute; inset:0; background:#233; border-radius:20px; cursor:pointer; transition:.2s; border:1px solid rgba(35,243,255,.3); }
+  .slider-tg:before { content:""; position:absolute; width:18px; height:18px; left:3px; top:3px; background:#9df; border-radius:50%; transition:.2s; }
+  input:checked + .slider-tg { background:#0d3b45; }
+  input:checked + .slider-tg:before { transform:translateX(24px); background:#23f3ff; box-shadow:0 0 8px #23f3ff; }
+
+  /* ================= O'YIN EKRANI ================= */
+  #screen-game { padding:0; }
+  #gameCanvas { display:block; width:100%; height:100%; background:#03040a; touch-action:none; }
+
+  #hud {
+    position:absolute; top:0; left:0; right:0; z-index:15; display:flex; justify-content:space-between;
+    align-items:flex-start; padding:10px 14px; gap:8px; background:linear-gradient(#04050fcc, transparent);
+    font-size:13px; letter-spacing:.5px; pointer-events:none;
+  }
+  #hudLeft, #hudRight { display:flex; flex-direction:column; gap:6px; pointer-events:none; }
+  .hud-item {
+    background:rgba(8,10,20,.7); border:1px solid rgba(35,243,255,.35); border-radius:8px; padding:6px 10px;
+    display:flex; align-items:center; gap:6px; box-shadow:0 0 8px rgba(35,243,255,.15); white-space:nowrap;
+  }
+  #livesBox { display:flex; gap:4px; }
+  .heart { color:#ff2e5e; text-shadow:0 0 6px #ff2e5e; font-size:16px; }
+  .heart.empty { color:#3a1420; text-shadow:none; }
+
+  #pauseBtn {
+    width:38px; height:38px; border-radius:50%; background:rgba(8,10,20,.8); border:1px solid rgba(255,46,230,.5);
+    color:#ffb6f2; font-size:16px; display:flex; align-items:center; justify-content:center; cursor:pointer;
+    box-shadow:0 0 10px rgba(255,46,230,.3); pointer-events:all;
+  }
+
+  #bossBar {
+    position:absolute; top:8px; left:50%; transform:translateX(-50%); width:min(70vw,420px); z-index:16;
+    display:none; flex-direction:column; align-items:center; gap:2px; pointer-events:none;
+  }
+  #bossBar.show { display:flex; }
+  #bossLabel { font-size:12px; color:#ff8c9a; letter-spacing:2px; text-shadow:0 0 8px #ff2e5e; text-transform:uppercase; }
+  #bossHpOuter { width:100%; height:12px; border-radius:8px; border:1px solid rgba(255,46,94,.7); background:rgba(20,4,10,.7); overflow:hidden; box-shadow:0 0 10px rgba(255,46,94,.4); }
+  #bossHpInner { height:100%; width:100%; background:linear-gradient(90deg,#ff2e5e,#ff7a3d); transition:width .15s ease; }
+
+  /* ================= BOSHQARUV (MOBIL) ================= */
+  #joystick {
+    position:absolute; bottom:26px; left:26px; width:120px; height:120px; border-radius:50%;
+    border:2px solid rgba(35,243,255,.4); background:radial-gradient(circle, rgba(20,25,45,.55), rgba(8,10,20,.35));
+    display:none; z-index:16; touch-action:none; box-shadow:0 0 16px rgba(35,243,255,.25);
+  }
+  #joystick.show { display:block; }
+  #joystickStick {
+    position:absolute; width:50px; height:50px; border-radius:50%; left:35px; top:35px;
+    background:radial-gradient(circle at 35% 35%, #6ff9ff, #0e8fa8); box-shadow:0 0 14px #23f3ff;
+  }
+  #fireBtn {
+    position:absolute; bottom:40px; right:30px; width:88px; height:88px; border-radius:50%;
+    background:radial-gradient(circle at 35% 30%, #ff9ad6, #a800c9); border:2px solid rgba(255,46,230,.7);
+    display:none; z-index:16; align-items:center; justify-content:center; font-size:14px; font-weight:800;
+    color:#fff; letter-spacing:1px; text-transform:uppercase; box-shadow:0 0 20px rgba(255,46,230,.5); touch-action:none;
+  }
+  #fireBtn.show { display:flex; }
+  #fireBtn:active { transform:scale(.92); }
+
+  /* ================= OVERLAY / MODALLAR ================= */
+  .overlay { position:absolute; inset:0; z-index:40; display:flex; align-items:center; justify-content:center; background:rgba(2,3,8,.82); backdrop-filter:blur(3px); }
+  .overlay.hidden { display:none; }
+  .modal {
+    background:linear-gradient(160deg, rgba(14,17,32,.98), rgba(8,10,20,.98)); border:1px solid rgba(35,243,255,.5);
+    border-radius:16px; padding:28px 24px; width:90%; max-width:380px; text-align:center; box-shadow:0 0 30px rgba(35,243,255,.35);
+  }
+  .modal h2 { color:#baf8ff; text-shadow:0 0 10px #23f3ff; margin-bottom:14px; letter-spacing:1px; }
+  .modal .stat-row { display:flex; justify-content:space-between; padding:6px 4px; font-size:14px; color:#cfeeff; border-bottom:1px dashed rgba(255,255,255,.08); }
+  .modal .btn-col { display:flex; flex-direction:column; gap:10px; margin-top:18px; }
+
+  #toast {
+    position:absolute; top:70px; left:50%; transform:translateX(-50%); background:rgba(10,14,28,.9);
+    border:1px solid rgba(255,215,64,.6); color:#ffe9a8; padding:8px 16px; border-radius:8px; font-size:13px;
+    box-shadow:0 0 12px rgba(255,215,64,.4); z-index:30; opacity:0; pointer-events:none; transition:opacity .3s ease, transform .3s ease;
+  }
+  #toast.show { opacity:1; transform:translateX(-50%) translateY(6px); }
+
+  ::-webkit-scrollbar { width:6px; }
+  ::-webkit-scrollbar-thumb { background:rgba(35,243,255,.3); border-radius:4px; }
+
+  @media (max-width:600px) {
+    #joystick { width:100px; height:100px; bottom:16px; left:16px; }
+    #joystickStick { width:42px; height:42px; left:29px; top:29px; }
+    #fireBtn { width:76px; height:76px; bottom:24px; right:20px; font-size:12px; }
+  }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- ============ BOSH MENYU ============ -->
+  <div class="screen active" id="screen-menu">
+    <div style="margin-top:8vh;"></div>
+    <div class="neon-title">Samolyot<br>Jangi</div>
+    <div class="sub-title">Osmon jangi &bull; cheksiz to'lqinlar</div>
+    <div class="menu-list">
+      <button class="neon-btn" id="btnStart">O'yinni boshlash</button>
+      <button class="neon-btn" id="btnBest">Eng yaxshi natija</button>
+      <button class="neon-btn pink" id="btnHowTo">Qanday o'ynaladi</button>
+      <button class="neon-btn pink" id="btnSettings">Sozlamalar</button>
+    </div>
+  </div>
+
+  <!-- ============ ENG YAXSHI NATIJA ============ -->
+  <div class="screen" id="screen-best">
+    <div class="back-btn" data-back>&#8592;</div>
+    <div class="neon-title" style="font-size:26px; margin-top:10px;">Eng yaxshi natija</div>
+    <div class="panel stat-box">
+      <p style="font-size:15px;">Eng yuqori ochko</p>
+      <div class="stat-big" id="bestScoreVal">0</div>
+      <p style="font-size:15px;">Yengilgan bosslar soni</p>
+      <div class="stat-big" style="color:#ff6ee8; text-shadow:0 0 14px #ff6ee8;" id="bestBossVal">0</div>
+    </div>
+  </div>
+
+  <!-- ============ QANDAY O'YNALADI ============ -->
+  <div class="screen" id="screen-howto">
+    <div class="back-btn" data-back>&#8592;</div>
+    <div class="neon-title" style="font-size:26px; margin-top:10px;">Qanday o'ynaladi</div>
+    <div class="panel" style="margin-top:14px;">
+      <h3>Boshqaruv</h3>
+      <p>Kompyuterda <span class="kbd">W</span><span class="kbd">A</span><span class="kbd">S</span><span class="kbd">D</span> yoki strelka tugmalari bilan harakatlaning, <span class="kbd">Bo'shliq</span> tugmasi bilan o'q uzing. Telefonda chap pastdagi joystik bilan harakatlaning va o'ng pastdagi "O'T OCH" tugmasini bosib turing.</p>
+      <h3>Maqsad</h3>
+      <ul>
+        <li>Dushman samolyotlarini urib tushiring va ochko to'plang.</li>
+        <li>Har <b>500 ochkoda</b> kuchli <b>mini-boss</b> paydo bo'ladi — uni yenging!</li>
+        <li>Sizda <b>3 ta jon</b> bor. Dushman yoki uning o'qi tegsa, jon kamayadi.</li>
+      </ul>
+      <h3>Bonuslar</h3>
+      <ul>
+        <li><b>&#9889; Sariq chaqmoq</b> — tez o'q uzish.</li>
+        <li><b>&#128737; Ko'k qalqon</b> — vaqtinchalik himoya.</li>
+        <li><b>&#10084; Qizil yurak</b> — qo'shimcha jon.</li>
+      </ul>
+      <h3>Qiyinchilik</h3>
+      <p>O'yin davomida dushmanlar tezroq va ko'proq paydo bo'la boshlaydi — ehtiyot bo'ling!</p>
+    </div>
+  </div>
+
+  <!-- ============ SOZLAMALAR ============ -->
+  <div class="screen" id="screen-settings">
+    <div class="back-btn" data-back>&#8592;</div>
+    <div class="neon-title" style="font-size:26px; margin-top:10px;">Sozlamalar</div>
+    <div class="panel" style="margin-top:14px;">
+      <div class="switch-row">
+        <span>Ovoz effektlari</span>
+        <label class="switch"><input type="checkbox" id="soundToggle" checked><span class="slider-tg"></span></label>
+      </div>
+      <div class="switch-row">
+        <span>Boshqaruvni doim ko'rsatish</span>
+        <label class="switch"><input type="checkbox" id="controlsToggle"><span class="slider-tg"></span></label>
+      </div>
+      <button class="neon-btn pink small" id="btnResetProgress" style="width:100%; margin-top:10px;">Eng yaxshi natijani tozalash</button>
+    </div>
+  </div>
+
+  <!-- ============ O'YIN EKRANI ============ -->
+  <div class="screen" id="screen-game">
+    <div id="hud">
+      <div id="hudLeft">
+        <div class="hud-item">&#11088; <span id="hudScore">0</span></div>
+        <div class="hud-item" id="livesBox"></div>
+      </div>
+      <div id="hudRight">
+        <div id="pauseBtn">&#10073;&#10073;</div>
+      </div>
+    </div>
+    <div id="bossBar">
+      <div id="bossLabel">BOSS</div>
+      <div id="bossHpOuter"><div id="bossHpInner"></div></div>
+    </div>
+    <canvas id="gameCanvas"></canvas>
+    <div id="joystick"><div id="joystickStick"></div></div>
+    <div id="fireBtn">O'T OCH</div>
+    <div id="toast"></div>
+  </div>
+
+  <!-- ============ PAUZA OVERLAY ============ -->
+  <div class="overlay hidden" id="overlay-pause">
+    <div class="modal">
+      <h2>Pauza</h2>
+      <div class="btn-col">
+        <button class="neon-btn" id="btnResume">Davom ettirish</button>
+        <button class="neon-btn" id="btnRestartFromPause">Qayta boshlash</button>
+        <button class="neon-btn pink" id="btnMenuFromPause">Bosh menyu</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ O'YIN TUGADI OVERLAY ============ -->
+  <div class="overlay hidden" id="overlay-gameover">
+    <div class="modal">
+      <h2 style="color:#ff5577; text-shadow:0 0 10px #ff2e5e;">O'yin tugadi!</h2>
+      <div class="stat-row"><span>Ochko</span><span id="goScore">0</span></div>
+      <div class="stat-row"><span>Eng yaxshi natija</span><span id="goBest">0</span></div>
+      <div class="stat-row"><span>Yengilgan bosslar</span><span id="goBoss">0</span></div>
+      <div class="btn-col">
+        <button class="neon-btn" id="btnRetryGO">Qayta boshlash</button>
+        <button class="neon-btn pink" id="btnMenuFromGO">Bosh menyu</button>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+"use strict";
+/* =========================================================================
+   SAMOLYOT JANGI — bitta HTML faylda ishlaydigan to'liq otishma o'yini
+   ========================================================================= */
+
+/* --------------------------- YORDAMCHI FUNKSIYALAR --------------------------- */
+function clamp(v, min, max) { return v < min ? min : (v > max ? max : v); }
+function randInt(min, max) { return Math.floor(Math.random() * (max - min + 1)) + min; }
+function randRange(min, max) { return Math.random() * (max - min) + min; }
+function dist(x1, y1, x2, y2) { return Math.hypot(x1 - x2, y1 - y2); }
+
+/* --------------------------- SAQLASH --------------------------- */
+const STORAGE_KEYS = { best: "sj_best_v1", settings: "sj_settings_v1" };
+function loadJSON(key, fallback) {
+  try { const raw = localStorage.getItem(key); return raw ? JSON.parse(raw) : fallback; }
+  catch (e) { return fallback; }
+}
+function saveJSON(key, val) {
+  try { localStorage.setItem(key, JSON.stringify(val)); } catch (e) { /* saqlanmadi */ }
+}
+let bestData = loadJSON(STORAGE_KEYS.best, { score: 0, bosses: 0 });
+let settings = loadJSON(STORAGE_KEYS.settings, { sound: true, controlsAlways: false });
+
+/* --------------------------- OVOZ (Web Audio API) --------------------------- */
+let audioCtx = null;
+function ensureAudio() {
+  if (!audioCtx) { const AC = window.AudioContext || window.webkitAudioContext; if (AC) audioCtx = new AC(); }
+  if (audioCtx && audioCtx.state === "suspended") audioCtx.resume();
+}
+function beep(freq, dur, type, vol, delay) {
+  if (!settings.sound) return;
+  ensureAudio(); if (!audioCtx) return;
+  const t0 = audioCtx.currentTime + (delay || 0);
+  const osc = audioCtx.createOscillator(); const gain = audioCtx.createGain();
+  osc.type = type || "sine";
+  osc.frequency.setValueAtTime(freq, t0);
+  gain.gain.setValueAtTime(vol || 0.15, t0);
+  gain.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+  osc.connect(gain); gain.connect(audioCtx.destination);
+  osc.start(t0); osc.stop(t0 + dur + 0.02);
+}
+function noiseBurst(dur, vol) {
+  if (!settings.sound) return;
+  ensureAudio(); if (!audioCtx) return;
+  const bufferSize = audioCtx.sampleRate * dur;
+  const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+  const data = buffer.getChannelData(0);
+  for (let i = 0; i < bufferSize; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / bufferSize);
+  const src = audioCtx.createBufferSource(); src.buffer = buffer;
+  const gain = audioCtx.createGain(); gain.gain.setValueAtTime(vol || 0.2, audioCtx.currentTime);
+  src.connect(gain); gain.connect(audioCtx.destination); src.start();
+}
+const Sound = {
+  click: () => beep(520, 0.07, "square", 0.12),
+  shoot: () => beep(880, 0.06, "square", 0.07),
+  enemyShoot: () => beep(320, 0.07, "sawtooth", 0.06),
+  explosion: () => { noiseBurst(0.28, 0.22); beep(120, 0.2, "sawtooth", 0.1); },
+  hit: () => beep(180, 0.18, "sawtooth", 0.18),
+  powerup: () => { beep(660, 0.08, "sine", 0.16); beep(990, 0.1, "sine", 0.14, 0.06); },
+  bossAlert: () => { beep(200, 0.3, "sawtooth", 0.18); beep(150, 0.35, "sawtooth", 0.16, 0.28); },
+  bossDown: () => { beep(523, 0.14, "triangle", 0.18); beep(659, 0.14, "triangle", 0.18, 0.14); beep(784, 0.24, "triangle", 0.2, 0.28); },
+  gameOver: () => { beep(300, 0.3, "sawtooth", 0.16); beep(180, 0.4, "sawtooth", 0.16, 0.22); }
+};
+
+/* --------------------------- EKRAN BOSHQARUVI --------------------------- */
+const screens = document.querySelectorAll(".screen");
+function showScreen(id) { screens.forEach(s => s.classList.toggle("active", s.id === id)); }
+document.querySelectorAll("[data-back]").forEach(btn => btn.addEventListener("click", () => { Sound.click(); showScreen("screen-menu"); }));
+
+function isTouchDevice() { return ("ontouchstart" in window) || navigator.maxTouchPoints > 0; }
+
+/* --------------------------- CANVAS --------------------------- */
+const canvas = document.getElementById("gameCanvas");
+const ctx = canvas.getContext("2d");
+function resizeCanvas() {
+  const gs = document.getElementById("screen-game");
+  canvas.width = gs.clientWidth || window.innerWidth;
+  canvas.height = gs.clientHeight || window.innerHeight;
+}
+window.addEventListener("resize", () => { if (document.getElementById("screen-game").classList.contains("active")) resizeCanvas(); });
+
+/* --------------------------- YULDUZLAR FONI --------------------------- */
+let stars = [];
+function initStars() {
+  stars = [];
+  const count = 90;
+  for (let i = 0; i < count; i++) {
+    stars.push({ x: Math.random() * canvas.width, y: Math.random() * canvas.height, r: randRange(0.6, 2.2), speed: randRange(30, 120) });
+  }
+}
+
+/* --------------------------- O'YIN HOLATI --------------------------- */
+const G = {
+  running: false, paused: false, lastTs: 0, gameTime: 0,
+  score: 0, lives: 3, maxLives: 5,
+  nextBossScore: 500, bossNumber: 0, bossesDefeated: 0,
+  boss: null,
+  player: { x: 0, y: 0, r: 18, speed: 320, invulnUntil: 0, shieldUntil: 0, rapidUntil: 0, cooldown: 0 },
+  bullets: [], enemyBullets: [], enemies: [], powerups: [], particles: [],
+  spawnTimer: 0, firing: false
+};
+
+/* --------------------------- KIRISH (KLAVIATURA / JOYSTICK) --------------------------- */
+const input = { up: false, down: false, left: false, right: false, joyX: 0, joyY: 0, joyActive: false, space: false };
+
+window.addEventListener("keydown", (e) => {
+  if (["ArrowUp","ArrowDown","ArrowLeft","ArrowRight"," "].includes(e.key)) e.preventDefault();
+  const k = e.key.toLowerCase();
+  if (k === "w" || k === "arrowup") input.up = true;
+  if (k === "s" || k === "arrowdown") input.down = true;
+  if (k === "a" || k === "arrowleft") input.left = true;
+  if (k === "d" || k === "arrowright") input.right = true;
+  if (k === " ") input.space = true;
+  if (k === "escape") togglePause();
+});
+window.addEventListener("keyup", (e) => {
+  const k = e.key.toLowerCase();
+  if (k === "w" || k === "arrowup") input.up = false;
+  if (k === "s" || k === "arrowdown") input.down = false;
+  if (k === "a" || k === "arrowleft") input.left = false;
+  if (k === "d" || k === "arrowright") input.right = false;
+  if (k === " ") input.space = false;
+});
+
+/* Virtual joystick */
+const joyEl = document.getElementById("joystick");
+const joyStick = document.getElementById("joystickStick");
+let joyTouchId = null;
+function joyReset() {
+  joyStick.style.left = "35px"; joyStick.style.top = "35px";
+  input.joyX = 0; input.joyY = 0; input.joyActive = false; joyTouchId = null;
+}
+function joyHandle(clientX, clientY) {
+  const rect = joyEl.getBoundingClientRect();
+  const cx = rect.left + rect.width / 2, cy = rect.top + rect.height / 2;
+  let dx = clientX - cx, dy = clientY - cy;
+  const maxR = rect.width / 2 - 6;
+  const d = Math.min(Math.hypot(dx, dy), maxR);
+  const angle = Math.atan2(dy, dx);
+  const sx = Math.cos(angle) * d, sy = Math.sin(angle) * d;
+  joyStick.style.left = (rect.width / 2 - 25 + sx) + "px";
+  joyStick.style.top = (rect.height / 2 - 25 + sy) + "px";
+  input.joyX = sx / maxR; input.joyY = sy / maxR; input.joyActive = true;
+}
+joyEl.addEventListener("touchstart", (e) => { e.preventDefault(); const t = e.changedTouches[0]; joyTouchId = t.identifier; joyHandle(t.clientX, t.clientY); }, { passive:false });
+joyEl.addEventListener("touchmove", (e) => { e.preventDefault(); for (const t of e.changedTouches) if (t.identifier === joyTouchId) joyHandle(t.clientX, t.clientY); }, { passive:false });
+window.addEventListener("touchend", (e) => { for (const t of e.changedTouches) if (t.identifier === joyTouchId) joyReset(); });
+let mouseDownOnJoy = false;
+joyEl.addEventListener("mousedown", (e) => { mouseDownOnJoy = true; joyHandle(e.clientX, e.clientY); });
+window.addEventListener("mousemove", (e) => { if (mouseDownOnJoy) joyHandle(e.clientX, e.clientY); });
+window.addEventListener("mouseup", () => { if (mouseDownOnJoy) { mouseDownOnJoy = false; joyReset(); } });
+
+/* O't ochish tugmasi (mobil) */
+const fireBtn = document.getElementById("fireBtn");
+fireBtn.addEventListener("touchstart", (e) => { e.preventDefault(); G.firing = true; }, { passive:false });
+fireBtn.addEventListener("touchend", (e) => { e.preventDefault(); G.firing = false; }, { passive:false });
+fireBtn.addEventListener("mousedown", () => { G.firing = true; });
+window.addEventListener("mouseup", () => { G.firing = false; });
+
+function computeMoveVector() {
+  let vx = 0, vy = 0;
+  if (input.joyActive) { vx = input.joyX; vy = input.joyY; }
+  else {
+    if (input.up) vy -= 1; if (input.down) vy += 1;
+    if (input.left) vx -= 1; if (input.right) vx += 1;
+  }
+  const len = Math.hypot(vx, vy);
+  if (len > 1) { vx /= len; vy /= len; }
+  return { vx, vy };
+}
+function isFiring() { return input.space || G.firing; }
+
+/* --------------------------- QURISH / QAYTA BOSHLASH --------------------------- */
+function resetGame() {
+  resizeCanvas(); initStars();
+  G.running = true; G.paused = false; G.lastTs = 0; G.gameTime = 0;
+  G.score = 0; G.lives = 3; G.nextBossScore = 500; G.bossNumber = 0; G.bossesDefeated = 0;
+  G.boss = null;
+  G.player.x = canvas.width / 2; G.player.y = canvas.height - 90;
+  G.player.invulnUntil = 0; G.player.shieldUntil = 0; G.player.rapidUntil = 0; G.player.cooldown = 0;
+  G.bullets = []; G.enemyBullets = []; G.enemies = []; G.powerups = []; G.particles = [];
+  G.spawnTimer = 0; G.firing = false;
+  document.getElementById("bossBar").classList.remove("show");
+  updateHUD();
+}
+
+function startGame() {
+  resetGame();
+  showScreen("screen-game");
+  const showControls = settings.controlsAlways || isTouchDevice();
+  joyEl.classList.toggle("show", showControls);
+  fireBtn.classList.toggle("show", showControls);
+  hideAllOverlays();
+  requestAnimationFrame(loop);
+}
+
+/* --------------------------- DUSHMAN / QIYINCHILIK --------------------------- */
+function difficultyFactor() { return 1 + G.gameTime / 55 + G.score / 900; }
+
+function spawnEnemy() {
+  const df = difficultyFactor();
+  const typeRoll = Math.random();
+  let type = "basic";
+  if (typeRoll < 0.32) type = "zigzag";
+  else if (typeRoll < 0.58) type = "shooter";
+
+  const r = type === "shooter" ? 20 : 16;
+  const x = randRange(r + 10, canvas.width - r - 10);
+  const speed = randRange(60, 95) * Math.min(2.6, df);
+  const enemy = {
+    x, y: -r - 10, r, type,
+    vx: type === "zigzag" ? randRange(-70, 70) : 0,
+    vy: speed,
+    hp: type === "shooter" ? 2 : 1,
+    shootTimer: randRange(0.6, 1.6),
+    phase: Math.random() * Math.PI * 2,
+    scoreValue: type === "shooter" ? 25 : (type === "zigzag" ? 18 : 12)
+  };
+  G.enemies.push(enemy);
+}
+
+function spawnBoss() {
+  G.bossNumber++;
+  const maxHp = 46 + G.bossNumber * 22;
+  G.boss = {
+    x: canvas.width / 2, y: -80, r: 46,
+    vx: randRange(70, 110) * (Math.random() < 0.5 ? 1 : -1),
+    hp: maxHp, maxHp,
+    entering: true, shootTimer: 1.2, phase: 0
+  };
+  G.enemies = []; // Boss paydo bo'lganda oddiy dushmanlarni tozalash
+  document.getElementById("bossBar").classList.add("show");
+  document.getElementById("bossLabel").textContent = "BOSS " + G.bossNumber;
+  Sound.bossAlert();
+  showToast("Diqqat! Mini-boss paydo bo'ldi!");
+}
+
+/* --------------------------- BONUSLAR --------------------------- */
+function maybeDropPowerup(x, y, guaranteed) {
+  if (!guaranteed && Math.random() > 0.18) return;
+  const roll = Math.random();
+  let type = "rapid";
+  if (roll < 0.34) type = "rapid";
+  else if (roll < 0.68) type = "shield";
+  else type = "life";
+  G.powerups.push({ x, y, r: 14, type, vy: 90 });
+}
+
+function applyPowerup(type) {
+  Sound.powerup();
+  if (type === "rapid") { G.player.rapidUntil = performance.now() + 8000; showToast("Tez o'q uzish faollashdi!"); }
+  else if (type === "shield") { G.player.shieldUntil = performance.now() + 7000; showToast("Qalqon faollashdi!"); }
+  else if (type === "life") { G.lives = Math.min(G.maxLives, G.lives + 1); showToast("+1 jon!"); }
+  updateHUD();
+}
+
+/* --------------------------- PARTIKLLAR / PORTLASH --------------------------- */
+function spawnExplosion(x, y, color, count) {
+  const n = count || 18;
+  for (let i = 0; i < n; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = randRange(40, 220);
+    G.particles.push({
+      x, y, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
+      life: 0, maxLife: randRange(0.35, 0.75), size: randRange(2, 5), color: color || "#ffb347"
+    });
+  }
+  Sound.explosion();
+}
+
+/* --------------------------- YANGILASH (UPDATE) --------------------------- */
+function update(dt, ts) {
+  G.gameTime += dt;
+
+  /* --- O'yinchi harakati --- */
+  const { vx, vy } = computeMoveVector();
+  G.player.x = clamp(G.player.x + vx * G.player.speed * dt, G.player.r, canvas.width - G.player.r);
+  G.player.y = clamp(G.player.y + vy * G.player.speed * dt, G.player.r, canvas.height - G.player.r);
+
+  /* --- O'q uzish --- */
+  G.player.cooldown -= dt;
+  const rapid = ts < G.player.rapidUntil;
+  if (isFiring() && G.player.cooldown <= 0) {
+    G.player.cooldown = rapid ? 0.11 : 0.26;
+    G.bullets.push({ x: G.player.x - 10, y: G.player.y - G.player.r, vx: 0, vy: -520, r: 4 });
+    G.bullets.push({ x: G.player.x + 10, y: G.player.y - G.player.r, vx: 0, vy: -520, r: 4 });
+    Sound.shoot();
+  }
+
+  /* --- O'yinchi o'qlarini yangilash --- */
+  for (let i = G.bullets.length - 1; i >= 0; i--) {
+    const b = G.bullets[i];
+    b.x += b.vx * dt; b.y += b.vy * dt;
+    if (b.y < -20) { G.bullets.splice(i, 1); continue; }
+  }
+
+  /* --- Dushman generatsiyasi (boss faol bo'lmasa) --- */
+  if (!G.boss) {
+    G.spawnTimer -= dt;
+    if (G.spawnTimer <= 0) {
+      spawnEnemy();
+      const df = difficultyFactor();
+      G.spawnTimer = clamp(1.35 - G.gameTime * 0.012 - G.score * 0.0003, 0.32, 1.35) / Math.min(1.8, df * 0.6 + 0.4);
+    }
+  }
+
+  /* --- Dushmanlarni yangilash --- */
+  for (let i = G.enemies.length - 1; i >= 0; i--) {
+    const e = G.enemies[i];
+    e.y += e.vy * dt;
+    if (e.type === "zigzag") { e.phase += dt * 3; e.x += Math.sin(e.phase) * 90 * dt; e.x = clamp(e.x, e.r, canvas.width - e.r); }
+    if (e.type === "shooter") {
+      e.shootTimer -= dt;
+      if (e.shootTimer <= 0 && e.y > 0 && e.y < canvas.height - 60) {
+        e.shootTimer = randRange(1.1, 1.9);
+        const ang = Math.atan2(G.player.y - e.y, G.player.x - e.x);
+        G.enemyBullets.push({ x: e.x, y: e.y, vx: Math.cos(ang) * 220, vy: Math.sin(ang) * 220, r: 5 });
+        Sound.enemyShoot();
+      }
+    }
+    if (e.y > canvas.height + 40) { G.enemies.splice(i, 1); continue; }
+  }
+
+  /* --- Bossni yangilash --- */
+  if (G.boss) {
+    const boss = G.boss;
+    if (boss.entering) {
+      boss.y += 60 * dt;
+      if (boss.y >= 110) { boss.y = 110; boss.entering = false; }
+    } else {
+      boss.x += boss.vx * dt;
+      if (boss.x < boss.r + 20 || boss.x > canvas.width - boss.r - 20) boss.vx *= -1;
+      boss.shootTimer -= dt;
+      const enrage = boss.hp < boss.maxHp * 0.35;
+      if (boss.shootTimer <= 0) {
+        boss.shootTimer = enrage ? randRange(0.5, 0.8) : randRange(0.9, 1.4);
+        const bulletCount = enrage ? 7 : 5;
+        for (let i = 0; i < bulletCount; i++) {
+          const spread = (i - (bulletCount - 1) / 2) * 0.22;
+          const baseAngle = Math.atan2(G.player.y - boss.y, G.player.x - boss.x);
+          const ang = baseAngle + spread;
+          G.enemyBullets.push({ x: boss.x, y: boss.y + boss.r * 0.6, vx: Math.cos(ang) * 210, vy: Math.sin(ang) * 210, r: 6 });
+        }
+        Sound.enemyShoot();
+      }
+    }
+    document.getElementById("bossHpInner").style.width = Math.max(0, boss.hp / boss.maxHp * 100) + "%";
+  }
+
+  /* --- Dushman o'qlarini yangilash --- */
+  for (let i = G.enemyBullets.length - 1; i >= 0; i--) {
+    const b = G.enemyBullets[i];
+    b.x += b.vx * dt; b.y += b.vy * dt;
+    if (b.y > canvas.height + 30 || b.y < -30 || b.x < -30 || b.x > canvas.width + 30) { G.enemyBullets.splice(i, 1); continue; }
+  }
+
+  /* --- Bonuslarni yangilash --- */
+  for (let i = G.powerups.length - 1; i >= 0; i--) {
+    const p = G.powerups[i];
+    p.y += p.vy * dt;
+    if (p.y > canvas.height + 30) { G.powerups.splice(i, 1); continue; }
+    if (dist(p.x, p.y, G.player.x, G.player.y) < p.r + G.player.r) {
+      applyPowerup(p.type);
+      G.powerups.splice(i, 1);
+    }
+  }
+
+  /* --- Partiklarni yangilash --- */
+  for (let i = G.particles.length - 1; i >= 0; i--) {
+    const pt = G.particles[i];
+    pt.life += dt;
+    if (pt.life >= pt.maxLife) { G.particles.splice(i, 1); continue; }
+    pt.x += pt.vx * dt; pt.y += pt.vy * dt;
+    pt.vx *= 0.96; pt.vy *= 0.96;
+  }
+
+  /* --- To'qnashuvlar: o'yinchi o'qi vs dushman --- */
+  for (let i = G.bullets.length - 1; i >= 0; i--) {
+    const b = G.bullets[i];
+    let hitSomething = false;
+    for (let j = G.enemies.length - 1; j >= 0; j--) {
+      const e = G.enemies[j];
+      if (dist(b.x, b.y, e.x, e.y) < b.r + e.r) {
+        e.hp -= 1;
+        hitSomething = true;
+        if (e.hp <= 0) {
+          spawnExplosion(e.x, e.y, "#ff7a3d", 16);
+          G.score += e.scoreValue;
+          maybeDropPowerup(e.x, e.y, false);
+          G.enemies.splice(j, 1);
+          checkBossTrigger();
+          updateHUD();
+        }
+        break;
+      }
+    }
+    if (!hitSomething && G.boss && !G.boss.entering) {
+      const boss = G.boss;
+      if (dist(b.x, b.y, boss.x, boss.y) < b.r + boss.r) {
+        boss.hp -= 1; hitSomething = true;
+        spawnExplosion(b.x, b.y, "#ff2e5e", 5);
+        if (boss.hp <= 0) defeatBoss();
+      }
+    }
+    if (hitSomething) G.bullets.splice(i, 1);
+  }
+
+  /* --- To'qnashuvlar: dushman/o'q vs o'yinchi --- */
+  const invuln = ts < G.player.invulnUntil;
+  const shielded = ts < G.player.shieldUntil;
+  if (!invuln) {
+    let hit = false;
+    for (let i = G.enemyBullets.length - 1; i >= 0; i--) {
+      const b = G.enemyBullets[i];
+      if (dist(b.x, b.y, G.player.x, G.player.y) < b.r + G.player.r) { G.enemyBullets.splice(i, 1); hit = true; break; }
+    }
+    if (!hit) {
+      for (let i = G.enemies.length - 1; i >= 0; i--) {
+        const e = G.enemies[i];
+        if (dist(e.x, e.y, G.player.x, G.player.y) < e.r + G.player.r) {
+          spawnExplosion(e.x, e.y, "#ff7a3d", 14);
+          G.enemies.splice(i, 1); hit = true; break;
+        }
+      }
+    }
+    if (!hit && G.boss && !G.boss.entering) {
+      const boss = G.boss;
+      if (dist(boss.x, boss.y, G.player.x, G.player.y) < boss.r + G.player.r) hit = true;
+    }
+    if (hit) {
+      if (shielded) {
+        spawnExplosion(G.player.x, G.player.y, "#23f3ff", 10);
+      } else {
+        playerTakeDamage(ts);
+      }
+    }
+  }
+
+  updateHUD();
+}
+
+function checkBossTrigger() {
+  if (!G.boss && G.score >= G.nextBossScore) spawnBoss();
+}
+
+function defeatBoss() {
+  const boss = G.boss;
+  spawnExplosion(boss.x, boss.y, "#ffb347", 50);
+  G.score += 300 + G.bossNumber * 40;
+  G.bossesDefeated++;
+  maybeDropPowerup(boss.x, boss.y, true);
+  G.boss = null;
+  G.nextBossScore += 500;
+  document.getElementById("bossBar").classList.remove("show");
+  Sound.bossDown();
+  showToast("Boss yengildi! Bonus ochko olindi.");
+  updateHUD();
+}
+
+function playerTakeDamage(ts) {
+  Sound.hit();
+  spawnExplosion(G.player.x, G.player.y, "#ff2e5e", 20);
+  G.lives -= 1;
+  G.player.invulnUntil = ts + 1600;
+  updateHUD();
+  if (G.lives <= 0) triggerGameOver();
+}
+
+/* --------------------------- HUD --------------------------- */
+const hudScore = document.getElementById("hudScore");
+const livesBox = document.getElementById("livesBox");
+function updateHUD() {
+  hudScore.textContent = G.score;
+  livesBox.innerHTML = "";
+  for (let i = 0; i < G.maxLives; i++) {
+    const span = document.createElement("span");
+    span.className = "heart" + (i < G.lives ? "" : " empty");
+    span.textContent = "\u2665";
+    livesBox.appendChild(span);
+  }
+}
+
+/* --------------------------- TOAST --------------------------- */
+let toastTimer = null;
+function showToast(msg) {
+  const t = document.getElementById("toast");
+  t.textContent = msg; t.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove("show"), 1700);
+}
+
+/* --------------------------- RENDER --------------------------- */
+function draw(ts) {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // Fon: yulduzlar
+  ctx.fillStyle = "#bfe9ff";
+  stars.forEach(s => {
+    s.y += s.speed * (1 / 60);
+    if (s.y > canvas.height) { s.y = -2; s.x = Math.random() * canvas.width; }
+    ctx.globalAlpha = 0.55;
+    ctx.fillRect(s.x, s.y, s.r, s.r);
+  });
+  ctx.globalAlpha = 1;
+
+  const pulse = 0.5 + 0.5 * Math.sin(ts / 220);
+
+  // Bonuslar
+  G.powerups.forEach(p => {
+    ctx.save(); ctx.translate(p.x, p.y);
+    const r = p.r + pulse * 2;
+    if (p.type === "rapid") {
+      ctx.shadowColor = "#ffe066"; ctx.shadowBlur = 14; ctx.fillStyle = "#ffe066";
+      ctx.beginPath();
+      ctx.moveTo(-r*0.3,-r); ctx.lineTo(r*0.5,-r*0.1); ctx.lineTo(r*0.05,-r*0.1);
+      ctx.lineTo(r*0.3,r); ctx.lineTo(-r*0.5,r*0.1); ctx.lineTo(-r*0.05,r*0.1);
+      ctx.closePath(); ctx.fill();
+    } else if (p.type === "shield") {
+      ctx.shadowColor = "#23f3ff"; ctx.shadowBlur = 14; ctx.strokeStyle = "#23f3ff"; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.stroke();
+    } else {
+      ctx.shadowColor = "#ff5577"; ctx.shadowBlur = 14; ctx.fillStyle = "#ff5577";
+      ctx.font = (r*1.8) + "px sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillText("\u2665", 0, 1);
+    }
+    ctx.restore();
+  });
+
+  // Dushman o'qlari
+  ctx.shadowColor = "#ff2e5e"; ctx.shadowBlur = 10; ctx.fillStyle = "#ff5577";
+  G.enemyBullets.forEach(b => { ctx.beginPath(); ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2); ctx.fill(); });
+
+  // O'yinchi o'qlari
+  ctx.shadowColor = "#23f3ff"; ctx.shadowBlur = 10; ctx.fillStyle = "#8ff5ff";
+  G.bullets.forEach(b => { ctx.fillRect(b.x - b.r * 0.5, b.y - b.r * 1.6, b.r, b.r * 3.2); });
+  ctx.shadowBlur = 0;
+
+  // Dushmanlar
+  G.enemies.forEach(e => {
+    ctx.save(); ctx.translate(e.x, e.y);
+    const color = e.type === "shooter" ? "#ff6ee8" : (e.type === "zigzag" ? "#ffe066" : "#ff5577");
+    ctx.shadowColor = color; ctx.shadowBlur = 12; ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.moveTo(0, e.r); ctx.lineTo(-e.r, -e.r * 0.7); ctx.lineTo(0, -e.r * 0.2); ctx.lineTo(e.r, -e.r * 0.7);
+    ctx.closePath(); ctx.fill();
+    ctx.restore();
+  });
+
+  // Boss
+  if (G.boss) {
+    const b = G.boss;
+    ctx.save(); ctx.translate(b.x, b.y);
+    ctx.shadowColor = "#ff2e5e"; ctx.shadowBlur = 22 + pulse * 8; ctx.fillStyle = "#5a0f1e";
+    ctx.strokeStyle = "#ff2e5e"; ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    for (let i = 0; i < 6; i++) {
+      const ang = (Math.PI / 3) * i - Math.PI / 2;
+      const px = Math.cos(ang) * b.r, py = Math.sin(ang) * b.r;
+      if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+    }
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.restore();
+  }
+
+  // O'yinchi
+  {
+    const p = G.player;
+    const invuln = ts < p.invulnUntil;
+    const shielded = ts < p.shieldUntil;
+    const rapid = ts < p.rapidUntil;
+    if (!invuln || Math.floor(ts / 90) % 2 === 0) {
+      ctx.save(); ctx.translate(p.x, p.y);
+      ctx.shadowColor = rapid ? "#ffe066" : "#23f3ff"; ctx.shadowBlur = 18;
+      const grad = ctx.createLinearGradient(0, -p.r, 0, p.r);
+      grad.addColorStop(0, "#ffffff"); grad.addColorStop(0.5, "#7ff0ff"); grad.addColorStop(1, "#0a6fa8");
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.moveTo(0, -p.r); ctx.lineTo(-p.r * 0.85, p.r * 0.8); ctx.lineTo(0, p.r * 0.4); ctx.lineTo(p.r * 0.85, p.r * 0.8);
+      ctx.closePath(); ctx.fill();
+      // dvigatel olovi
+      ctx.fillStyle = "#ffb347"; ctx.shadowColor = "#ffb347"; ctx.shadowBlur = 12;
+      const flame = p.r * (0.5 + pulse * 0.3);
+      ctx.beginPath(); ctx.moveTo(-4, p.r * 0.4); ctx.lineTo(4, p.r * 0.4); ctx.lineTo(0, p.r * 0.4 + flame); ctx.closePath(); ctx.fill();
+      ctx.restore();
+      if (shielded) {
+        ctx.save(); ctx.translate(p.x, p.y);
+        ctx.strokeStyle = "#23f3ff"; ctx.shadowColor = "#23f3ff"; ctx.shadowBlur = 16; ctx.lineWidth = 2.5;
+        ctx.beginPath(); ctx.arc(0, 0, p.r + 10 + pulse * 2, 0, Math.PI * 2); ctx.stroke();
+        ctx.restore();
+      }
+    }
+  }
+
+  // Partiklar (portlash)
+  G.particles.forEach(pt => {
+    const alpha = 1 - pt.life / pt.maxLife;
+    ctx.globalAlpha = Math.max(0, alpha);
+    ctx.fillStyle = pt.color; ctx.shadowColor = pt.color; ctx.shadowBlur = 8;
+    ctx.beginPath(); ctx.arc(pt.x, pt.y, pt.size, 0, Math.PI * 2); ctx.fill();
+  });
+  ctx.globalAlpha = 1; ctx.shadowBlur = 0;
+}
+
+/* --------------------------- O'YIN TSIKLI --------------------------- */
+function loop(ts) {
+  if (!G.running) return;
+  if (!G.lastTs) G.lastTs = ts;
+  const dt = Math.min(0.05, (ts - G.lastTs) / 1000);
+  G.lastTs = ts;
+  if (!G.paused) update(dt, ts);
+  draw(ts);
+  requestAnimationFrame(loop);
+}
+
+/* --------------------------- O'YIN TUGASHI / PAUZA --------------------------- */
+function triggerGameOver() {
+  G.running = false;
+  Sound.gameOver();
+  if (G.score > bestData.score) bestData.score = G.score;
+  if (G.bossesDefeated > bestData.bosses) bestData.bosses = G.bossesDefeated;
+  saveJSON(STORAGE_KEYS.best, bestData);
+  document.getElementById("goScore").textContent = G.score;
+  document.getElementById("goBest").textContent = bestData.score;
+  document.getElementById("goBoss").textContent = G.bossesDefeated;
+  document.getElementById("overlay-gameover").classList.remove("hidden");
+}
+
+function togglePause() {
+  if (!document.getElementById("screen-game").classList.contains("active")) return;
+  if (!G.running) return;
+  G.paused = !G.paused;
+  document.getElementById("overlay-pause").classList.toggle("hidden", !G.paused);
+}
+
+function hideAllOverlays() {
+  ["overlay-pause", "overlay-gameover"].forEach(id => document.getElementById(id).classList.add("hidden"));
+}
+
+/* --------------------------- TUGMALAR --------------------------- */
+document.getElementById("btnStart").addEventListener("click", () => { Sound.click(); startGame(); });
+document.getElementById("btnBest").addEventListener("click", () => {
+  Sound.click();
+  document.getElementById("bestScoreVal").textContent = bestData.score;
+  document.getElementById("bestBossVal").textContent = bestData.bosses;
+  showScreen("screen-best");
+});
+document.getElementById("btnHowTo").addEventListener("click", () => { Sound.click(); showScreen("screen-howto"); });
+document.getElementById("btnSettings").addEventListener("click", () => { Sound.click(); showScreen("screen-settings"); });
+
+document.getElementById("pauseBtn").addEventListener("click", () => { Sound.click(); togglePause(); });
+document.getElementById("btnResume").addEventListener("click", () => { Sound.click(); togglePause(); });
+document.getElementById("btnRestartFromPause").addEventListener("click", () => {
+  Sound.click(); document.getElementById("overlay-pause").classList.add("hidden"); startGame();
+});
+document.getElementById("btnMenuFromPause").addEventListener("click", () => {
+  Sound.click(); G.running = false; G.paused = false; hideAllOverlays(); showScreen("screen-menu");
+});
+document.getElementById("btnRetryGO").addEventListener("click", () => { Sound.click(); hideAllOverlays(); startGame(); });
+document.getElementById("btnMenuFromGO").addEventListener("click", () => { Sound.click(); hideAllOverlays(); showScreen("screen-menu"); });
+
+/* Sozlamalar */
+const soundToggle = document.getElementById("soundToggle");
+const controlsToggle = document.getElementById("controlsToggle");
+soundToggle.checked = settings.sound;
+controlsToggle.checked = settings.controlsAlways;
+soundToggle.addEventListener("change", () => { settings.sound = soundToggle.checked; saveJSON(STORAGE_KEYS.settings, settings); if (settings.sound) Sound.click(); });
+controlsToggle.addEventListener("change", () => { settings.controlsAlways = controlsToggle.checked; saveJSON(STORAGE_KEYS.settings, settings); Sound.click(); });
+document.getElementById("btnResetProgress").addEventListener("click", () => {
+  Sound.click();
+  bestData = { score: 0, bosses: 0 };
+  saveJSON(STORAGE_KEYS.best, bestData);
+  showToastGlobal("Eng yaxshi natija tozalandi");
+});
+function showToastGlobal(msg) {
+  const el = document.createElement("div");
+  el.textContent = msg;
+  el.style.cssText = "position:fixed;top:20px;left:50%;transform:translateX(-50%);background:rgba(10,14,28,0.95);border:1px solid rgba(35,243,255,0.6);color:#baf8ff;padding:8px 18px;border-radius:8px;z-index:999;box-shadow:0 0 12px rgba(35,243,255,0.4);font-size:13px;";
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 1800);
+}
+
+/* --------------------------- ISHGA TUSHIRISH --------------------------- */
+resizeCanvas();
+initStars();
+if (isTouchDevice()) { joyEl.classList.add("show"); fireBtn.classList.add("show"); }
+</script>
+</body>
+</html>

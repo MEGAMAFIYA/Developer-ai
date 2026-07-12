@@ -67,6 +67,28 @@ CREATE TABLE IF NOT EXISTS scores (
 _IDX_GAME_NAME = "CREATE INDEX IF NOT EXISTS idx_scores_game_name ON scores (game_name)"
 _IDX_USER_ID   = "CREATE INDEX IF NOT EXISTS idx_scores_user_id   ON scores (user_id)"
 
+# Non-destructive score-table migrations (safe on every startup)
+_ADD_SCORES_CHAT_ID = """
+ALTER TABLE scores ADD COLUMN IF NOT EXISTS chat_id BIGINT NOT NULL DEFAULT 0
+"""
+_ADD_SCORES_CHAT_TITLE = """
+ALTER TABLE scores ADD COLUMN IF NOT EXISTS chat_title VARCHAR(128) NOT NULL DEFAULT ''
+"""
+_IDX_CHAT_ID = "CREATE INDEX IF NOT EXISTS idx_scores_chat_id ON scores (chat_id)"
+
+# Diamond reward system — disabled until services/diamond_service.py is enabled
+_CREATE_DIAMONDS = """
+CREATE TABLE IF NOT EXISTS diamonds (
+    id           SERIAL PRIMARY KEY,
+    user_id      BIGINT NOT NULL UNIQUE,
+    username     VARCHAR(128) NOT NULL DEFAULT '',
+    first_name   VARCHAR(128) NOT NULL DEFAULT '',
+    balance      INTEGER NOT NULL DEFAULT 0,
+    total_earned INTEGER NOT NULL DEFAULT 0,
+    updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+)
+"""
+
 # ---------------------------------------------------------------------------
 # Seed data — ON CONFLICT DO UPDATE keeps re-runs idempotent
 # ---------------------------------------------------------------------------
@@ -109,6 +131,12 @@ async def init_databases() -> None:
         await conn.execute(_CREATE_SCORES)
         await conn.execute(_IDX_GAME_NAME)
         await conn.execute(_IDX_USER_ID)
+        # Non-destructive migrations
+        await conn.execute(_ADD_SCORES_CHAT_ID)
+        await conn.execute(_ADD_SCORES_CHAT_TITLE)
+        await conn.execute(_IDX_CHAT_ID)
+        # Diamond reward system (disabled until DIAMONDS_ENABLED = True)
+        await conn.execute(_CREATE_DIAMONDS)
     logger.info("Game DB schema ready.")
 
     for game in INITIAL_GAMES:

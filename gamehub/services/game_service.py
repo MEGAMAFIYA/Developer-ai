@@ -19,11 +19,16 @@ logger = logging.getLogger(__name__)
 WEBAPP_DIR = Path(__file__).parent.parent / "webapp"
 
 
-def _build_keyboard(game: dict) -> InlineKeyboardMarkup:
+def _build_keyboard(game: dict, in_group: bool = False) -> InlineKeyboardMarkup:
     url = f"{config.WEBAPP_URL.rstrip('/')}/games/{game['slug']}"
-    return InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="🎮 O'ynash", web_app=WebAppInfo(url=url))
-    ]])
+    # Telegram only allows web_app inline buttons in private chats.
+    # In groups/channels we fall back to a plain URL button.
+    btn = (
+        InlineKeyboardButton(text="🎮 O'ynash", url=url)
+        if in_group
+        else InlineKeyboardButton(text="🎮 O'ynash", web_app=WebAppInfo(url=url))
+    )
+    return InlineKeyboardMarkup(inline_keyboard=[[btn]])
 
 
 def _build_caption(game: dict) -> str:
@@ -35,7 +40,8 @@ def _build_caption(game: dict) -> str:
 
 async def send_game_card(message: Message, game: dict) -> None:
     """Send one game as a Telegram photo (or text fallback) with Play button."""
-    keyboard = _build_keyboard(game)
+    in_group = message.chat.type in ("group", "supergroup", "channel")
+    keyboard = _build_keyboard(game, in_group=in_group)
     caption  = _build_caption(game)
     image_url: str = game.get("image_url", "")
 

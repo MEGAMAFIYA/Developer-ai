@@ -1,0 +1,1090 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Labirintdan Qochish</title>
+<style>
+  /* ================= NEGIZ / RESET ================= */
+  * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; user-select:none; }
+  html,body { width:100%; height:100%; overflow:hidden; background:#05060f; }
+  body {
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    color:#eaf6ff;
+    background:
+      radial-gradient(circle at 20% 20%, rgba(0,255,231,0.08), transparent 40%),
+      radial-gradient(circle at 80% 70%, rgba(255,0,200,0.08), transparent 45%),
+      #05060f;
+    height:100vh;
+    position:relative;
+  }
+  #app { width:100%; height:100%; position:relative; }
+
+  /* ================= EKRANLAR ================= */
+  .screen {
+    position:absolute; inset:0; display:none; flex-direction:column;
+    align-items:center; justify-content:flex-start;
+    overflow-y:auto; overflow-x:hidden;
+    padding: 24px 16px 40px;
+  }
+  .screen.active { display:flex; }
+
+  .neon-title {
+    font-size: clamp(28px, 7vw, 54px);
+    font-weight:800;
+    letter-spacing:4px;
+    text-transform:uppercase;
+    text-align:center;
+    color:#baf8ff;
+    text-shadow:
+      0 0 6px #23f3ff, 0 0 18px #23f3ff, 0 0 40px #ff2ee6, 0 0 2px #fff;
+    animation: flicker 3.6s infinite ease-in-out;
+    margin-bottom:6px;
+  }
+  .sub-title { color:#8fb6c9; letter-spacing:2px; font-size:13px; margin-bottom:26px; text-transform:uppercase; }
+
+  @keyframes flicker {
+    0%,19%,21%,23%,54%,56%,100% { opacity:1; }
+    20%,22%,55% { opacity:0.82; }
+  }
+
+  .menu-list { display:flex; flex-direction:column; gap:16px; width:100%; max-width:360px; }
+
+  .neon-btn {
+    position:relative;
+    background:linear-gradient(160deg, rgba(15,20,40,0.9), rgba(10,12,26,0.9));
+    border:1px solid rgba(35,243,255,0.55);
+    color:#d9fbff;
+    padding:16px 20px;
+    font-size:16px;
+    letter-spacing:1.5px;
+    border-radius:10px;
+    cursor:pointer;
+    text-transform:uppercase;
+    font-weight:600;
+    box-shadow:0 0 10px rgba(35,243,255,0.25), inset 0 0 12px rgba(35,243,255,0.06);
+    transition:transform .15s ease, box-shadow .15s ease, border-color .15s ease;
+  }
+  .neon-btn:active { transform:scale(0.96); }
+  .neon-btn:hover { border-color:#ff2ee6; box-shadow:0 0 18px rgba(255,46,230,0.45), inset 0 0 14px rgba(255,46,230,0.08); }
+  .neon-btn.pink { border-color:rgba(255,46,230,0.6); box-shadow:0 0 10px rgba(255,46,230,0.25); }
+  .neon-btn.small { padding:10px 14px; font-size:13px; }
+  .neon-btn:disabled { opacity:.35; cursor:not-allowed; filter:grayscale(0.6); }
+
+  .back-btn {
+    position:absolute; top:14px; left:14px;
+    width:44px; height:44px; border-radius:50%;
+    background:rgba(15,18,34,0.85); border:1px solid rgba(35,243,255,0.5);
+    color:#baf8ff; font-size:20px; display:flex; align-items:center; justify-content:center;
+    cursor:pointer; box-shadow:0 0 10px rgba(35,243,255,0.3); z-index:20;
+  }
+
+  .panel {
+    background:rgba(10,13,26,0.75);
+    border:1px solid rgba(35,243,255,0.3);
+    border-radius:14px;
+    padding:20px;
+    width:100%; max-width:520px;
+    box-shadow:0 0 24px rgba(0,0,0,0.5);
+    backdrop-filter: blur(6px);
+  }
+
+  .panel h3 { color:#ff6ee8; letter-spacing:1px; margin-bottom:10px; text-shadow:0 0 8px rgba(255,110,232,0.6); }
+  .panel p, .panel li { color:#c9e6f2; line-height:1.65; font-size:14.5px; margin-bottom:8px; }
+  .panel ul { padding-left:20px; margin-bottom:14px; }
+  .kbd { display:inline-block; background:#0f1526; border:1px solid #2af; border-radius:5px; padding:1px 8px; margin:0 2px; font-size:12.5px; color:#9df; }
+
+  /* ================= DARAJALAR TO'RI ================= */
+  .levels-grid {
+    display:grid; grid-template-columns:repeat(4, 1fr); gap:12px;
+    width:100%; max-width:460px; margin-top:10px;
+  }
+  .level-cell {
+    aspect-ratio:1/1; border-radius:10px;
+    background:linear-gradient(160deg, rgba(15,20,40,0.9), rgba(8,10,20,0.9));
+    border:1px solid rgba(35,243,255,0.4);
+    display:flex; align-items:center; justify-content:center;
+    font-size:18px; font-weight:700; color:#baf8ff; cursor:pointer;
+    box-shadow:0 0 8px rgba(35,243,255,0.2);
+  }
+  .level-cell.locked { color:#4a5568; border-color:rgba(120,120,140,0.25); box-shadow:none; cursor:not-allowed; }
+  .level-cell.done { border-color:#ff2ee6; box-shadow:0 0 12px rgba(255,46,230,0.4); }
+
+  /* ================= O'YIN EKRANI ================= */
+  #screen-game { padding:0; }
+  #hud {
+    position:absolute; top:0; left:0; right:0; z-index:15;
+    display:flex; justify-content:space-between; align-items:center;
+    padding:10px 14px; gap:8px;
+    background:linear-gradient(#05060fcc, transparent);
+    font-size:13px; letter-spacing:0.5px;
+  }
+  .hud-item {
+    background:rgba(8,10,20,0.7); border:1px solid rgba(35,243,255,0.35);
+    border-radius:8px; padding:6px 10px; display:flex; align-items:center; gap:6px;
+    box-shadow:0 0 8px rgba(35,243,255,0.15); white-space:nowrap;
+  }
+  .hud-item.timer-warn { border-color:#ff2e5e; color:#ffb0c0; box-shadow:0 0 10px rgba(255,46,94,0.5); animation:pulseWarn 0.8s infinite; }
+  @keyframes pulseWarn { 50% { opacity:0.5; } }
+  #hudTop { display:flex; gap:8px; flex-wrap:wrap; }
+  #pauseBtn {
+    width:38px; height:38px; border-radius:50%; background:rgba(8,10,20,0.8);
+    border:1px solid rgba(255,46,230,0.5); color:#ffb6f2; font-size:16px;
+    display:flex; align-items:center; justify-content:center; cursor:pointer;
+    box-shadow:0 0 10px rgba(255,46,230,0.3);
+  }
+  #gameCanvas { display:block; width:100%; height:100%; background:#03040a; touch-action:none; }
+
+  /* ================= JOYSTICK ================= */
+  #joystick {
+    position:absolute; bottom:26px; left:26px; width:120px; height:120px;
+    border-radius:50%; border:2px solid rgba(35,243,255,0.4);
+    background:radial-gradient(circle, rgba(20,25,45,0.55), rgba(8,10,20,0.35));
+    display:none; z-index:16; touch-action:none;
+    box-shadow:0 0 16px rgba(35,243,255,0.25);
+  }
+  #joystick.show { display:block; }
+  #joystickStick {
+    position:absolute; width:50px; height:50px; border-radius:50%; left:35px; top:35px;
+    background:radial-gradient(circle at 35% 35%, #6ff9ff, #0e8fa8);
+    box-shadow:0 0 14px #23f3ff;
+  }
+
+  /* ================= OVERLAY / MODALLAR ================= */
+  .overlay {
+    position:absolute; inset:0; z-index:40; display:flex; align-items:center; justify-content:center;
+    background:rgba(2,3,8,0.82); backdrop-filter:blur(3px);
+  }
+  .overlay.hidden { display:none; }
+  .modal {
+    background:linear-gradient(160deg, rgba(14,17,32,0.98), rgba(8,10,20,0.98));
+    border:1px solid rgba(35,243,255,0.5); border-radius:16px;
+    padding:28px 24px; width:90%; max-width:380px; text-align:center;
+    box-shadow:0 0 30px rgba(35,243,255,0.35);
+  }
+  .modal h2 { color:#baf8ff; text-shadow:0 0 10px #23f3ff; margin-bottom:14px; letter-spacing:1px; }
+  .modal .stat-row { display:flex; justify-content:space-between; padding:6px 4px; font-size:14px; color:#cfeeff; border-bottom:1px dashed rgba(255,255,255,0.08); }
+  .modal .btn-col { display:flex; flex-direction:column; gap:10px; margin-top:18px; }
+
+  /* ================= TOAST ================= */
+  #toast {
+    position:absolute; top:70px; left:50%; transform:translateX(-50%);
+    background:rgba(10,14,28,0.9); border:1px solid rgba(255,215,64,0.6);
+    color:#ffe9a8; padding:8px 16px; border-radius:8px; font-size:13px;
+    box-shadow:0 0 12px rgba(255,215,64,0.4); z-index:30; opacity:0; pointer-events:none;
+    transition:opacity .3s ease, transform .3s ease;
+  }
+  #toast.show { opacity:1; transform:translateX(-50%) translateY(6px); }
+
+  /* Switch (sozlamalar) */
+  .switch-row { display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; }
+  .switch { position:relative; width:50px; height:26px; }
+  .switch input { opacity:0; width:0; height:0; }
+  .slider-tg { position:absolute; inset:0; background:#233; border-radius:20px; cursor:pointer; transition:.2s; border:1px solid rgba(35,243,255,0.3); }
+  .slider-tg:before { content:""; position:absolute; width:18px; height:18px; left:3px; top:3px; background:#9df; border-radius:50%; transition:.2s; }
+  input:checked + .slider-tg { background:#0d3b45; }
+  input:checked + .slider-tg:before { transform:translateX(24px); background:#23f3ff; box-shadow:0 0 8px #23f3ff; }
+
+  ::-webkit-scrollbar { width:6px; }
+  ::-webkit-scrollbar-thumb { background:rgba(35,243,255,0.3); border-radius:4px; }
+
+  @media (max-width:600px) {
+    .levels-grid { grid-template-columns:repeat(4,1fr); }
+    #joystick { width:100px; height:100px; bottom:16px; left:16px; }
+    #joystickStick { width:42px; height:42px; left:29px; top:29px; }
+  }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- ============ BOSH MENYU ============ -->
+  <div class="screen active" id="screen-menu">
+    <div style="margin-top:8vh;"></div>
+    <div class="neon-title">Labirintdan<br>Qochish</div>
+    <div class="sub-title">20 ta bosqich &bull; tasodifiy labirintlar</div>
+    <div class="menu-list">
+      <button class="neon-btn" id="btnStart">O'yinni boshlash</button>
+      <button class="neon-btn" id="btnLevels">Darajalar</button>
+      <button class="neon-btn" id="btnBest">Eng yaxshi natija</button>
+      <button class="neon-btn pink" id="btnHowTo">Qanday o'ynaladi</button>
+      <button class="neon-btn pink" id="btnSettings">Sozlamalar</button>
+    </div>
+  </div>
+
+  <!-- ============ DARAJALAR ============ -->
+  <div class="screen" id="screen-levels">
+    <div class="back-btn" data-back>&#8592;</div>
+    <div class="neon-title" style="font-size:26px; margin-top:10px;">Darajalar</div>
+    <div class="sub-title">Bosqichni tanlang</div>
+    <div class="levels-grid" id="levelsGrid"></div>
+  </div>
+
+  <!-- ============ ENG YAXSHI NATIJA ============ -->
+  <div class="screen" id="screen-best">
+    <div class="back-btn" data-back>&#8592;</div>
+    <div class="neon-title" style="font-size:26px; margin-top:10px;">Eng yaxshi natija</div>
+    <div class="panel" style="text-align:center; margin-top:14px;">
+      <p style="font-size:15px;">Umumiy eng yuqori ochko</p>
+      <div style="font-size:44px; font-weight:800; color:#23f3ff; text-shadow:0 0 14px #23f3ff; margin:8px 0;" id="bestScoreVal">0</div>
+      <p style="font-size:15px;">Erishilgan eng yuqori daraja</p>
+      <div style="font-size:30px; font-weight:800; color:#ff6ee8; text-shadow:0 0 14px #ff6ee8;" id="bestLevelVal">1</div>
+    </div>
+  </div>
+
+  <!-- ============ QANDAY O'YNALADI ============ -->
+  <div class="screen" id="screen-howto">
+    <div class="back-btn" data-back>&#8592;</div>
+    <div class="neon-title" style="font-size:26px; margin-top:10px;">Qanday o'ynaladi</div>
+    <div class="panel" style="margin-top:14px;">
+      <h3>Boshqaruv</h3>
+      <p>Kompyuterda <span class="kbd">W</span><span class="kbd">A</span><span class="kbd">S</span><span class="kbd">D</span> yoki strelka tugmalari <span class="kbd">&#8592;</span><span class="kbd">&#8593;</span><span class="kbd">&#8594;</span><span class="kbd">&#8595;</span> orqali harakatlaning. Telefonda ekranning chap pastki burchagidagi virtual joystikdan foydalaning.</p>
+      <h3>Maqsad</h3>
+      <ul>
+        <li>Labirint ichida yaltiroq <b>kalitlarni</b> yig'ing.</li>
+        <li>Barcha kalitlar yig'ilgach, <b>chiqish eshigi</b> yashil rangga o'tib ochiladi.</li>
+        <li>Eshikka yetib borib, daraja tugatiladi.</li>
+        <li>Vaqt tugashidan oldin ulgurishga harakat qiling!</li>
+      </ul>
+      <h3>Bonuslar</h3>
+      <ul>
+        <li><b>&#9201; Ko'k soat</b> — qo'shimcha vaqt beradi.</li>
+        <li><b>&#9889; Sariq chaqmoq</b> — bir necha soniyaga tezlikni oshiradi.</li>
+      </ul>
+      <h3>Boshqa</h3>
+      <p>Pauza tugmasi orqali o'yinni to'xtatishingiz, davom ettirishingiz yoki qayta boshlashingiz mumkin. Har safar labirint qaytadan tasodifiy tarzda yaratiladi.</p>
+    </div>
+  </div>
+
+  <!-- ============ SOZLAMALAR ============ -->
+  <div class="screen" id="screen-settings">
+    <div class="back-btn" data-back>&#8592;</div>
+    <div class="neon-title" style="font-size:26px; margin-top:10px;">Sozlamalar</div>
+    <div class="panel" style="margin-top:14px;">
+      <div class="switch-row">
+        <span>Ovoz effektlari</span>
+        <label class="switch"><input type="checkbox" id="soundToggle" checked><span class="slider-tg"></span></label>
+      </div>
+      <div class="switch-row">
+        <span>Virtual joystikni doim ko'rsatish</span>
+        <label class="switch"><input type="checkbox" id="joystickToggle"><span class="slider-tg"></span></label>
+      </div>
+      <button class="neon-btn pink small" id="btnResetProgress" style="width:100%; margin-top:10px;">Progressni tozalash</button>
+    </div>
+  </div>
+
+  <!-- ============ O'YIN EKRANI ============ -->
+  <div class="screen" id="screen-game">
+    <div id="hud">
+      <div id="hudTop">
+        <div class="hud-item">&#127919; <span id="hudLevel">1</span>/20</div>
+        <div class="hud-item" id="hudTimerBox">&#9201; <span id="hudTimer">00:00</span></div>
+        <div class="hud-item">&#11088; <span id="hudScore">0</span></div>
+        <div class="hud-item">&#128273; <span id="hudKeys">0/0</span></div>
+      </div>
+      <div id="pauseBtn">&#10073;&#10073;</div>
+    </div>
+    <canvas id="gameCanvas"></canvas>
+    <div id="joystick">
+      <div id="joystickStick"></div>
+    </div>
+    <div id="toast"></div>
+  </div>
+
+  <!-- ============ PAUZA OVERLAY ============ -->
+  <div class="overlay hidden" id="overlay-pause">
+    <div class="modal">
+      <h2>Pauza</h2>
+      <div class="btn-col">
+        <button class="neon-btn" id="btnResume">Davom ettirish</button>
+        <button class="neon-btn" id="btnRestartFromPause">Qayta boshlash</button>
+        <button class="neon-btn pink" id="btnMenuFromPause">Bosh menyu</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ DARAJA TUGADI OVERLAY ============ -->
+  <div class="overlay hidden" id="overlay-levelcomplete">
+    <div class="modal">
+      <h2 id="lcTitle">Daraja tugatildi!</h2>
+      <div class="stat-row"><span>Qolgan vaqt</span><span id="lcTime">0</span></div>
+      <div class="stat-row"><span>Vaqt bonusi</span><span id="lcTimeBonus">0</span></div>
+      <div class="stat-row"><span>Daraja ochkosi</span><span id="lcLevelScore">0</span></div>
+      <div class="stat-row"><span>Jami ochko</span><span id="lcTotalScore">0</span></div>
+      <div class="btn-col">
+        <button class="neon-btn" id="btnNextLevel">Keyingi daraja</button>
+        <button class="neon-btn pink" id="btnMenuFromLC">Bosh menyu</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ VAQT TUGADI OVERLAY ============ -->
+  <div class="overlay hidden" id="overlay-gameover">
+    <div class="modal">
+      <h2 style="color:#ff5577; text-shadow:0 0 10px #ff2e5e;">Vaqt tugadi!</h2>
+      <p style="color:#cfeeff; margin-bottom:10px;">Ulgurmadingiz. Qayta urinib ko'ring.</p>
+      <div class="btn-col">
+        <button class="neon-btn" id="btnRetryGO">Qayta urinish</button>
+        <button class="neon-btn pink" id="btnMenuFromGO">Bosh menyu</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ O'YIN YAKUNLANDI (20-daraja) ============ -->
+  <div class="overlay hidden" id="overlay-win">
+    <div class="modal">
+      <h2 style="color:#ffe066; text-shadow:0 0 14px #ffe066;">&#127942; Tabriklaymiz!</h2>
+      <p style="color:#cfeeff; margin-bottom:10px;">Siz barcha 20 ta darajani muvaffaqiyatli yakunladingiz!</p>
+      <div class="stat-row"><span>Yakuniy jami ochko</span><span id="winTotalScore">0</span></div>
+      <div class="btn-col">
+        <button class="neon-btn" id="btnMenuFromWin">Bosh menyu</button>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+"use strict";
+/* =========================================================================
+   LABIRINTDAN QOCHISH — bitta HTML faylda ishlaydigan to'liq o'yin
+   ========================================================================= */
+
+/* --------------------------- YORDAMCHI FUNKSIYALAR --------------------------- */
+function clamp(v, min, max) { return v < min ? min : (v > max ? max : v); }
+function randInt(min, max) { return Math.floor(Math.random() * (max - min + 1)) + min; }
+function fmtTime(sec) {
+  sec = Math.max(0, Math.ceil(sec));
+  const m = Math.floor(sec / 60), s = sec % 60;
+  return (m < 10 ? "0" + m : m) + ":" + (s < 10 ? "0" + s : s);
+}
+
+/* --------------------------- SOZLAMALAR / SAQLASH --------------------------- */
+const STORAGE_KEYS = {
+  best: "ldq_best_v1",
+  unlocked: "ldq_unlocked_v1",
+  settings: "ldq_settings_v1"
+};
+
+function loadJSON(key, fallback) {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : fallback;
+  } catch (e) { return fallback; }
+}
+function saveJSON(key, val) {
+  try { localStorage.setItem(key, JSON.stringify(val)); } catch (e) { /* saqlash mumkin emas */ }
+}
+
+let bestData = loadJSON(STORAGE_KEYS.best, { score: 0, level: 1 });
+let unlockedLevel = loadJSON(STORAGE_KEYS.unlocked, 1);
+let settings = loadJSON(STORAGE_KEYS.settings, { sound: true, joystickAlways: false });
+
+/* --------------------------- OVOZ (Web Audio API) --------------------------- */
+let audioCtx = null;
+function ensureAudio() {
+  if (!audioCtx) {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (AC) audioCtx = new AC();
+  }
+  if (audioCtx && audioCtx.state === "suspended") audioCtx.resume();
+}
+function beep(freq, dur, type, vol, delay) {
+  if (!settings.sound) return;
+  ensureAudio();
+  if (!audioCtx) return;
+  const t0 = audioCtx.currentTime + (delay || 0);
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.type = type || "sine";
+  osc.frequency.setValueAtTime(freq, t0);
+  gain.gain.setValueAtTime(vol || 0.18, t0);
+  gain.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+  osc.connect(gain); gain.connect(audioCtx.destination);
+  osc.start(t0); osc.stop(t0 + dur + 0.02);
+}
+const Sound = {
+  click: () => beep(520, 0.07, "square", 0.12),
+  key: () => { beep(880, 0.1, "triangle", 0.16); beep(1320, 0.12, "triangle", 0.12, 0.06); },
+  bonus: () => { beep(660, 0.08, "sine", 0.15); beep(990, 0.1, "sine", 0.14, 0.05); },
+  door: () => { beep(220, 0.25, "sawtooth", 0.15); beep(440, 0.25, "sawtooth", 0.1, 0.08); },
+  levelComplete: () => { beep(523, 0.14, "triangle", 0.18); beep(659, 0.14, "triangle", 0.18, 0.14); beep(784, 0.22, "triangle", 0.2, 0.28); },
+  gameOver: () => { beep(300, 0.3, "sawtooth", 0.16); beep(180, 0.4, "sawtooth", 0.16, 0.22); },
+  step: () => { /* qadam ovozi ataylab o'chirilgan - bezovta qilmasligi uchun */ }
+};
+
+/* --------------------------- EKRAN BOSHQARUVI --------------------------- */
+const screens = document.querySelectorAll(".screen");
+function showScreen(id) {
+  screens.forEach(s => s.classList.toggle("active", s.id === id));
+}
+document.querySelectorAll("[data-back]").forEach(btn => {
+  btn.addEventListener("click", () => { Sound.click(); showScreen("screen-menu"); });
+});
+
+/* --------------------------- LABIRINT YARATISH --------------------------- */
+// Har bir katak: {N,S,E,W} - true bo'lsa devor bor
+function generateMazeCells(cols, rows) {
+  const cells = [];
+  for (let y = 0; y < rows; y++) {
+    const row = [];
+    for (let x = 0; x < cols; x++) row.push({ N: true, S: true, E: true, W: true, visited: false });
+    cells.push(row);
+  }
+  const stack = [{ x: 0, y: 0 }];
+  cells[0][0].visited = true;
+  while (stack.length) {
+    const cur = stack[stack.length - 1];
+    const { x, y } = cur;
+    const neighbors = [];
+    if (y > 0 && !cells[y - 1][x].visited) neighbors.push({ x, y: y - 1, dir: "N" });
+    if (y < rows - 1 && !cells[y + 1][x].visited) neighbors.push({ x, y: y + 1, dir: "S" });
+    if (x < cols - 1 && !cells[y][x + 1].visited) neighbors.push({ x: x + 1, y, dir: "E" });
+    if (x > 0 && !cells[y][x - 1].visited) neighbors.push({ x: x - 1, y, dir: "W" });
+    if (neighbors.length) {
+      const n = neighbors[randInt(0, neighbors.length - 1)];
+      if (n.dir === "N") { cells[y][x].N = false; cells[n.y][n.x].S = false; }
+      if (n.dir === "S") { cells[y][x].S = false; cells[n.y][n.x].N = false; }
+      if (n.dir === "E") { cells[y][x].E = false; cells[n.y][n.x].W = false; }
+      if (n.dir === "W") { cells[y][x].W = false; cells[n.y][n.x].E = false; }
+      cells[n.y][n.x].visited = true;
+      stack.push({ x: n.x, y: n.y });
+    } else {
+      stack.pop();
+    }
+  }
+  // Qo'shimcha tasodifiy davorlarni buzish (sikllar hosil qilish) - qiyinchilikni oshirmasdan xilma-xillik uchun
+  const extraLoops = Math.floor(cols * rows * 0.03);
+  for (let i = 0; i < extraLoops; i++) {
+    const x = randInt(0, cols - 1), y = randInt(0, rows - 1);
+    const dirs = ["N", "S", "E", "W"].filter(d => {
+      if (d === "N") return y > 0;
+      if (d === "S") return y < rows - 1;
+      if (d === "E") return x < cols - 1;
+      if (d === "W") return x > 0;
+    });
+    const d = dirs[randInt(0, dirs.length - 1)];
+    if (d === "N") { cells[y][x].N = false; cells[y - 1][x].S = false; }
+    if (d === "S") { cells[y][x].S = false; cells[y + 1][x].N = false; }
+    if (d === "E") { cells[y][x].E = false; cells[y][x + 1].W = false; }
+    if (d === "W") { cells[y][x].W = false; cells[y][x - 1].E = false; }
+  }
+  return cells;
+}
+
+// Katak grafigini ikkilangan binar to'rga aylantirish (0=yo'l, 1=devor)
+function buildBinaryGrid(cells, cols, rows) {
+  const gw = cols * 2 + 1, gh = rows * 2 + 1;
+  const grid = [];
+  for (let y = 0; y < gh; y++) grid.push(new Array(gw).fill(1));
+  for (let y = 0; y < rows; y++) {
+    for (let x = 0; x < cols; x++) {
+      const gx = x * 2 + 1, gy = y * 2 + 1;
+      grid[gy][gx] = 0;
+      if (!cells[y][x].N) grid[gy - 1][gx] = 0;
+      if (!cells[y][x].S) grid[gy + 1][gx] = 0;
+      if (!cells[y][x].E) grid[gy][gx + 1] = 0;
+      if (!cells[y][x].W) grid[gy][gx - 1] = 0;
+    }
+  }
+  return { grid, gw, gh };
+}
+
+/* --------------------------- DARAJA SOZLAMALARI --------------------------- */
+function getLevelConfig(n) {
+  let size = 5 + Math.floor((n - 1) * 0.85);
+  if (size % 2 === 0) size += 1;
+  size = Math.min(21, size);
+  const cols = size, rows = size;
+  const keys = Math.min(6, 1 + Math.floor((n - 1) / 3));
+  const bonusCount = Math.min(6, 2 + Math.floor(n / 4));
+  const baseTime = Math.round(cols * rows * 0.5) + 25;
+  const timeLimit = Math.max(28, baseTime - Math.floor(n / 2));
+  return { cols, rows, keys, bonusCount, timeLimit };
+}
+
+/* --------------------------- O'YIN HOLATI --------------------------- */
+const TILE = 34;              // dunyo birligi (piksel)
+const PLAYER_RADIUS = TILE * 0.28;
+const PLAYER_SPEED = TILE * 4.6; // sekundiga
+
+const state = {
+  level: 1,
+  totalScore: 0,
+  levelScore: 0,
+  grid: null, gw: 0, gh: 0,
+  keys: [],       // {x,y,taken}
+  bonuses: [],    // {x,y,type:'time'|'speed',taken}
+  exit: { x: 0, y: 0, unlocked: false },
+  keysTotal: 0, keysCollected: 0,
+  timeLimit: 60, timeLeft: 60,
+  player: { x: 0, y: 0, vx: 0, vy: 0, angle: 0 },
+  speedBoostUntil: 0,
+  running: false,
+  paused: false,
+  lastTs: 0,
+  camX: 0, camY: 0
+};
+
+/* --------------------------- LABIRINT / DARAJANI QURISH --------------------------- */
+function buildLevel(n) {
+  const cfg = getLevelConfig(n);
+  const cells = generateMazeCells(cfg.cols, cfg.rows);
+  const bg = buildBinaryGrid(cells, cfg.cols, cfg.rows);
+  state.grid = bg.grid; state.gw = bg.gw; state.gh = bg.gh;
+
+  // Ochiq kataklar ro'yxati (katak markazlari grid koordinatasida)
+  const openCells = [];
+  for (let cy = 0; cy < cfg.rows; cy++)
+    for (let cx = 0; cx < cfg.cols; cx++)
+      openCells.push({ gx: cx * 2 + 1, gy: cy * 2 + 1 });
+
+  const startCell = { gx: 1, gy: 1 };
+  const exitCell = { gx: (cfg.cols - 1) * 2 + 1, gy: (cfg.rows - 1) * 2 + 1 };
+
+  // Start va exitdan tashqari, bir-biridan farqli tasodifiy kataklar tanlash
+  const used = new Set([startCell.gx + "_" + startCell.gy, exitCell.gx + "_" + exitCell.gy]);
+  function pickFreeCell() {
+    let tries = 0;
+    while (tries < 400) {
+      const c = openCells[randInt(0, openCells.length - 1)];
+      const key = c.gx + "_" + c.gy;
+      if (!used.has(key)) { used.add(key); return c; }
+      tries++;
+    }
+    return null;
+  }
+
+  state.keys = [];
+  for (let i = 0; i < cfg.keys; i++) {
+    const c = pickFreeCell();
+    if (c) state.keys.push({ x: c.gx * TILE + TILE / 2, y: c.gy * TILE + TILE / 2, taken: false });
+  }
+  state.bonuses = [];
+  for (let i = 0; i < cfg.bonusCount; i++) {
+    const c = pickFreeCell();
+    if (c) state.bonuses.push({
+      x: c.gx * TILE + TILE / 2, y: c.gy * TILE + TILE / 2,
+      type: Math.random() < 0.5 ? "time" : "speed", taken: false
+    });
+  }
+
+  state.exit = { x: exitCell.gx * TILE + TILE / 2, y: exitCell.gy * TILE + TILE / 2, unlocked: false };
+  state.keysTotal = state.keys.length;
+  state.keysCollected = 0;
+  state.timeLimit = cfg.timeLimit;
+  state.timeLeft = cfg.timeLimit;
+  state.levelScore = 0;
+  state.speedBoostUntil = 0;
+
+  state.player.x = startCell.gx * TILE + TILE / 2;
+  state.player.y = startCell.gy * TILE + TILE / 2;
+  state.player.vx = 0; state.player.vy = 0; state.player.angle = 0;
+
+  updateHUD();
+}
+
+/* --------------------------- TO'QNASHUV / HARAKAT --------------------------- */
+function isWallTile(tx, ty) {
+  if (tx < 0 || ty < 0 || tx >= state.gw || ty >= state.gh) return true;
+  return state.grid[ty][tx] === 1;
+}
+function resolveAxis(x, y, axis) {
+  const R = PLAYER_RADIUS;
+  const minTX = Math.floor((x - R) / TILE), maxTX = Math.floor((x + R) / TILE);
+  const minTY = Math.floor((y - R) / TILE), maxTY = Math.floor((y + R) / TILE);
+  let val = axis === "x" ? x : y;
+  for (let ty = minTY; ty <= maxTY; ty++) {
+    for (let tx = minTX; tx <= maxTX; tx++) {
+      if (!isWallTile(tx, ty)) continue;
+      const rx = tx * TILE, ry = ty * TILE;
+      const cx = clamp(x, rx, rx + TILE), cy = clamp(y, ry, ry + TILE);
+      const dx = x - cx, dy = y - cy;
+      const distSq = dx * dx + dy * dy;
+      if (distSq < R * R) {
+        const dist = Math.sqrt(distSq) || 0.0001;
+        const overlap = R - dist;
+        if (axis === "x") val += (dx / dist) * overlap;
+        else val += (dy / dist) * overlap;
+      }
+    }
+  }
+  return val;
+}
+
+/* --------------------------- KIRISH (KLAVIATURA / JOYSTICK) --------------------------- */
+const input = { up: false, down: false, left: false, right: false, joyX: 0, joyY: 0, joyActive: false };
+
+window.addEventListener("keydown", (e) => {
+  if (["ArrowUp","ArrowDown","ArrowLeft","ArrowRight"," "].includes(e.key)) e.preventDefault();
+  const k = e.key.toLowerCase();
+  if (k === "w" || k === "arrowup") input.up = true;
+  if (k === "s" || k === "arrowdown") input.down = true;
+  if (k === "a" || k === "arrowleft") input.left = true;
+  if (k === "d" || k === "arrowright") input.right = true;
+  if (k === "escape") togglePause();
+});
+window.addEventListener("keyup", (e) => {
+  const k = e.key.toLowerCase();
+  if (k === "w" || k === "arrowup") input.up = false;
+  if (k === "s" || k === "arrowdown") input.down = false;
+  if (k === "a" || k === "arrowleft") input.left = false;
+  if (k === "d" || k === "arrowright") input.right = false;
+});
+
+// Virtual joystick (teginish orqali)
+const joyEl = document.getElementById("joystick");
+const joyStick = document.getElementById("joystickStick");
+let joyTouchId = null;
+
+function joyReset() {
+  joyStick.style.left = "35px"; joyStick.style.top = "35px";
+  input.joyX = 0; input.joyY = 0; input.joyActive = false; joyTouchId = null;
+}
+function joyHandle(clientX, clientY) {
+  const rect = joyEl.getBoundingClientRect();
+  const cx = rect.left + rect.width / 2, cy = rect.top + rect.height / 2;
+  let dx = clientX - cx, dy = clientY - cy;
+  const maxR = rect.width / 2 - 6;
+  const dist = Math.min(Math.hypot(dx, dy), maxR);
+  const angle = Math.atan2(dy, dx);
+  const sx = Math.cos(angle) * dist, sy = Math.sin(angle) * dist;
+  joyStick.style.left = (rect.width / 2 - 25 + sx) + "px";
+  joyStick.style.top = (rect.height / 2 - 25 + sy) + "px";
+  input.joyX = sx / maxR; input.joyY = sy / maxR; input.joyActive = true;
+}
+joyEl.addEventListener("touchstart", (e) => {
+  e.preventDefault();
+  const t = e.changedTouches[0];
+  joyTouchId = t.identifier;
+  joyHandle(t.clientX, t.clientY);
+}, { passive: false });
+joyEl.addEventListener("touchmove", (e) => {
+  e.preventDefault();
+  for (const t of e.changedTouches) if (t.identifier === joyTouchId) joyHandle(t.clientX, t.clientY);
+}, { passive: false });
+window.addEventListener("touchend", (e) => {
+  for (const t of e.changedTouches) if (t.identifier === joyTouchId) joyReset();
+});
+// Sichqoncha bilan ham joystikni sinash imkoniyati (kompyuterda teginish taqlidi)
+let mouseDownOnJoy = false;
+joyEl.addEventListener("mousedown", (e) => { mouseDownOnJoy = true; joyHandle(e.clientX, e.clientY); });
+window.addEventListener("mousemove", (e) => { if (mouseDownOnJoy) joyHandle(e.clientX, e.clientY); });
+window.addEventListener("mouseup", () => { if (mouseDownOnJoy) { mouseDownOnJoy = false; joyReset(); } });
+
+function computeInputVector() {
+  let vx = 0, vy = 0;
+  if (input.joyActive) {
+    vx = input.joyX; vy = input.joyY;
+  } else {
+    if (input.up) vy -= 1;
+    if (input.down) vy += 1;
+    if (input.left) vx -= 1;
+    if (input.right) vx += 1;
+  }
+  const len = Math.hypot(vx, vy);
+  if (len > 1) { vx /= len; vy /= len; }
+  return { vx, vy };
+}
+
+/* --------------------------- CANVAS / KAMERA --------------------------- */
+const canvas = document.getElementById("gameCanvas");
+const ctx = canvas.getContext("2d");
+function resizeCanvas() {
+  const gameScreen = document.getElementById("screen-game");
+  canvas.width = gameScreen.clientWidth || window.innerWidth;
+  canvas.height = gameScreen.clientHeight || window.innerHeight;
+}
+window.addEventListener("resize", resizeCanvas);
+
+function updateCamera() {
+  const worldW = state.gw * TILE, worldH = state.gh * TILE;
+  state.camX = worldW <= canvas.width ? -(canvas.width - worldW) / 2 : clamp(state.player.x - canvas.width / 2, 0, worldW - canvas.width);
+  state.camY = worldH <= canvas.height ? -(canvas.height - worldH) / 2 : clamp(state.player.y - canvas.height / 2, 0, worldH - canvas.height);
+}
+
+/* --------------------------- RENDER --------------------------- */
+function draw(ts) {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.save();
+  ctx.translate(-state.camX, -state.camY);
+
+  const minTX = Math.max(0, Math.floor(state.camX / TILE) - 1);
+  const maxTX = Math.min(state.gw - 1, Math.ceil((state.camX + canvas.width) / TILE) + 1);
+  const minTY = Math.max(0, Math.floor(state.camY / TILE) - 1);
+  const maxTY = Math.min(state.gh - 1, Math.ceil((state.camY + canvas.height) / TILE) + 1);
+
+  // Devorlar
+  ctx.shadowColor = "#23f3ff";
+  ctx.shadowBlur = 10;
+  ctx.fillStyle = "#0b2233";
+  ctx.strokeStyle = "rgba(35,243,255,0.85)";
+  ctx.lineWidth = 1.4;
+  for (let ty = minTY; ty <= maxTY; ty++) {
+    for (let tx = minTX; tx <= maxTX; tx++) {
+      if (state.grid[ty][tx] === 1) {
+        const x = tx * TILE, y = ty * TILE;
+        ctx.fillRect(x + 1, y + 1, TILE - 2, TILE - 2);
+        ctx.strokeRect(x + 1, y + 1, TILE - 2, TILE - 2);
+      }
+    }
+  }
+  ctx.shadowBlur = 0;
+
+  const pulse = 0.5 + 0.5 * Math.sin(ts / 220);
+
+  // Kalitlar
+  state.keys.forEach(k => {
+    if (k.taken) return;
+    ctx.save();
+    ctx.translate(k.x, k.y);
+    ctx.rotate(Math.PI / 4);
+    const s = TILE * 0.22 + pulse * 2;
+    ctx.shadowColor = "#ffe066"; ctx.shadowBlur = 14;
+    ctx.fillStyle = "#ffe066";
+    ctx.fillRect(-s, -s, s * 2, s * 2);
+    ctx.restore();
+  });
+
+  // Bonuslar
+  state.bonuses.forEach(b => {
+    if (b.taken) return;
+    const r = TILE * 0.2 + pulse * 2;
+    ctx.save();
+    ctx.translate(b.x, b.y);
+    if (b.type === "time") {
+      ctx.shadowColor = "#23f3ff"; ctx.shadowBlur = 14;
+      ctx.strokeStyle = "#23f3ff"; ctx.lineWidth = 2.4;
+      ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(0, -r * 0.7); ctx.moveTo(0, 0); ctx.lineTo(r * 0.5, 0); ctx.stroke();
+    } else {
+      ctx.shadowColor = "#ffb347"; ctx.shadowBlur = 14;
+      ctx.fillStyle = "#ffb347";
+      ctx.beginPath();
+      ctx.moveTo(-r * 0.3, -r); ctx.lineTo(r * 0.6, -r * 0.15); ctx.lineTo(r * 0.05, -r * 0.15);
+      ctx.lineTo(r * 0.3, r); ctx.lineTo(-r * 0.6, r * 0.15); ctx.lineTo(-r * 0.05, r * 0.15);
+      ctx.closePath(); ctx.fill();
+    }
+    ctx.restore();
+  });
+
+  // Chiqish eshigi
+  {
+    const x = state.exit.x, y = state.exit.y;
+    const unlocked = state.keysCollected >= state.keysTotal;
+    ctx.save();
+    ctx.translate(x, y);
+    const color = unlocked ? "#39ff8f" : "#ff2e5e";
+    ctx.shadowColor = color; ctx.shadowBlur = 16 + pulse * 8;
+    ctx.fillStyle = color;
+    ctx.globalAlpha = 0.85;
+    const s = TILE * 0.42;
+    ctx.fillRect(-s, -s, s * 2, s * 2);
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = "#ffffff";
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(-s, -s, s * 2, s * 2);
+    ctx.restore();
+  }
+
+  // O'yinchi
+  {
+    const p = state.player;
+    ctx.save();
+    ctx.translate(p.x, p.y);
+    const boosted = ts < state.speedBoostUntil;
+    ctx.shadowColor = boosted ? "#ffb347" : "#ff2ee6";
+    ctx.shadowBlur = 20;
+    const grad = ctx.createRadialGradient(0, 0, 1, 0, 0, PLAYER_RADIUS);
+    grad.addColorStop(0, "#ffffff");
+    grad.addColorStop(0.5, boosted ? "#ffcf80" : "#ff7bf0");
+    grad.addColorStop(1, boosted ? "#ff8c00" : "#a800c9");
+    ctx.fillStyle = grad;
+    ctx.beginPath(); ctx.arc(0, 0, PLAYER_RADIUS, 0, Math.PI * 2); ctx.fill();
+    // Yo'nalish ko'rsatkichi
+    ctx.rotate(p.angle);
+    ctx.fillStyle = "#ffffff";
+    ctx.beginPath();
+    ctx.moveTo(PLAYER_RADIUS * 0.9, 0);
+    ctx.lineTo(PLAYER_RADIUS * 0.1, PLAYER_RADIUS * 0.45);
+    ctx.lineTo(PLAYER_RADIUS * 0.1, -PLAYER_RADIUS * 0.45);
+    ctx.closePath(); ctx.fill();
+    ctx.restore();
+  }
+
+  ctx.restore();
+}
+
+/* --------------------------- YANGILASH (UPDATE) --------------------------- */
+function update(dt, ts) {
+  const { vx, vy } = computeInputVector();
+  const moving = vx !== 0 || vy !== 0;
+  const speed = PLAYER_SPEED * (ts < state.speedBoostUntil ? 1.7 : 1);
+
+  if (moving) {
+    state.player.angle = Math.atan2(vy, vx);
+    const nx = state.player.x + vx * speed * dt;
+    state.player.x = resolveAxis(nx, state.player.y, "x");
+    const ny = state.player.y + vy * speed * dt;
+    state.player.y = resolveAxis(state.player.x, ny, "y");
+  }
+
+  // Kalit yig'ish
+  state.keys.forEach(k => {
+    if (k.taken) return;
+    const d = Math.hypot(state.player.x - k.x, state.player.y - k.y);
+    if (d < PLAYER_RADIUS + TILE * 0.22) {
+      k.taken = true; state.keysCollected++;
+      const pts = 100 + state.level * 10;
+      state.levelScore += pts;
+      Sound.key();
+      showToast("Kalit topildi! +" + pts);
+      updateHUD();
+      if (state.keysCollected >= state.keysTotal) {
+        Sound.door();
+        showToast("Barcha kalitlar yig'ildi! Eshik ochildi.");
+      }
+    }
+  });
+
+  // Bonus yig'ish
+  state.bonuses.forEach(b => {
+    if (b.taken) return;
+    const d = Math.hypot(state.player.x - b.x, state.player.y - b.y);
+    if (d < PLAYER_RADIUS + TILE * 0.2) {
+      b.taken = true;
+      Sound.bonus();
+      if (b.type === "time") {
+        state.timeLeft += 12;
+        showToast("+12 soniya vaqt!");
+      } else {
+        state.speedBoostUntil = ts + 6000;
+        showToast("Tezlik oshdi!");
+      }
+      state.levelScore += 20;
+      updateHUD();
+    }
+  });
+
+  // Chiqish eshigi
+  if (state.keysCollected >= state.keysTotal) {
+    const d = Math.hypot(state.player.x - state.exit.x, state.player.y - state.exit.y);
+    if (d < PLAYER_RADIUS + TILE * 0.35) {
+      completeLevel();
+      return;
+    }
+  }
+
+  // Taymer
+  state.timeLeft -= dt;
+  if (state.timeLeft <= 0) {
+    state.timeLeft = 0;
+    triggerGameOver();
+    return;
+  }
+  updateHUD();
+}
+
+/* --------------------------- HUD --------------------------- */
+const hudLevel = document.getElementById("hudLevel");
+const hudTimer = document.getElementById("hudTimer");
+const hudScore = document.getElementById("hudScore");
+const hudKeys = document.getElementById("hudKeys");
+const hudTimerBox = document.getElementById("hudTimerBox");
+
+function updateHUD() {
+  hudLevel.textContent = state.level;
+  hudTimer.textContent = fmtTime(state.timeLeft);
+  hudScore.textContent = state.totalScore + state.levelScore;
+  hudKeys.textContent = state.keysCollected + "/" + state.keysTotal;
+  hudTimerBox.classList.toggle("timer-warn", state.timeLeft < 10);
+}
+
+/* --------------------------- TOAST --------------------------- */
+let toastTimer = null;
+function showToast(msg) {
+  const t = document.getElementById("toast");
+  t.textContent = msg;
+  t.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove("show"), 1800);
+}
+
+/* --------------------------- O'YIN TSIKLI --------------------------- */
+function loop(ts) {
+  if (!state.running) return;
+  if (!state.lastTs) state.lastTs = ts;
+  const dt = Math.min(0.05, (ts - state.lastTs) / 1000);
+  state.lastTs = ts;
+
+  if (!state.paused) {
+    update(dt, ts);
+  }
+  updateCamera();
+  draw(ts);
+  requestAnimationFrame(loop);
+}
+
+/* --------------------------- DARAJA / O'YIN BOSHQARUVI --------------------------- */
+function startLevel(n) {
+  state.level = n;
+  buildLevel(n);
+  resizeCanvas();
+  showScreen("screen-game");
+  document.getElementById("joystick").classList.toggle("show", settings.joystickAlways || isTouchDevice());
+  state.running = true;
+  state.paused = false;
+  state.lastTs = 0;
+  hideAllOverlays();
+  requestAnimationFrame(loop);
+}
+
+function isTouchDevice() {
+  return ("ontouchstart" in window) || navigator.maxTouchPoints > 0;
+}
+
+function completeLevel() {
+  state.running = false;
+  const timeBonus = Math.round(state.timeLeft * 8);
+  const totalLevelScore = state.levelScore + timeBonus;
+  state.totalScore += totalLevelScore;
+
+  if (state.totalScore > bestData.score) bestData.score = state.totalScore;
+  if (state.level > bestData.level) bestData.level = state.level;
+  saveJSON(STORAGE_KEYS.best, bestData);
+
+  if (state.level + 1 > unlockedLevel) {
+    unlockedLevel = Math.min(20, state.level + 1);
+    saveJSON(STORAGE_KEYS.unlocked, unlockedLevel);
+  }
+
+  Sound.levelComplete();
+
+  if (state.level >= 20) {
+    document.getElementById("winTotalScore").textContent = state.totalScore;
+    document.getElementById("overlay-win").classList.remove("hidden");
+    return;
+  }
+
+  document.getElementById("lcTime").textContent = fmtTime(state.timeLeft);
+  document.getElementById("lcTimeBonus").textContent = "+" + timeBonus;
+  document.getElementById("lcLevelScore").textContent = "+" + state.levelScore;
+  document.getElementById("lcTotalScore").textContent = state.totalScore;
+  document.getElementById("overlay-levelcomplete").classList.remove("hidden");
+}
+
+function triggerGameOver() {
+  state.running = false;
+  Sound.gameOver();
+  document.getElementById("overlay-gameover").classList.remove("hidden");
+}
+
+function togglePause() {
+  if (!state.running && !state.paused) return;
+  if (document.getElementById("screen-game").classList.contains("active") === false) return;
+  state.paused = !state.paused;
+  document.getElementById("overlay-pause").classList.toggle("hidden", !state.paused);
+}
+
+function hideAllOverlays() {
+  ["overlay-pause", "overlay-levelcomplete", "overlay-gameover", "overlay-win"].forEach(id =>
+    document.getElementById(id).classList.add("hidden"));
+}
+
+/* --------------------------- TUGMALAR --------------------------- */
+document.getElementById("btnStart").addEventListener("click", () => { Sound.click(); startLevel(1); });
+document.getElementById("btnLevels").addEventListener("click", () => { Sound.click(); renderLevelsGrid(); showScreen("screen-levels"); });
+document.getElementById("btnBest").addEventListener("click", () => {
+  Sound.click();
+  document.getElementById("bestScoreVal").textContent = bestData.score;
+  document.getElementById("bestLevelVal").textContent = bestData.level;
+  showScreen("screen-best");
+});
+document.getElementById("btnHowTo").addEventListener("click", () => { Sound.click(); showScreen("screen-howto"); });
+document.getElementById("btnSettings").addEventListener("click", () => { Sound.click(); showScreen("screen-settings"); });
+
+document.getElementById("pauseBtn").addEventListener("click", () => { Sound.click(); togglePause(); });
+document.getElementById("btnResume").addEventListener("click", () => { Sound.click(); togglePause(); });
+document.getElementById("btnRestartFromPause").addEventListener("click", () => {
+  Sound.click(); state.paused = false; document.getElementById("overlay-pause").classList.add("hidden");
+  startLevel(state.level);
+});
+document.getElementById("btnMenuFromPause").addEventListener("click", () => {
+  Sound.click(); state.running = false; state.paused = false; hideAllOverlays(); showScreen("screen-menu");
+});
+
+document.getElementById("btnNextLevel").addEventListener("click", () => {
+  Sound.click(); hideAllOverlays();
+  startLevel(Math.min(20, state.level + 1));
+});
+document.getElementById("btnMenuFromLC").addEventListener("click", () => {
+  Sound.click(); hideAllOverlays(); showScreen("screen-menu");
+});
+document.getElementById("btnMenuFromWin").addEventListener("click", () => {
+  Sound.click(); hideAllOverlays(); showScreen("screen-menu");
+});
+
+document.getElementById("btnRetryGO").addEventListener("click", () => {
+  Sound.click(); hideAllOverlays(); startLevel(state.level);
+});
+document.getElementById("btnMenuFromGO").addEventListener("click", () => {
+  Sound.click(); hideAllOverlays(); showScreen("screen-menu");
+});
+
+/* Sozlamalar */
+const soundToggle = document.getElementById("soundToggle");
+const joystickToggle = document.getElementById("joystickToggle");
+soundToggle.checked = settings.sound;
+joystickToggle.checked = settings.joystickAlways;
+soundToggle.addEventListener("change", () => {
+  settings.sound = soundToggle.checked;
+  saveJSON(STORAGE_KEYS.settings, settings);
+  if (settings.sound) Sound.click();
+});
+joystickToggle.addEventListener("change", () => {
+  settings.joystickAlways = joystickToggle.checked;
+  saveJSON(STORAGE_KEYS.settings, settings);
+  Sound.click();
+});
+document.getElementById("btnResetProgress").addEventListener("click", () => {
+  Sound.click();
+  bestData = { score: 0, level: 1 };
+  unlockedLevel = 1;
+  saveJSON(STORAGE_KEYS.best, bestData);
+  saveJSON(STORAGE_KEYS.unlocked, unlockedLevel);
+  showToastGlobal("Progress tozalandi");
+});
+function showToastGlobal(msg) {
+  // Bosh menyuda ham qisqa xabar ko'rsatish uchun oddiy alert o'rniga vaqtinchalik yorliq
+  const el = document.createElement("div");
+  el.textContent = msg;
+  el.style.cssText = "position:fixed;top:20px;left:50%;transform:translateX(-50%);background:rgba(10,14,28,0.95);border:1px solid rgba(35,243,255,0.6);color:#baf8ff;padding:8px 18px;border-radius:8px;z-index:999;box-shadow:0 0 12px rgba(35,243,255,0.4);font-size:13px;";
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 1800);
+}
+
+/* --------------------------- DARAJALAR TO'RI --------------------------- */
+function renderLevelsGrid() {
+  const grid = document.getElementById("levelsGrid");
+  grid.innerHTML = "";
+  for (let i = 1; i <= 20; i++) {
+    const cell = document.createElement("div");
+    const locked = i > unlockedLevel;
+    cell.className = "level-cell" + (locked ? " locked" : "") + (i < unlockedLevel ? " done" : "");
+    cell.textContent = locked ? "🔒" : i;
+    if (!locked) {
+      cell.addEventListener("click", () => { Sound.click(); startLevel(i); });
+    }
+    grid.appendChild(cell);
+  }
+}
+
+/* --------------------------- ISHGA TUSHIRISH --------------------------- */
+window.addEventListener("resize", () => {
+  if (document.getElementById("screen-game").classList.contains("active")) resizeCanvas();
+});
+resizeCanvas();
+if (isTouchDevice()) document.getElementById("joystick").classList.add("show");
+</script>
+</body>
+</html>
