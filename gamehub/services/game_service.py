@@ -15,7 +15,7 @@ from config import config
 
 logger = logging.getLogger(__name__)
 
-# Absolute path to the webapp directory (gamehub/webapp/)
+# Absolute path to webapp/ directory (gamehub/webapp/)
 WEBAPP_DIR = Path(__file__).parent.parent / "webapp"
 
 
@@ -36,7 +36,7 @@ def _build_caption(game: dict) -> str:
 async def send_game_card(message: Message, game: dict) -> None:
     """Send one game as a Telegram photo (or text fallback) with Play button."""
     keyboard = _build_keyboard(game)
-    caption = _build_caption(game)
+    caption  = _build_caption(game)
     image_url: str = game.get("image_url", "")
 
     # 1) Local file stored under webapp/assets/games/
@@ -52,7 +52,7 @@ async def send_game_card(message: Message, game: dict) -> None:
                 )
                 return
             except Exception as exc:
-                logger.warning("Photo send failed (%s), falling back to text: %s", file_path, exc)
+                logger.warning("Local photo failed (%s), falling back: %s", file_path, exc)
 
     # 2) Remote URL
     if image_url.startswith("http"):
@@ -65,7 +65,7 @@ async def send_game_card(message: Message, game: dict) -> None:
             )
             return
         except Exception as exc:
-            logger.warning("Remote photo send failed, falling back to text: %s", exc)
+            logger.warning("Remote photo failed, falling back: %s", exc)
 
-    # 3) Text fallback (no image or broken image)
+    # 3) Text fallback
     await message.answer(caption, reply_markup=keyboard, parse_mode="HTML")
