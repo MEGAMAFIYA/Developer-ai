@@ -74,3 +74,33 @@ async def update_game_image(slug: str, image_url: str) -> None:
     await pool.execute(
         "UPDATE games SET image_url = $1 WHERE slug = $2", image_url, slug
     )
+
+
+async def update_game(
+    slug: str,
+    name: str,
+    description: str,
+    image_url: str,
+    html_file: str,
+    category: str,
+    tags: str,
+    active: bool,
+) -> dict:
+    """Update all editable fields of a game. Slug and ID are never changed."""
+    pool = await get_global_pool()
+    row = await pool.fetchrow(
+        """
+        UPDATE games
+        SET name        = $2,
+            description = $3,
+            image_url   = $4,
+            html_file   = $5,
+            category    = $6,
+            tags        = $7,
+            active      = $8
+        WHERE slug = $1
+        RETURNING *
+        """,
+        slug, name, description, image_url, html_file, category, tags, active,
+    )
+    return dict(row) if row else {}
