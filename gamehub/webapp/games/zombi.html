@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Zombi Omon Qolish</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
 <style>
   :root{
     --neon-green:#00ff9d;
@@ -844,6 +845,23 @@ function loop(ts){
 }
 requestAnimationFrame(loop);
 
+/* ======================================================
+   TELEGRAM WEBAPP: NATIJA YUBORISH
+====================================================== */
+async function submitScore(finalScore){
+  try {
+    const tg = window.Telegram && window.Telegram.WebApp;
+    if(!tg || !tg.initData) return;
+    await fetch('/api/scores', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ game: 'zombi', score: finalScore, init_data: tg.initData })
+    });
+  } catch(e) {
+    console.warn('submitScore error:', e);
+  }
+}
+
 function endGame(){
   gameState = 'gameover';
   sndGameOver();
@@ -855,6 +873,7 @@ function endGame(){
   document.getElementById('finalScore').textContent = score;
   document.getElementById('finalBest').textContent = bestScore;
   openOverlay('overlay-gameover');
+  submitScore(score);
 }
 
 function dmgCost(){ return 20 * upgrades.damageLevel; }

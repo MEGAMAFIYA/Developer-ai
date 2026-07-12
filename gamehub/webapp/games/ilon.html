@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Ilon O'yini</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
 <style>
   /* ===================== ASOSIY O'ZGARUVCHILAR ===================== */
   :root{
@@ -770,6 +771,23 @@
     }
   }
 
+  /* ======================================================
+     TELEGRAM WEBAPP: NATIJA YUBORISH
+  ====================================================== */
+  async function submitScore(finalScore){
+    try {
+      const tg = window.Telegram && window.Telegram.WebApp;
+      if(!tg || !tg.initData) return;
+      await fetch('/api/scores', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ game: 'snake', score: finalScore, init_data: tg.initData })
+      });
+    } catch(e) {
+      console.warn('submitScore error:', e);
+    }
+  }
+
   function triggerGameOver(){
     isGameOver = true;
     SoundFX.gameOver();
@@ -783,6 +801,7 @@
     el.finalScore.textContent = score;
     el.newBestLabel.classList.toggle("hidden", !isNewBest);
     el.gameOverOverlay.classList.remove("hidden");
+    submitScore(score);
   }
 
   /* ==========================================================
