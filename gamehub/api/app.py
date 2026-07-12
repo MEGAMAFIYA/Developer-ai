@@ -3,6 +3,7 @@
 from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -22,12 +23,58 @@ app.add_middleware(
 # ---------------------------------------------------------------------------
 
 WEBAPP_DIR = Path(__file__).parent.parent / "webapp"
+GAMES_DIR  = WEBAPP_DIR / "games"
 
-# Ensure assets directory exists before mounting
+# Ensure directories exist before mounting
 (WEBAPP_DIR / "assets" / "games").mkdir(parents=True, exist_ok=True)
+GAMES_DIR.mkdir(parents=True, exist_ok=True)
 
 if WEBAPP_DIR.exists():
     app.mount("/webapp", StaticFiles(directory=str(WEBAPP_DIR), html=True), name="webapp")
+
+# ---------------------------------------------------------------------------
+# Game route  GET /games/{slug}  → serves webapp/games/{slug}.html
+# ---------------------------------------------------------------------------
+
+_NOT_FOUND_HTML = """<!DOCTYPE html>
+<html lang="uz">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>O'yin topilmadi</title>
+  <style>
+    body {{ margin: 0; display: flex; flex-direction: column; align-items: center;
+            justify-content: center; min-height: 100vh;
+            background: #1a1a2e; color: #eee; font-family: sans-serif; text-align: center; }}
+    h1 {{ font-size: 3rem; margin-bottom: .5rem; }}
+    p  {{ font-size: 1.1rem; color: #aaa; }}
+    a  {{ margin-top: 1.5rem; display: inline-block; padding: .6rem 1.4rem;
+           background: #e94560; color: #fff; border-radius: 8px;
+           text-decoration: none; font-weight: bold; }}
+  </style>
+</head>
+<body>
+  <h1>🎮 404</h1>
+  <p>Kechirasiz, <strong>{slug}</strong> o'yini topilmadi.</p>
+  <a href="javascript:window.history.back()">← Orqaga</a>
+</body>
+</html>"""
+
+
+@app.get("/games/{slug}")
+async def serve_game(slug: str):
+    """Return the HTML game file for the given slug, or a friendly 404 page."""
+    # Basic slug safety: only allow alphanumeric, dash, underscore
+    safe = all(c.isalnum() or c in "-_" for c in slug)
+    if not safe:
+        return HTMLResponse(_NOT_FOUND_HTML.format(slug=slug), status_code=404)
+
+    game_file = GAMES_DIR / f"{slug}.html"
+    if game_file.exists():
+        return FileResponse(str(game_file), media_type="text/html")
+
+    return HTMLResponse(_NOT_FOUND_HTML.format(slug=slug), status_code=404)
+
 
 # ---------------------------------------------------------------------------
 # API routes

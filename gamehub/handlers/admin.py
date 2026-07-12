@@ -66,8 +66,8 @@ def _confirm_keyboard() -> InlineKeyboardMarkup:
     ]])
 
 
-def _play_keyboard(html_file: str) -> InlineKeyboardMarkup:
-    url = f"{config.WEBAPP_URL.rstrip('/')}/webapp/games/{html_file}"
+def _play_keyboard(slug: str) -> InlineKeyboardMarkup:
+    url = f"{config.WEBAPP_URL.rstrip('/')}/games/{slug}"
     return InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text="🎮 O'ynash", web_app=WebAppInfo(url=url))
     ]])

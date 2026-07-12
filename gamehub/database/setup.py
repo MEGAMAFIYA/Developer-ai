@@ -63,7 +63,7 @@ INITIAL_GAMES = [
         "slug": "snake",
         "name": "🐍 Ilon O'yini",
         "description": "Klassik ilon o'yini. Ovqat ye, o'sib bor!",
-        "html_file": "ilon.html",
+        "html_file": "snake.html",
         "category": "arcade",
         "image_url": "",
     },

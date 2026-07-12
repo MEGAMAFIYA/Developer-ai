@@ -20,7 +20,7 @@ WEBAPP_DIR = Path(__file__).parent.parent / "webapp"
 
 
 def _build_keyboard(game: dict) -> InlineKeyboardMarkup:
-    url = f"{config.WEBAPP_URL.rstrip('/')}/webapp/games/{game['html_file']}"
+    url = f"{config.WEBAPP_URL.rstrip('/')}/games/{game['slug']}"
     return InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text="🎮 O'ynash", web_app=WebAppInfo(url=url))
     ]])
