@@ -55,7 +55,17 @@ async def main() -> None:
     await init_databases()
     logger.info("Databases ready.")
 
-    await asyncio.gather(start_bot(), start_server())
+    try:
+        await asyncio.gather(start_bot(), start_server())
+    finally:
+        try:
+            await close_global_pool()
+        except Exception:
+            pass
+        try:
+            await close_game_pool()
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":
@@ -63,6 +73,3 @@ if __name__ == "__main__":
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
         logger.info("Shutting down.")
-    finally:
-        asyncio.run(close_global_pool())
-        asyncio.run(close_game_pool())
