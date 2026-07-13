@@ -14,6 +14,8 @@ from handlers.developer.modules.ai.callbacks import (
     # Phase 3 — live features
     AI_CHAT, AI_WRITE_CODE, AI_EDIT_CODE, AI_ANALYZE_CODE,
     AI_CREATE_GAME, AI_IMPROVE_GAME, AI_FIND_BUG, AI_FIX_BUG,
+    # Phase 4 — key management
+    AI_KEY_SETTINGS,
 )
 
 # ── Menu display text ─────────────────────────────────────────────────────────
@@ -24,6 +26,25 @@ AI_MENU_TEXT = (
     "yarating, tahrirlang va rivojlantiring.\n\n"
     "<i>Kerakli bo'limni tanlang:</i>"
 )
+
+
+def ai_menu_text_with_status() -> str:
+    """Menu text that includes a live API connection status line."""
+    from handlers.developer.modules.ai.services import get_ai_status
+    s = get_ai_status()
+    if s["configured"]:
+        status = f"✅ AI ulangan ({s['provider']})"
+    elif s["provider"] and not s["has_key"]:
+        status = f"❌ API key kiritilmagan ({s['provider']})"
+    else:
+        status = "❌ AI sozlanmagan"
+    return (
+        f"🤖 <b>AI Developer</b>\n\n"
+        f"Holat: {status}\n\n"
+        "Sun'iy intellekt yordamida o'yinlaringizni\n"
+        "yarating, tahrirlang va rivojlantiring.\n\n"
+        "<i>Kerakli bo'limni tanlang:</i>"
+    )
 
 # ── Keyboard builders ─────────────────────────────────────────────────────────
 
@@ -73,6 +94,11 @@ def ai_menu_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text=label, callback_data=cb)
             for cb, label in pair
         ])
+
+    # Phase 4 — API key management (full-width)
+    rows.append([
+        InlineKeyboardButton(text="🔑 API Sozlamalar", callback_data=AI_KEY_SETTINGS),
+    ])
 
     # Footer: back to Developer Mode main menu
     rows.append([

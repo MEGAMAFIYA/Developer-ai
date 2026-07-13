@@ -1,0 +1,1 @@
+- [AI Dev Phase 4 architecture](ai-dev-phase4.md) — API key stored in `settings` DB table; manager reloaded at runtime via `services.reload_manager()`; loaded from DB on every startup via `_load_ai_settings()` in `setup.py`.

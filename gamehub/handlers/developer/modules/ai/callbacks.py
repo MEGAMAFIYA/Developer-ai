@@ -64,6 +64,13 @@ AI_PROJ_TEST   = "ai:proj:test"     # 🧪 To'liq test
 AI_PROJ_BACKUP = "ai:proj:backup"   # 📦 Backup yaratish
 AI_PROJ_OK     = "ai:proj:ok"       # ✅ confirm backup
 
+# ── Phase 4 — API Key Management (key_manager.py) ────────────────────────────
+AI_KEY_SETTINGS  = "ai:key"              # 🔑 Open key management screen
+AI_KEY_CHANGE    = "ai:key:change"       # ✏️ Enter new API key (FSM)
+AI_KEY_DELETE    = "ai:key:delete"       # 🗑 Prompt confirmation
+AI_KEY_DELETE_OK = "ai:key:delete:ok"   # ✅ Confirm delete
+AI_KEY_TEST      = "ai:key:test"         # 🔌 Test connection to provider
+
 # ── Flat list for middleware / tests ─────────────────────────────────────────
 ALL_AI_CALLBACKS = (
     AI_DESIGN,
@@ -92,4 +99,6 @@ ALL_AI_CALLBACKS = (
     AI_DB_QUERY, AI_DB_STATS, AI_DB_OK, AI_DB_GLOBAL, AI_DB_GAME,
     # Phase 4 — Project Tools
     AI_PROJ_SCAN, AI_PROJ_MAP, AI_PROJ_TEST, AI_PROJ_BACKUP, AI_PROJ_OK,
+    # Phase 4 — Key Management
+    AI_KEY_SETTINGS, AI_KEY_CHANGE, AI_KEY_DELETE, AI_KEY_DELETE_OK, AI_KEY_TEST,
 )

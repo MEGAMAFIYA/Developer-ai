@@ -16,14 +16,16 @@ Usage
 Singleton
 ─────────
 `get_manager()` creates the AIProviderManager once from config on first call.
-Re-reading config each time would break if env vars change at runtime — the
-singleton is intentional.  To hot-reload, restart the bot process.
+`reload_manager()` replaces the singleton with new credentials — called after
+the admin saves a new API key via Telegram.
 """
 
 from __future__ import annotations
 
 import logging
 from typing import Optional
+
+import aiohttp
 
 import config as cfg
 from handlers.developer.modules.ai.providers import AIProviderManager, AIResponse
@@ -52,9 +54,207 @@ def get_manager() -> AIProviderManager:
     return _manager
 
 
+def reload_manager(provider: str, api_key: str, model: str) -> AIProviderManager:
+    """Replace the singleton with fresh credentials and return the new manager.
+
+    Called after the admin saves/changes/deletes the API key via Telegram.
+    """
+    global _manager
+    _manager = AIProviderManager(
+        provider_name=provider,
+        api_key=api_key,
+        model=model,
+    )
+    logger.info("AIProviderManager reloaded: provider=%s", provider or "none")
+    return _manager
+
+
+# ── Status helpers ────────────────────────────────────────────────────────────
+
+def get_ai_status() -> dict:
+    """Return a dict describing the current AI configuration state.
+
+    Keys:
+        provider   str  — provider name or ''
+        model      str  — model name or ''
+        has_key    bool — True if api_key is non-empty
+        configured bool — True if provider is known & has key
+    """
+    m = get_manager()
+    provider = m.active_provider if m.active_provider != "none" else ""
+    has_key = bool(m._provider and m._provider.api_key) if m._provider else False
+    model = m._provider.model if m._provider else ""
+    return {
+        "provider":   provider,
+        "model":      model,
+        "has_key":    has_key,
+        "configured": bool(provider) and has_key,
+    }
+
+
+def build_status_text() -> str:
+    """Human-readable status block for the AI key management screen."""
+    s = get_ai_status()
+    provider = s["provider"] or "—"
+    model    = s["model"] or "—"
+
+    if not s["provider"]:
+        status_line = "❌ Provider o'rnatilmagan"
+    elif not s["has_key"]:
+        status_line = "❌ API key kiritilmagan"
+    else:
+        status_line = "✅ Ulangan"
+
+    return (
+        f"🔑 <b>AI API Sozlamalari</b>\n\n"
+        f"Holat: {status_line}\n"
+        f"Provider: <code>{provider}</code>\n"
+        f"Model: <code>{model}</code>\n\n"
+        f"<i>API key xavfsiz bazada saqlanadi va faqat sizga ko'rinadi.</i>"
+    )
+
+
+# ── Test connection ───────────────────────────────────────────────────────────
+
+# Provider → (url, headers_fn, payload_fn)
+_TEST_CONFIGS: dict[str, dict] = {
+    "openai": {
+        "url": "https://api.openai.com/v1/chat/completions",
+        "payload": lambda model: {
+            "model": model or "gpt-4o-mini",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "max_tokens": 1,
+        },
+        "auth": "bearer",
+    },
+    "openrouter": {
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "payload": lambda model: {
+            "model": model or "openai/gpt-4o-mini",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "max_tokens": 1,
+        },
+        "auth": "bearer",
+    },
+    "deepseek": {
+        "url": "https://api.deepseek.com/v1/chat/completions",
+        "payload": lambda model: {
+            "model": model or "deepseek-chat",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "max_tokens": 1,
+        },
+        "auth": "bearer",
+    },
+    "gemini": {
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+        "payload": lambda model: {
+            "contents": [{"parts": [{"text": "Hi"}]}],
+            "generationConfig": {"maxOutputTokens": 1},
+        },
+        "auth": "query",
+    },
+    "claude": {
+        "url": "https://api.anthropic.com/v1/messages",
+        "payload": lambda model: {
+            "model": model or "claude-3-haiku-20240307",
+            "max_tokens": 1,
+            "messages": [{"role": "user", "content": "Hi"}],
+        },
+        "auth": "anthropic",
+    },
+}
+
+
+async def test_connection() -> AIResponse:
+    """Send a minimal real request to the configured provider and return status."""
+    s = get_ai_status()
+    provider = s["provider"]
+    model    = s["model"]
+
+    if not provider:
+        return AIResponse.failure(
+            "Provider o'rnatilmagan.", provider="none", model=""
+        )
+    m = get_manager()
+    api_key = m._provider.api_key if m._provider else ""
+    if not api_key:
+        return AIResponse.failure(
+            "API key kiritilmagan.", provider=provider, model=model
+        )
+
+    cfg_entry = _TEST_CONFIGS.get(provider)
+    if not cfg_entry:
+        return AIResponse.failure(
+            f"Test uchun {provider} konfiguratsiyasi topilmadi.",
+            provider=provider,
+            model=model,
+        )
+
+    url     = cfg_entry["url"]
+    payload = cfg_entry["payload"](model)
+    auth    = cfg_entry["auth"]
+
+    if auth == "bearer":
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+    elif auth == "anthropic":
+        headers = {
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01",
+            "Content-Type": "application/json",
+        }
+    elif auth == "query":
+        url = url.format(model=model or "gemini-1.5-flash")
+        url = f"{url}?key={api_key}"
+        headers = {"Content-Type": "application/json"}
+    else:
+        headers = {"Content-Type": "application/json"}
+
+    try:
+        timeout = aiohttp.ClientTimeout(total=15)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post(url, json=payload, headers=headers) as resp:
+                if resp.status in (200, 201):
+                    return AIResponse.success(
+                        f"✅ Ulanish muvaffaqiyatli!\n"
+                        f"Provider: <b>{provider}</b>\n"
+                        f"Status: {resp.status}",
+                        provider=provider,
+                        model=model,
+                    )
+                body = await resp.text()
+                return AIResponse.failure(
+                    f"Provider xatosi: HTTP {resp.status}\n<code>{body[:300]}</code>",
+                    provider=provider,
+                    model=model,
+                )
+    except aiohttp.ClientConnectorError:
+        return AIResponse.failure(
+            "Tarmoq xatosi: providerga ulanib bo'lmadi.",
+            provider=provider,
+            model=model,
+        )
+    except TimeoutError:
+        return AIResponse.failure(
+            "Vaqt tugadi: provider 15 soniyada javob bermadi.",
+            provider=provider,
+            model=model,
+        )
+    except Exception as exc:
+        return AIResponse.failure(
+            f"Kutilmagan xato: {exc}",
+            provider=provider,
+            model=model,
+        )
+
+
 # ── Feature helpers ───────────────────────────────────────────────────────────
 # Each function builds a full prompt and delegates to the manager.
 # Handlers call exactly ONE of these functions per user request.
+# All features check configuration via the manager — if no key is set,
+# manager returns a failure response automatically.
 
 
 async def ai_chat(user_text: str) -> AIResponse:

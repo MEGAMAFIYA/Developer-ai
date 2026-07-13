@@ -76,6 +76,15 @@ ALTER TABLE scores ADD COLUMN IF NOT EXISTS chat_title VARCHAR(128) NOT NULL DEF
 """
 _IDX_CHAT_ID = "CREATE INDEX IF NOT EXISTS idx_scores_chat_id ON scores (chat_id)"
 
+# Settings — generic key/value store for admin configuration (AI key, etc.)
+_CREATE_SETTINGS = """
+CREATE TABLE IF NOT EXISTS settings (
+    key        VARCHAR(128) PRIMARY KEY,
+    value      TEXT NOT NULL DEFAULT '',
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+)
+"""
+
 # Diamond reward system — disabled until services/diamond_service.py is enabled
 _CREATE_DIAMONDS = """
 CREATE TABLE IF NOT EXISTS diamonds (
@@ -124,6 +133,7 @@ async def init_databases() -> None:
         await conn.execute(_DROP_LEGACY)
         await conn.execute(_CREATE_GAMES)
         await conn.execute(_ADD_TAGS_COLUMN)
+        await conn.execute(_CREATE_SETTINGS)
     logger.info("Global DB schema ready.")
 
     game_pool = await get_game_pool()
@@ -142,3 +152,28 @@ async def init_databases() -> None:
     for game in INITIAL_GAMES:
         await add_game(**game)
     logger.info("Initial games seeded.")
+
+    # Load persisted AI settings into the live manager singleton
+    await _load_ai_settings()
+
+
+async def _load_ai_settings() -> None:
+    """Read AI provider/key/model from the settings table and reload manager."""
+    from database.global_db import get_setting
+    provider = await get_setting("ai_provider")
+    api_key  = await get_setting("ai_api_key")
+    model    = await get_setting("ai_model")
+
+    # Only override env config if DB has explicit values
+    if provider or api_key:
+        from handlers.developer.modules.ai import services
+        services.reload_manager(
+            provider=provider or "",
+            api_key=api_key or "",
+            model=model or "",
+        )
+        logger.info(
+            "AI settings loaded from DB: provider=%s, key_set=%s",
+            provider or "none",
+            bool(api_key),
+        )

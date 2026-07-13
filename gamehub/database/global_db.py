@@ -76,6 +76,35 @@ async def update_game_image(slug: str, image_url: str) -> None:
     )
 
 
+# ---------------------------------------------------------------------------
+# Settings (key-value store for admin configuration)
+# ---------------------------------------------------------------------------
+
+async def get_setting(key: str) -> str | None:
+    pool = await get_global_pool()
+    row = await pool.fetchrow("SELECT value FROM settings WHERE key = $1", key)
+    return row["value"] if row else None
+
+
+async def set_setting(key: str, value: str) -> None:
+    pool = await get_global_pool()
+    await pool.execute(
+        """
+        INSERT INTO settings (key, value, updated_at)
+        VALUES ($1, $2, NOW())
+        ON CONFLICT (key) DO UPDATE
+            SET value = EXCLUDED.value,
+                updated_at = NOW()
+        """,
+        key, value,
+    )
+
+
+async def delete_setting(key: str) -> None:
+    pool = await get_global_pool()
+    await pool.execute("DELETE FROM settings WHERE key = $1", key)
+
+
 async def update_game(
     slug: str,
     name: str,

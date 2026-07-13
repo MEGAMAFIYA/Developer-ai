@@ -117,3 +117,13 @@ class AIFindBugStates(StatesGroup):
 # ── ❌ Xatoni tuzatish ────────────────────────────────────────────────────────
 class AIFixBugStates(StatesGroup):
     waiting_code        = State()   # buggy code → edit_code (fix)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Phase 4 — API Key Management (key_manager.py)
+# ══════════════════════════════════════════════════════════════════════════════
+
+class AIKeyStates(StatesGroup):
+    waiting_key         = State()   # admin enters a new API key
+    waiting_provider    = State()   # admin enters provider name (if blank)
+    waiting_model       = State()   # admin enters model name (optional)

@@ -20,9 +20,11 @@ To add a new AI feature:
 from aiogram import Router
 
 from handlers.developer.modules.ai import handlers
-from handlers.developer.modules.ai import chat  # Phase 3 — live FSM features
+from handlers.developer.modules.ai import chat         # Phase 3 — live FSM features
+from handlers.developer.modules.ai import key_manager  # Phase 4 — API key management
 
 # Single router exposed to developer/__init__.py
 router = Router(name="dev:ai")
 router.include_router(handlers.router)
-router.include_router(chat.router)     # Phase 3
+router.include_router(chat.router)         # Phase 3
+router.include_router(key_manager.router)  # Phase 4
