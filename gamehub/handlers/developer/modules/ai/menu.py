@@ -11,6 +11,9 @@ from handlers.developer.modules.ai.callbacks import (
     AI_MENU,
     AI_DESIGN, AI_IMAGE, AI_GAMEPLAY, AI_CODE,
     AI_BUILDER, AI_ASSETS, AI_PREVIEW, AI_TEST,
+    # Phase 3 — live features
+    AI_CHAT, AI_WRITE_CODE, AI_EDIT_CODE, AI_ANALYZE_CODE,
+    AI_CREATE_GAME, AI_IMPROVE_GAME, AI_FIND_BUG, AI_FIX_BUG,
 )
 
 # ── Menu display text ─────────────────────────────────────────────────────────
@@ -26,20 +29,46 @@ AI_MENU_TEXT = (
 
 def ai_menu_keyboard() -> InlineKeyboardMarkup:
     """2-column grid for AI Developer sub-menu."""
-    items = [
-        (AI_DESIGN,   "🎨 Dizaynni o'zgartirish"),
-        (AI_IMAGE,    "🖼 Rasm almashtirish"),
-        (AI_GAMEPLAY, "🎮 Gameplayni o'zgartirish"),
-        (AI_CODE,     "🧠 Kod yozish"),
+
+    # ── Phase 3 — live AI features ────────────────────────────────────────────
+    live_items = [
+        (AI_CHAT,         "💬 AI Chat"),
+        (AI_WRITE_CODE,   "📝 Kod yozdirish"),
+        (AI_EDIT_CODE,    "✏️ Kodni tahrirlash"),
+        (AI_ANALYZE_CODE, "🔍 Kodni tahlil qilish"),
+        (AI_CREATE_GAME,  "🎮 O'yin yaratish"),
+        (AI_IMPROVE_GAME, "🛠 O'yinni yaxshilash"),
+        (AI_FIND_BUG,     "🧠 Bug topish"),
+        (AI_FIX_BUG,      "❌ Xatoni tuzatish"),
+    ]
+
+    # ── Phase 1/2 stubs (coming soon) ─────────────────────────────────────────
+    stub_items = [
+        (AI_DESIGN,   "🎨 Dizayn"),
+        (AI_IMAGE,    "🖼 Rasm"),
+        (AI_GAMEPLAY, "🎮 Gameplay"),
+        (AI_CODE,     "🧩 Kod yaratuvchi"),
         (AI_BUILDER,  "🪄 AI Builder"),
-        (AI_ASSETS,   "📦 Asset yuklash"),
+        (AI_ASSETS,   "📦 Assets"),
         (AI_PREVIEW,  "👁 Preview"),
         (AI_TEST,     "🧪 Test"),
     ]
 
     rows = []
-    for i in range(0, len(items), 2):
-        pair = items[i: i + 2]
+
+    # Live features section
+    for i in range(0, len(live_items), 2):
+        pair = live_items[i: i + 2]
+        rows.append([
+            InlineKeyboardButton(text=label, callback_data=cb)
+            for cb, label in pair
+        ])
+
+    # Divider row (visual separator via disabled-looking text isn't possible,
+    # so we just leave a blank-ish label row — kept for future use)
+    # Stub section (2 columns)
+    for i in range(0, len(stub_items), 2):
+        pair = stub_items[i: i + 2]
         rows.append([
             InlineKeyboardButton(text=label, callback_data=cb)
             for cb, label in pair

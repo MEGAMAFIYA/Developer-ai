@@ -72,3 +72,48 @@ class AIPreviewStates(StatesGroup):
 class AITestStates(StatesGroup):
     choosing_test   = State()   # select test type
     running         = State()   # async test execution
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Phase 3 — live FSM states (wired in chat.py)
+# ══════════════════════════════════════════════════════════════════════════════
+
+# ── 💬 AI Chat ────────────────────────────────────────────────────────────────
+class AIChatStates(StatesGroup):
+    waiting_message     = State()   # free-form text → generate_text
+
+
+# ── 📝 Kod yozdirish ──────────────────────────────────────────────────────────
+class AIWriteCodeStates(StatesGroup):
+    waiting_prompt      = State()   # natural-language task → generate_code
+
+
+# ── ✏️ Kodni tahrirlash ───────────────────────────────────────────────────────
+class AIEditCodeStates(StatesGroup):
+    waiting_code        = State()   # step 1: receive original code
+    waiting_instruction = State()   # step 2: receive edit instruction → edit_code
+
+
+# ── 🔍 Kodni tahlil qilish ────────────────────────────────────────────────────
+class AIAnalyzeCodeStates(StatesGroup):
+    waiting_code        = State()   # code to analyse → analyze_code
+
+
+# ── 🎮 O'yin yaratish ─────────────────────────────────────────────────────────
+class AICreateGameStates(StatesGroup):
+    waiting_description = State()   # game concept → generate_code(html)
+
+
+# ── 🛠 O'yinni yaxshilash ──────────────────────────────────────────────────────
+class AIImproveGameStates(StatesGroup):
+    waiting_code        = State()   # existing game code → edit_code
+
+
+# ── 🧠 Bug topish ──────────────────────────────────────────────────────────────
+class AIFindBugStates(StatesGroup):
+    waiting_code        = State()   # code to inspect → analyze_code
+
+
+# ── ❌ Xatoni tuzatish ────────────────────────────────────────────────────────
+class AIFixBugStates(StatesGroup):
+    waiting_code        = State()   # buggy code → edit_code (fix)

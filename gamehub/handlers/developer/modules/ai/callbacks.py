@@ -25,6 +25,17 @@ AI_ASSETS   = "ai:assets"    # 📦 Asset yuklash
 AI_PREVIEW  = "ai:preview"   # 👁 Preview
 AI_TEST     = "ai:test"      # 🧪 Test
 
+# ── Phase 3 — live FSM features (chat.py) ────────────────────────────────────
+AI_CANCEL       = "ai:cancel"        # ❌ Bekor qilish (clears FSM, back to menu)
+AI_CHAT         = "ai:chat"          # 💬 AI Chat
+AI_WRITE_CODE   = "ai:write_code"    # 📝 Kod yozdirish
+AI_EDIT_CODE    = "ai:edit_code"     # ✏️ Kodni tahrirlash
+AI_ANALYZE_CODE = "ai:analyze_code"  # 🔍 Kodni tahlil qilish
+AI_CREATE_GAME  = "ai:create_game"   # 🎮 O'yin yaratish
+AI_IMPROVE_GAME = "ai:improve_game"  # 🛠 O'yinni yaxshilash
+AI_FIND_BUG     = "ai:find_bug"      # 🧠 Bug topish
+AI_FIX_BUG      = "ai:fix_bug"       # ❌ Xatoni tuzatish
+
 # ── Flat list for middleware / tests ─────────────────────────────────────────
 ALL_AI_CALLBACKS = (
     AI_DESIGN,
@@ -35,4 +46,14 @@ ALL_AI_CALLBACKS = (
     AI_ASSETS,
     AI_PREVIEW,
     AI_TEST,
+    # Phase 3
+    AI_CANCEL,
+    AI_CHAT,
+    AI_WRITE_CODE,
+    AI_EDIT_CODE,
+    AI_ANALYZE_CODE,
+    AI_CREATE_GAME,
+    AI_IMPROVE_GAME,
+    AI_FIND_BUG,
+    AI_FIX_BUG,
 )
