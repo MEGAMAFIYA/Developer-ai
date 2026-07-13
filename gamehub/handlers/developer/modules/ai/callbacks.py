@@ -36,6 +36,34 @@ AI_IMPROVE_GAME = "ai:improve_game"  # 🛠 O'yinni yaxshilash
 AI_FIND_BUG     = "ai:find_bug"      # 🧠 Bug topish
 AI_FIX_BUG      = "ai:fix_bug"       # ❌ Xatoni tuzatish
 
+# ── Phase 4 — File Tools (file_tools.py) ─────────────────────────────────────
+AI_FILE_CREATE = "ai:file:create"   # 📂 Fayl yaratish
+AI_FILE_READ   = "ai:file:read"     # 📄 Faylni o'qish
+AI_FILE_EDIT   = "ai:file:edit"     # ✏️ Faylni tahrirlash
+AI_FILE_DELETE = "ai:file:delete"   # 🗑 Faylni o'chirish
+AI_FILE_OK     = "ai:file:ok"       # ✅ confirm write/delete
+
+# ── Phase 4 — GitHub Tools (github_tools.py) ──────────────────────────────────
+AI_GH_CLONE  = "ai:gh:clone"        # 🌐 GitHub Clone
+AI_GH_COMMIT = "ai:gh:commit"       # 📤 GitHub Commit
+AI_GH_PUSH   = "ai:gh:push"         # 🚀 GitHub Push
+AI_GH_PULL   = "ai:gh:pull"         # 📥 GitHub Pull
+AI_GH_OK     = "ai:gh:ok"           # ✅ confirm git operation
+
+# ── Phase 4 — Database Tools (database_tools.py) ─────────────────────────────
+AI_DB_QUERY  = "ai:db:query"        # 🗄 SQL so'rov
+AI_DB_STATS  = "ai:db:stats"        # 📊 Database statistikasi
+AI_DB_OK     = "ai:db:ok"           # ✅ confirm DML query
+AI_DB_GLOBAL = "ai:db:global"       # choose Global DB (inline button)
+AI_DB_GAME   = "ai:db:game"         # choose Game DB   (inline button)
+
+# ── Phase 4 — Project Tools (project_tools.py) ────────────────────────────────
+AI_PROJ_SCAN   = "ai:proj:scan"     # 🔎 Loyihani skanerlash
+AI_PROJ_MAP    = "ai:proj:map"      # 📋 Fayllar xaritasi
+AI_PROJ_TEST   = "ai:proj:test"     # 🧪 To'liq test
+AI_PROJ_BACKUP = "ai:proj:backup"   # 📦 Backup yaratish
+AI_PROJ_OK     = "ai:proj:ok"       # ✅ confirm backup
+
 # ── Flat list for middleware / tests ─────────────────────────────────────────
 ALL_AI_CALLBACKS = (
     AI_DESIGN,
@@ -56,4 +84,12 @@ ALL_AI_CALLBACKS = (
     AI_IMPROVE_GAME,
     AI_FIND_BUG,
     AI_FIX_BUG,
+    # Phase 4 — File Tools
+    AI_FILE_CREATE, AI_FILE_READ, AI_FILE_EDIT, AI_FILE_DELETE, AI_FILE_OK,
+    # Phase 4 — GitHub Tools
+    AI_GH_CLONE, AI_GH_COMMIT, AI_GH_PUSH, AI_GH_PULL, AI_GH_OK,
+    # Phase 4 — Database Tools
+    AI_DB_QUERY, AI_DB_STATS, AI_DB_OK, AI_DB_GLOBAL, AI_DB_GAME,
+    # Phase 4 — Project Tools
+    AI_PROJ_SCAN, AI_PROJ_MAP, AI_PROJ_TEST, AI_PROJ_BACKUP, AI_PROJ_OK,
 )
