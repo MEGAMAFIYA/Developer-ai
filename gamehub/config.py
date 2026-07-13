@@ -19,6 +19,11 @@ class Config:
 
     SECRET_KEY: str = os.getenv("SECRET_KEY", "")
 
+    # AI Developer — provider, model and key (all optional; empty = disabled)
+    AI_PROVIDER: str = os.getenv("AI_PROVIDER", "")   # openai | openrouter | gemini | claude | deepseek
+    AI_MODEL: str    = os.getenv("AI_MODEL", "")       # e.g. gpt-4o, gemini-1.5-pro, claude-3-5-sonnet
+    AI_API_KEY: str  = os.getenv("AI_API_KEY", "")     # provider API key
+
     # Public URL for WebApp — prefer WEBAPP_URL from .env if non-empty, else Replit domain
     WEBAPP_URL: str = os.getenv("WEBAPP_URL", "").strip() or \
         f"https://{os.getenv('REPLIT_DEV_DOMAIN', 'localhost:8000')}"
