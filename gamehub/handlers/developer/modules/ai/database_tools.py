@@ -38,6 +38,7 @@ from database.global_db import get_global_pool
 from database.game_db   import get_game_pool
 from handlers.developer.modules.ai.callbacks import (
     AI_CANCEL, AI_MENU,
+    AI_DB_MANAGER,
     AI_DB_QUERY, AI_DB_STATS, AI_DB_OK,
     AI_DB_GLOBAL, AI_DB_GAME,
 )
@@ -107,6 +108,34 @@ def _back_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text="AI Menyuga qaytish", callback_data=AI_MENU),
     ]])
+
+def _db_menu_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🗄 SQL so'rov",          callback_data=AI_DB_QUERY),
+            InlineKeyboardButton(text="📊 Statistika",          callback_data=AI_DB_STATS),
+        ],
+        [InlineKeyboardButton(text="⬅️ AI Menyu",               callback_data=AI_MENU)],
+    ])
+
+
+# ── Database Manager sub-menu entry point ─────────────────────────────────────
+
+@router.callback_query(lambda c: c.data == AI_DB_MANAGER)
+async def cb_db_manager_menu(q: CallbackQuery, state: FSMContext) -> None:
+    if not await _guard_cb(q):
+        return
+    await state.clear()
+    await q.answer()
+    await q.message.edit_text(
+        "🗄 <b>Database Manager</b>\n\n"
+        "Global DB va Game DB ga bevosita SQL so'rovlar yuborish.\n\n"
+        "• SELECT — darhol bajariladi\n"
+        "• UPDATE / INSERT / DELETE — tasdiqlash talab qilinadi\n"
+        "• Har bir DML so'rov loglarga yoziladi",
+        reply_markup=_db_menu_kb(),
+        parse_mode="HTML",
+    )
 
 
 # ── DB helpers ────────────────────────────────────────────────────────────────

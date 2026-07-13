@@ -14,6 +14,8 @@ from handlers.developer.modules.ai.callbacks import (
     # Phase 3 — live features
     AI_CHAT, AI_WRITE_CODE, AI_EDIT_CODE, AI_ANALYZE_CODE,
     AI_CREATE_GAME, AI_IMPROVE_GAME, AI_FIND_BUG, AI_FIX_BUG,
+    # Phase 4 — tool manager entry points
+    AI_FILE_MANAGER, AI_DB_MANAGER, AI_GH_MANAGER, AI_PROJ_MANAGER, AI_LOG_VIEW,
     # Phase 4 — key management
     AI_KEY_SETTINGS,
 )
@@ -94,6 +96,25 @@ def ai_menu_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text=label, callback_data=cb)
             for cb, label in pair
         ])
+
+    # Phase 4 — Tool Managers (2-column grid)
+    tool_items = [
+        (AI_FILE_MANAGER, "📂 File Manager"),
+        (AI_DB_MANAGER,   "🗄 Database"),
+        (AI_GH_MANAGER,   "🐙 GitHub"),
+        (AI_PROJ_MANAGER, "🔧 Project Tools"),
+    ]
+    for i in range(0, len(tool_items), 2):
+        pair = tool_items[i: i + 2]
+        rows.append([
+            InlineKeyboardButton(text=label, callback_data=cb)
+            for cb, label in pair
+        ])
+
+    # Phase 4 — Action log (full-width)
+    rows.append([
+        InlineKeyboardButton(text="📋 Action Log", callback_data=AI_LOG_VIEW),
+    ])
 
     # Phase 4 — API key management (full-width)
     rows.append([

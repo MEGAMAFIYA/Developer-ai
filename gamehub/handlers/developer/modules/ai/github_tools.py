@@ -32,6 +32,7 @@ from aiogram.types import (
 import config as cfg
 from handlers.developer.modules.ai.callbacks import (
     AI_CANCEL, AI_MENU,
+    AI_GH_MANAGER,
     AI_GH_CLONE, AI_GH_COMMIT, AI_GH_PUSH, AI_GH_PULL,
     AI_GH_OK,
 )
@@ -94,6 +95,40 @@ def _back_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text="AI Menyuga qaytish", callback_data=AI_MENU),
     ]])
+
+def _gh_menu_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🌐 Clone",   callback_data=AI_GH_CLONE),
+            InlineKeyboardButton(text="📤 Commit",  callback_data=AI_GH_COMMIT),
+        ],
+        [
+            InlineKeyboardButton(text="🚀 Push",    callback_data=AI_GH_PUSH),
+            InlineKeyboardButton(text="📥 Pull",    callback_data=AI_GH_PULL),
+        ],
+        [InlineKeyboardButton(text="⬅️ AI Menyu",   callback_data=AI_MENU)],
+    ])
+
+
+# ── GitHub Manager sub-menu entry point ───────────────────────────────────────
+
+@router.callback_query(lambda c: c.data == AI_GH_MANAGER)
+async def cb_gh_manager_menu(q: CallbackQuery, state: FSMContext) -> None:
+    if not await _guard_cb(q):
+        return
+    await state.clear()
+    await q.answer()
+    await q.message.edit_text(
+        "🐙 <b>GitHub Manager</b>\n\n"
+        "Loyiha repo bilan ishlash.\n\n"
+        "• Clone — repo klonlash (gamehub/clones/ ga)\n"
+        "• Commit — barcha o'zgarishlarni commit qilish\n"
+        "• Push — origin ga yuborish\n"
+        "• Pull — so'nggi o'zgarishlarni olish\n\n"
+        "Barcha amallar tasdiqlash bilan bajariladi.",
+        reply_markup=_gh_menu_kb(),
+        parse_mode="HTML",
+    )
 
 
 # ── Git helpers ───────────────────────────────────────────────────────────────
@@ -161,11 +196,12 @@ async def msg_gh_waiting_input(m: Message, state: FSMContext) -> None:
         dest      = _CLONE_DIR / repo_name
         await state.update_data(input=url)
         await state.set_state(GHStates.confirming)
+        exists_label = "HA (qayta klon)" if dest.exists() else "YO'Q"
         await m.answer(
             f"<b>Clone — preview</b>\n\n"
             f"URL: <code>{url}</code>\n"
             f"Papka: <code>clones/{repo_name}</code>\n"
-            f"Mavjud: {'HA (qayta klon)' if dest.exists() else 'YO'Q'}\n\n"
+            f"Mavjud: {exists_label}\n\n"
             "Tasdiqlaysizmi?",
             reply_markup=_confirm_kb(), parse_mode="HTML",
         )

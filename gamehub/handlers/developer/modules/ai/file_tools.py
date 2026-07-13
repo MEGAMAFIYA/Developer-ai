@@ -38,6 +38,7 @@ from aiogram.types import (
 import config as cfg
 from handlers.developer.modules.ai.callbacks import (
     AI_CANCEL, AI_MENU,
+    AI_FILE_MANAGER,
     AI_FILE_CREATE, AI_FILE_READ, AI_FILE_EDIT, AI_FILE_DELETE,
     AI_FILE_OK,
 )
@@ -108,6 +109,38 @@ def _back_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text="AI Menyuga qaytish", callback_data=AI_MENU),
     ]])
+
+def _file_menu_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="📂 Fayl yaratish",    callback_data=AI_FILE_CREATE),
+            InlineKeyboardButton(text="📄 Faylni o'qish",    callback_data=AI_FILE_READ),
+        ],
+        [
+            InlineKeyboardButton(text="✏️ Faylni tahrirlash", callback_data=AI_FILE_EDIT),
+            InlineKeyboardButton(text="🗑 Faylni o'chirish",  callback_data=AI_FILE_DELETE),
+        ],
+        [InlineKeyboardButton(text="⬅️ AI Menyu",            callback_data=AI_MENU)],
+    ])
+
+
+# ── File Manager sub-menu entry point ─────────────────────────────────────────
+
+@router.callback_query(lambda c: c.data == AI_FILE_MANAGER)
+async def cb_file_manager_menu(q: CallbackQuery, state: FSMContext) -> None:
+    if not await _guard_cb(q):
+        return
+    await state.clear()
+    await q.answer()
+    await q.message.edit_text(
+        "📂 <b>File Manager</b>\n\n"
+        "gamehub/ papkasi ichidagi fayllarni boshqarish.\n\n"
+        "• Barcha yo'llar gamehub/ ga nisbatan\n"
+        "• Yozish/o'chirish amallari backup bilan himoyalangan\n"
+        "• Har bir amal loglarga yoziladi",
+        reply_markup=_file_menu_kb(),
+        parse_mode="HTML",
+    )
 
 
 # ── File helpers ──────────────────────────────────────────────────────────────

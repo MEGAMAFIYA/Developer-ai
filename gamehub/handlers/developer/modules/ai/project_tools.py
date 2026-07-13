@@ -35,6 +35,7 @@ from aiogram.types import (
 import config as cfg
 from handlers.developer.modules.ai.callbacks import (
     AI_CANCEL, AI_MENU,
+    AI_PROJ_MANAGER,
     AI_PROJ_SCAN, AI_PROJ_MAP, AI_PROJ_TEST, AI_PROJ_BACKUP,
     AI_PROJ_OK,
 )
@@ -85,6 +86,39 @@ def _back_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text="AI Menyuga qaytish", callback_data=AI_MENU),
     ]])
+
+def _proj_menu_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🔎 AI Audit",        callback_data=AI_PROJ_SCAN),
+            InlineKeyboardButton(text="📋 Fayl xaritasi",   callback_data=AI_PROJ_MAP),
+        ],
+        [
+            InlineKeyboardButton(text="🧪 Sintaksis test",  callback_data=AI_PROJ_TEST),
+            InlineKeyboardButton(text="📦 Backup",          callback_data=AI_PROJ_BACKUP),
+        ],
+        [InlineKeyboardButton(text="⬅️ AI Menyu",           callback_data=AI_MENU)],
+    ])
+
+
+# ── Project Manager sub-menu entry point ──────────────────────────────────────
+
+@router.callback_query(lambda c: c.data == AI_PROJ_MANAGER)
+async def cb_proj_manager_menu(q: CallbackQuery, state: FSMContext) -> None:
+    if not await _guard_cb(q):
+        return
+    await state.clear()
+    await q.answer()
+    await q.message.edit_text(
+        "🔧 <b>Project Manager</b>\n\n"
+        "Loyihani tahlil qilish va boshqarish vositalari.\n\n"
+        "• AI Audit — AI orqali kod auditi (30-60s)\n"
+        "• Fayl xaritasi — gamehub/ daraxt ko'rinishi\n"
+        "• Sintaksis test — barcha .py fayllarni tekshirish\n"
+        "• Backup — gamehub/ ni ZIP arxivga saqlash",
+        reply_markup=_proj_menu_kb(),
+        parse_mode="HTML",
+    )
 
 
 # ── File tree ─────────────────────────────────────────────────────────────────

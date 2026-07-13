@@ -29,8 +29,10 @@ from handlers.developer.modules.ai.callbacks import (
     AI_MENU,
     AI_DESIGN, AI_IMAGE, AI_GAMEPLAY, AI_CODE,
     AI_BUILDER, AI_ASSETS, AI_PREVIEW, AI_TEST,
+    AI_LOG_VIEW,
 )
 from handlers.developer.modules.ai.menu import ai_menu_keyboard, ai_back_keyboard, AI_MENU_TEXT
+from handlers.developer.modules.ai.action_log import read_recent
 
 logger = logging.getLogger(__name__)
 router = Router(name="dev:ai:handlers")
@@ -226,6 +228,27 @@ async def cb_ai_test(query: CallbackQuery) -> None:
         "AI tomonidan yaratilgan kodlarni o'yinga\n"
         "qo'shishdan oldin avtomatik sinab ko'rish.\n\n"
         + _COMING_SOON,
+        reply_markup=ai_back_keyboard(),
+        parse_mode="HTML",
+    )
+
+
+# ── 📋 Action Log ─────────────────────────────────────────────────────────────
+
+@router.callback_query(lambda c: c.data == AI_LOG_VIEW)
+async def cb_log_view(query: CallbackQuery) -> None:
+    """Show the last 30 entries from ai_actions.log."""
+    if not await _guard(query):
+        return
+    await query.answer()
+    await query.message.edit_text("📋 Log o'qilmoqda...", parse_mode="HTML")
+    recent = await read_recent(30)
+    text = (
+        "📋 <b>Action Log</b> (so'nggi 30 ta)\n\n"
+        f"<pre>{recent[:3600]}</pre>"
+    )
+    await query.message.edit_text(
+        text,
         reply_markup=ai_back_keyboard(),
         parse_mode="HTML",
     )
