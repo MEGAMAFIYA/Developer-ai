@@ -3,6 +3,8 @@
 import asyncio
 import logging
 import sys
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
 
 import uvicorn
 from aiogram import Bot, Dispatcher
@@ -15,10 +17,22 @@ from database import init_databases, close_global_pool, close_game_pool
 from bot.router import main_router
 from api.app import app as fastapi_app
 
+# Ensure logs/ directory exists before configuring file handler
+_LOG_DIR = Path(__file__).resolve().parent / "logs"
+_LOG_DIR.mkdir(exist_ok=True)
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    handlers=[logging.StreamHandler(sys.stdout)],
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        RotatingFileHandler(
+            _LOG_DIR / "app.log",
+            maxBytes=5 * 1024 * 1024,
+            backupCount=3,
+            encoding="utf-8",
+        ),
+    ],
 )
 logger = logging.getLogger(__name__)
 

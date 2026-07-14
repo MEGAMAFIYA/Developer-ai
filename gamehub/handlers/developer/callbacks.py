@@ -29,6 +29,23 @@ DEV_BACKUP   = "dev:backup"
 
 DEV_PROJECT_MANAGER = "dev:pm"
 
+# ── Log Manager sub-actions ───────────────────────────────────────────────────
+DEV_LOG_VIEW     = "dev:log:view"
+DEV_LOG_REFRESH  = "dev:log:refresh"
+DEV_LOG_FILTER   = "dev:log:filter"
+DEV_LOG_LVL_DBG  = "dev:log:lvl:dbg"
+DEV_LOG_LVL_INF  = "dev:log:lvl:inf"
+DEV_LOG_LVL_WRN  = "dev:log:lvl:wrn"
+DEV_LOG_LVL_ERR  = "dev:log:lvl:err"
+DEV_LOG_LVL_CRT  = "dev:log:lvl:crt"
+DEV_LOG_SEARCH   = "dev:log:search"
+DEV_LOG_DL_CUR   = "dev:log:dl:cur"
+DEV_LOG_DL_ALL   = "dev:log:dl:all"
+DEV_LOG_CLEAR    = "dev:log:clear"
+DEV_LOG_CLEAR_OK = "dev:log:clear:ok"
+DEV_LOG_DATE     = "dev:log:date"
+DEV_LOG_AI       = "dev:log:ai"
+
 # ── Project Manager sub-actions ───────────────────────────────────────────────
 DEV_PM_INFO      = "dev:pm:info"
 DEV_PM_STATS     = "dev:pm:stats"
