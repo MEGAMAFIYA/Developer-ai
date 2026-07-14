@@ -8,24 +8,25 @@ from handlers.developer.callbacks import (
     DEV_MENU, DEV_CLOSE,
     DEV_GAMES, DEV_AI, DEV_COMMANDS, DEV_FILES,
     DEV_DATABASE, DEV_STATS, DEV_GITHUB, DEV_SETTINGS,
-    DEV_TEST, DEV_LOGS, DEV_BACKUP,
+    DEV_TEST, DEV_LOGS, DEV_BACKUP, DEV_PROJECT_MANAGER,
 )
 
 
 def main_menu_keyboard() -> InlineKeyboardMarkup:
     """Build the Developer Mode main menu (2-column grid + footer row)."""
     grid = [
-        (DEV_GAMES,    "🎮 O'yinlar"),
-        (DEV_AI,       "🤖 AI Developer"),
-        (DEV_COMMANDS, "🤖 Buyruqlar"),
-        (DEV_FILES,    "📂 Fayllar"),
-        (DEV_DATABASE, "🗄 Database"),
-        (DEV_STATS,    "📊 Statistika"),
-        (DEV_GITHUB,   "🌐 GitHub"),
-        (DEV_SETTINGS, "⚙️ Sozlamalar"),
-        (DEV_TEST,     "🧪 Test"),
-        (DEV_LOGS,     "📜 Loglar"),
-        (DEV_BACKUP,   "🔄 Backup"),
+        (DEV_GAMES,           "🎮 O'yinlar"),
+        (DEV_AI,              "🤖 AI Developer"),
+        (DEV_COMMANDS,        "🤖 Buyruqlar"),
+        (DEV_FILES,           "📂 Fayllar"),
+        (DEV_DATABASE,        "🗄 Database"),
+        (DEV_STATS,           "📊 Statistika"),
+        (DEV_GITHUB,          "🌐 GitHub"),
+        (DEV_SETTINGS,        "⚙️ Sozlamalar"),
+        (DEV_TEST,            "🧪 Test"),
+        (DEV_LOGS,            "📜 Loglar"),
+        (DEV_BACKUP,          "🔄 Backup"),
+        (DEV_PROJECT_MANAGER, "📦 Project Manager"),
     ]
 
     # Pair up into 2-column rows; last item gets its own row if odd count

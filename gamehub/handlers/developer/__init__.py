@@ -18,7 +18,7 @@ from handlers.developer import menu
 from handlers.developer.modules import (
     games, ai, commands, files,
     database, stats, github, settings,
-    test, logs, backup,
+    test, logs, backup, project_manager,
 )
 
 # The top-level router for the entire Developer Mode feature.
@@ -40,3 +40,4 @@ router.include_router(settings.router)
 router.include_router(test.router)
 router.include_router(logs.router)
 router.include_router(backup.router)
+router.include_router(project_manager.router)

@@ -27,6 +27,23 @@ DEV_TEST     = "dev:test"
 DEV_LOGS     = "dev:logs"
 DEV_BACKUP   = "dev:backup"
 
+DEV_PROJECT_MANAGER = "dev:pm"
+
+# ── Project Manager sub-actions ───────────────────────────────────────────────
+DEV_PM_INFO      = "dev:pm:info"
+DEV_PM_STATS     = "dev:pm:stats"
+DEV_PM_SEARCH    = "dev:pm:search"
+DEV_PM_SRCH_NAME = "dev:pm:srch:name"
+DEV_PM_SRCH_TEXT = "dev:pm:srch:text"
+DEV_PM_MAINT     = "dev:pm:maint"
+DEV_PM_PYCACHE   = "dev:pm:pycache"
+DEV_PM_PYCACHE_OK= "dev:pm:pycache:ok"
+DEV_PM_TEMP      = "dev:pm:temp"
+DEV_PM_TEMP_OK   = "dev:pm:temp:ok"
+DEV_PM_DISK      = "dev:pm:disk"
+DEV_PM_EXPORT    = "dev:pm:export"
+DEV_PM_EXPORT_OK = "dev:pm:export:ok"
+
 # ── Flat list — useful for programmatic access (e.g. tests, middleware) ───────
 ALL_MODULE_CALLBACKS = (
     DEV_GAMES,
@@ -40,4 +57,5 @@ ALL_MODULE_CALLBACKS = (
     DEV_TEST,
     DEV_LOGS,
     DEV_BACKUP,
+    DEV_PROJECT_MANAGER,
 )
