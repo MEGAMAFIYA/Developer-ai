@@ -83,6 +83,12 @@ class BaseAIProvider(ABC):
     def _err(self, message: str) -> AIResponse:
         return AIResponse.failure(message, provider=self.NAME, model=self.model)
 
+    @property
+    def display_model(self) -> str:
+        """Model name for status/UI display.  Providers with dynamic resolution
+        (e.g. Gemini) should override this to return the resolved model name."""
+        return self.model
+
     # ── Abstract interface — implement all four in every provider ─────────────
 
     @abstractmethod

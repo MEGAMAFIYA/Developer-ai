@@ -76,14 +76,14 @@ def get_ai_status() -> dict:
 
     Keys:
         provider   str  — provider name or ''
-        model      str  — model name or ''
+        model      str  — model name for display (uses display_model if available)
         has_key    bool — True if api_key is non-empty
         configured bool — True if provider is known & has key
     """
     m = get_manager()
     provider = m.active_provider if m.active_provider != "none" else ""
     has_key = bool(m._provider and m._provider.api_key) if m._provider else False
-    model = m._provider.model if m._provider else ""
+    model = m._provider.display_model if m._provider else ""
     return {
         "provider":   provider,
         "model":      model,
@@ -194,6 +194,66 @@ async def test_connection() -> AIResponse:
     payload = cfg_entry["payload"](model)
     auth    = cfg_entry["auth"]
 
+    # ── Gemini: test via ListModels (no model name needed, validates the key) ──
+    if provider == "gemini":
+        list_url = (
+            f"https://generativelanguage.googleapis.com/v1beta/models"
+            f"?key={api_key}"
+        )
+        try:
+            timeout = aiohttp.ClientTimeout(total=15)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(list_url) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        gc_models = [
+                            entry.get("name", "").removeprefix("models/")
+                            for entry in data.get("models", [])
+                            if "generateContent"
+                            in entry.get("supportedGenerationMethods", [])
+                        ]
+                        # Prime the provider's model cache if not already resolved
+                        p = m._provider
+                        if p and not getattr(p, "_resolved_model", None) and gc_models:
+                            p._resolved_model = gc_models[0]
+                            p.model = gc_models[0]
+                        chosen = (
+                            getattr(p, "_resolved_model", None)
+                            or (gc_models[0] if gc_models else "—")
+                        )
+                        return AIResponse.success(
+                            f"Provider: <b>gemini</b>\n"
+                            f"Model: <code>{chosen}</code>\n"
+                            f"Mavjud modellar: {len(gc_models)}",
+                            provider=provider,
+                            model=chosen,
+                        )
+                    body = await resp.text()
+                    return AIResponse.failure(
+                        f"Gemini xatosi: HTTP {resp.status}\n<code>{body[:300]}</code>",
+                        provider=provider,
+                        model=model,
+                    )
+        except aiohttp.ClientConnectorError:
+            return AIResponse.failure(
+                "Tarmoq xatosi: Google API ga ulanib bo'lmadi.",
+                provider=provider,
+                model=model,
+            )
+        except TimeoutError:
+            return AIResponse.failure(
+                "Vaqt tugadi: Google API 15 soniyada javob bermadi.",
+                provider=provider,
+                model=model,
+            )
+        except Exception as exc:
+            return AIResponse.failure(
+                f"Kutilmagan xato: {exc}",
+                provider=provider,
+                model=model,
+            )
+
+    # ── All other providers: POST to their chat endpoint ─────────────────────
     if auth == "bearer":
         headers = {
             "Authorization": f"Bearer {api_key}",
@@ -205,10 +265,6 @@ async def test_connection() -> AIResponse:
             "anthropic-version": "2023-06-01",
             "Content-Type": "application/json",
         }
-    elif auth == "query":
-        url = url.format(model=model or "gemini-1.5-flash")
-        url = f"{url}?key={api_key}"
-        headers = {"Content-Type": "application/json"}
     else:
         headers = {"Content-Type": "application/json"}
 
@@ -218,7 +274,6 @@ async def test_connection() -> AIResponse:
             async with session.post(url, json=payload, headers=headers) as resp:
                 if resp.status in (200, 201):
                     return AIResponse.success(
-                        f"✅ Ulanish muvaffaqiyatli!\n"
                         f"Provider: <b>{provider}</b>\n"
                         f"Status: {resp.status}",
                         provider=provider,

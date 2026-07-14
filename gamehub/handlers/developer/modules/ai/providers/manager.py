@@ -144,6 +144,6 @@ class AIProviderManager:
         key_status = "🔑 key mavjud" if has_key else "⚠️ API key yo'q"
         return (
             f"✅ Provider: <b>{self._name}</b>\n"
-            f"   Model: <code>{self._provider.model or 'default'}</code>\n"
+            f"   Model: <code>{self._provider.display_model or 'default'}</code>\n"
             f"   {key_status}"
         )

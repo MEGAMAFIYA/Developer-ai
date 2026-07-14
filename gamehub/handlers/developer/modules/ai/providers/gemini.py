@@ -60,8 +60,25 @@ class GeminiProvider(BaseAIProvider):
         self._configured_model: str = (model or "").strip()
         # Resolved model is populated lazily on first request
         self._resolved_model: Optional[str] = None
-        # Call parent with a placeholder; self.model is overwritten after resolve
-        super().__init__(api_key, self._configured_model or "gemini-1.5-flash")
+        # Initialise with whatever was configured (may be empty).
+        # self.model is updated to the resolved value after _resolve_model() runs.
+        super().__init__(api_key, self._configured_model)
+
+    # ── Status display ─────────────────────────────────────────────────────────
+
+    @property
+    def display_model(self) -> str:
+        """Return the resolved model name for UI display.
+
+        Before the first request: shows the configured name (if any) or
+        '(auto-detect)' so the admin knows Gemini will pick one automatically.
+        After first request: shows the real model name that was selected.
+        """
+        if self._resolved_model:
+            return self._resolved_model
+        if self._configured_model:
+            return f"{self._configured_model} (unverified)"
+        return "(auto-detect)"
 
     # ── Model discovery ────────────────────────────────────────────────────────
 
