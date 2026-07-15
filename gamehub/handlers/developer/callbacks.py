@@ -61,6 +61,68 @@ DEV_PM_DISK      = "dev:pm:disk"
 DEV_PM_EXPORT    = "dev:pm:export"
 DEV_PM_EXPORT_OK = "dev:pm:export:ok"
 
+# ── Stats sub-actions ────────────────────────────────────────────────────────
+DEV_STATS_REFRESH = "dev:stats:refresh"
+DEV_STATS_USERS   = "dev:stats:users"
+DEV_STATS_GAMES   = "dev:stats:games"
+DEV_STATS_SCORES  = "dev:stats:scores"
+
+# ── Games sub-actions ────────────────────────────────────────────────────────
+DEV_GAMES_LIST      = "dev:games:list"
+DEV_GAMES_RESEED    = "dev:games:reseed"
+DEV_GAMES_RESEED_OK = "dev:games:reseed:ok"
+# toggle: "dev:games:tog:<slug>"  — dynamic, matched with startswith in filter
+
+# ── Database sub-actions ─────────────────────────────────────────────────────
+DEV_DB_TABLES    = "dev:db:tables"
+DEV_DB_QUERY     = "dev:db:query"
+DEV_DB_EXPORT_G  = "dev:db:export:g"    # export games CSV
+DEV_DB_EXPORT_S  = "dev:db:export:s"    # export scores CSV
+DEV_DB_VACUUM    = "dev:db:vacuum"
+DEV_DB_VACUUM_OK = "dev:db:vacuum:ok"
+
+# ── Files sub-actions ────────────────────────────────────────────────────────
+DEV_FILES_LIST   = "dev:files:list"
+# view:  "dev:files:view:<filename>" — dynamic, matched with startswith
+# del:   "dev:files:del:<filename>"  — dynamic, matched with startswith
+# delok: stored in FSM state — confirmed via DEV_FILES_DEL_OK
+DEV_FILES_DEL_OK  = "dev:files:del:ok"
+DEV_FILES_DEL_NO  = "dev:files:del:no"
+
+# ── Backup sub-actions ───────────────────────────────────────────────────────
+DEV_BAK_GAMES  = "dev:bak:games"
+DEV_BAK_SCORES = "dev:bak:scores"
+DEV_BAK_ALL    = "dev:bak:all"
+DEV_BAK_ALL_OK = "dev:bak:all:ok"
+
+# ── Commands sub-actions ─────────────────────────────────────────────────────
+DEV_CMD_LIST     = "dev:cmd:list"
+DEV_CMD_SET      = "dev:cmd:set"
+DEV_CMD_SET_OK   = "dev:cmd:set:ok"
+DEV_CMD_CLEAR    = "dev:cmd:clear"
+DEV_CMD_CLEAR_OK = "dev:cmd:clear:ok"
+
+# ── Settings sub-actions ─────────────────────────────────────────────────────
+DEV_SET_VIEW      = "dev:set:view"
+DEV_SET_MAINT_ON  = "dev:set:maint:on"
+DEV_SET_MAINT_OFF = "dev:set:maint:off"
+DEV_SET_WEBAPP    = "dev:set:webapp"
+DEV_SET_WEBAPP_OK = "dev:set:webapp:ok"
+DEV_SET_WEBAPP_NO = "dev:set:webapp:no"
+
+# ── GitHub sub-actions ───────────────────────────────────────────────────────
+DEV_GH_COMMITS = "dev:gh:commits"
+DEV_GH_PULL    = "dev:gh:pull"
+DEV_GH_PULL_OK = "dev:gh:pull:ok"
+DEV_GH_STATUS  = "dev:gh:status"
+
+# ── Test sub-actions ─────────────────────────────────────────────────────────
+DEV_TEST_DB    = "dev:test:db"
+DEV_TEST_WEB   = "dev:test:web"
+DEV_TEST_BOT   = "dev:test:bot"
+DEV_TEST_SCORE = "dev:test:score"
+DEV_TEST_ALL   = "dev:test:all"
+
 # ── Flat list — useful for programmatic access (e.g. tests, middleware) ───────
 ALL_MODULE_CALLBACKS = (
     DEV_GAMES,
