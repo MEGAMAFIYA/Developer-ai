@@ -60,6 +60,8 @@ class GeminiProvider(BaseAIProvider):
         self._configured_model: str = (model or "").strip()
         # Resolved model is populated lazily on first request
         self._resolved_model: Optional[str] = None
+        # Models confirmed to return 404 — excluded from future discovery
+        self._excluded_models: set[str] = set()
         # Initialise with whatever was configured (may be empty).
         # self.model is updated to the resolved value after _resolve_model() runs.
         super().__init__(api_key, self._configured_model)
@@ -85,7 +87,11 @@ class GeminiProvider(BaseAIProvider):
     async def _resolve_model(self) -> Optional[str]:
         """Call ListModels, pick the best available model, cache and return it.
 
-        Returns the resolved model name (short form, e.g. 'gemini-1.5-flash'),
+        Models in ``self._excluded_models`` (confirmed 404 at runtime) are
+        skipped so that rediscovery after a 404 never re-selects the same
+        broken model.
+
+        Returns the resolved model name (short form, e.g. 'gemini-2.0-flash'),
         or None if the API call fails (caller will surface the error).
         """
         if self._resolved_model is not None:
@@ -110,24 +116,27 @@ class GeminiProvider(BaseAIProvider):
             logger.warning("Gemini ListModels request error: %s", exc)
             return None
 
-        # Collect models that support generateContent
+        # Collect models that support generateContent, skipping excluded ones
         available: list[str] = []
         for entry in data.get("models", []):
             methods = entry.get("supportedGenerationMethods", [])
             if "generateContent" not in methods:
                 continue
-            raw_name: str = entry.get("name", "")          # e.g. "models/gemini-1.5-flash"
-            short = raw_name.removeprefix("models/")        # e.g. "gemini-1.5-flash"
-            if short:
+            raw_name: str = entry.get("name", "")          # e.g. "models/gemini-2.0-flash"
+            short = raw_name.removeprefix("models/")        # e.g. "gemini-2.0-flash"
+            if short and short not in self._excluded_models:
                 available.append(short)
 
         if not available:
-            logger.warning("Gemini ListModels: no models with generateContent found.")
+            logger.warning(
+                "Gemini ListModels: no usable models found "
+                "(excluded: %s).", self._excluded_models,
+            )
             return None
 
-        logger.debug("Gemini available models: %s", available)
+        logger.debug("Gemini available models (after exclusions): %s", available)
 
-        # Priority 1: use configured model if it's in the list
+        # Priority 1: use configured model if it's in the usable list
         if self._configured_model and self._configured_model in available:
             chosen = self._configured_model
             logger.info(
@@ -140,9 +149,9 @@ class GeminiProvider(BaseAIProvider):
             chosen = available[0]
             if self._configured_model:
                 logger.warning(
-                    "Gemini: configured model '%s' is not available. "
-                    "Falling back to '%s'. Available: %s",
-                    self._configured_model, chosen, available,
+                    "Gemini: configured model '%s' not usable (excluded=%s). "
+                    "Falling back to '%s'.",
+                    self._configured_model, self._excluded_models, chosen,
                 )
             else:
                 logger.info(
@@ -157,24 +166,20 @@ class GeminiProvider(BaseAIProvider):
 
     # ── Internal HTTP helper ───────────────────────────────────────────────────
 
-    async def _generate(
+    async def _post_generate(
         self,
+        model: str,
         system_instruction: str,
         user_text: str,
-        timeout: int = 60,
-    ) -> AIResponse:
-        err = self._check_key()
-        if err:
-            return err
+        timeout: int,
+    ) -> tuple[Optional[str], Optional[AIResponse], bool]:
+        """Make a single generateContent POST for *model*.
 
-        # Resolve model (cached after first call)
-        model = await self._resolve_model()
-        if model is None:
-            return self._err(
-                "❌ Gemini modellari ro'yxatini olishda xato.\n"
-                "API kalitni va internet ulanishini tekshiring."
-            )
-
+        Returns ``(text, None, False)`` on success.
+        Returns ``(None, err_response, needs_rediscover)`` on failure.
+        ``needs_rediscover=True`` tells the caller to clear the cache and retry
+        with a freshly discovered model instead of surfacing the error.
+        """
         url = self._BASE_URL.format(model=model) + f"?key={self.api_key}"
         payload: dict = {
             "system_instruction": {
@@ -211,73 +216,166 @@ class GeminiProvider(BaseAIProvider):
                             )
                             text: Optional[str] = parts[0].get("text") if parts else None
                             if text:
-                                return self._ok(text.strip())
+                                return (text.strip(), None, False)
                         # Check for promptFeedback block
                         feedback = data.get("promptFeedback", {})
                         block_reason = feedback.get("blockReason", "")
                         if block_reason:
-                            return self._err(
-                                f"Gemini so'rovni blokladi: {block_reason}\n"
-                                "Boshqa so'rov bilan urinib ko'ring."
+                            return (
+                                None,
+                                self._err(
+                                    "Gemini so'rovni blokladi.\n"
+                                    "Boshqa so'rov bilan urinib ko'ring."
+                                ),
+                                False,
                             )
-                        return self._err("Gemini bo'sh javob qaytardi.")
+                        return (None, self._err("Gemini bo'sh javob qaytardi."), False)
 
                     if resp.status == 400:
                         body = await resp.json(content_type=None)
                         msg = body.get("error", {}).get("message", "")
-                        # 400 with MODEL_NOT_FOUND → invalidate cache and surface error
                         if "not found" in msg.lower() or "MODEL_NOT_FOUND" in msg:
                             logger.warning(
-                                "Gemini model '%s' returned 404/400 — clearing cache.",
-                                model,
+                                "Gemini model '%s' returned 400 MODEL_NOT_FOUND — "
+                                "will rediscover.", model,
                             )
-                            self._resolved_model = None
-                        return self._err(
-                            f"❌ Noto'g'ri so'rov (400): {msg or 'unknown'}"
-                        )
-                    if resp.status in (401, 403):
-                        return self._err(
-                            f"❌ Noto'g'ri API kalit ({resp.status}).\n"
-                            "Iltimos, Google AI Studio kalitini tekshiring."
-                        )
-                    if resp.status == 404:
-                        # Model truly not found — reset cache so next call re-discovers
-                        logger.warning(
-                            "Gemini model '%s' not found (404) — clearing cache.", model
-                        )
-                        self._resolved_model = None
-                        return self._err(
-                            f"❌ Model topilmadi: '{model}' (404).\n"
-                            "Keyingi so'rovda avtomatik yangi model tanlanadi."
-                        )
-                    if resp.status == 429:
-                        return self._err(
-                            "⏳ So'rovlar limiti oshib ketdi (429).\n"
-                            "Bir oz kuting va qayta urinib ko'ring."
-                        )
-                    if resp.status == 503:
-                        return self._err(
-                            "🔧 Gemini vaqtinchalik ishlamayapti (503).\n"
-                            "Bir oz kuting va qayta urinib ko'ring."
+                            # Signal caller to clear cache and retry
+                            return (None, None, True)
+                        return (
+                            None,
+                            self._err(
+                                "❌ Gemini so'rovni qayta ishlashda xato yuz berdi.\n"
+                                "Iltimos, qayta urinib ko'ring."
+                            ),
+                            False,
                         )
 
-                    body_text = await resp.text()
-                    return self._err(
-                        f"Gemini xatosi: HTTP {resp.status}\n"
-                        f"<code>{body_text[:400]}</code>"
+                    if resp.status in (401, 403):
+                        return (
+                            None,
+                            self._err(
+                                f"❌ Noto'g'ri API kalit ({resp.status}).\n"
+                                "Iltimos, Google AI Studio kalitini tekshiring."
+                            ),
+                            False,
+                        )
+
+                    if resp.status == 404:
+                        # Model not found — signal caller to rediscover and retry
+                        logger.warning(
+                            "Gemini model '%s' returned 404 — will rediscover.", model
+                        )
+                        return (None, None, True)
+
+                    if resp.status == 429:
+                        return (
+                            None,
+                            self._err(
+                                "⏳ Gemini API so'rovlar limiti tugadi.\n"
+                                "Google AI Studio bepul kvotasi oshib ketdi. "
+                                "Bir oz kuting yoki boshqa API kalit ishlating."
+                            ),
+                            False,
+                        )
+
+                    if resp.status == 503:
+                        return (
+                            None,
+                            self._err(
+                                "🔧 Gemini vaqtinchalik ishlamayapti (503).\n"
+                                "Bir oz kuting va qayta urinib ko'ring."
+                            ),
+                            False,
+                        )
+
+                    # Any other unexpected status — hide provider detail
+                    logger.warning(
+                        "Gemini unexpected HTTP %s for model '%s'", resp.status, model
+                    )
+                    return (
+                        None,
+                        self._err(
+                            "❌ Gemini kutilmagan xatoni qaytardi.\n"
+                            "Qayta urinib ko'ring."
+                        ),
+                        False,
                     )
 
         except TimeoutError:
-            return self._err(
-                f"⏱ Vaqt tugadi: Gemini {timeout}s ichida javob bermadi."
+            return (
+                None,
+                self._err(f"⏱ Vaqt tugadi: Gemini {timeout}s ichida javob bermadi."),
+                False,
             )
         except aiohttp.ClientConnectorError:
-            return self._err(
-                "🌐 Tarmoq xatosi: generativelanguage.googleapis.com ga ulanib bo'lmadi."
+            return (
+                None,
+                self._err(
+                    "🌐 Tarmoq xatosi: generativelanguage.googleapis.com ga ulanib bo'lmadi."
+                ),
+                False,
             )
         except Exception as exc:
             logger.exception("Gemini unexpected error: %s", exc)
-            return self._err(f"Kutilmagan xato: {exc}")
+            return (None, self._err("❌ Kutilmagan xato yuz berdi. Qayta urinib ko'ring."), False)
+
+    async def _generate(
+        self,
+        system_instruction: str,
+        user_text: str,
+        timeout: int = 60,
+    ) -> AIResponse:
+        err = self._check_key()
+        if err:
+            return err
+
+        # Resolve model — cached after first successful call.
+        # Up to 2 attempts: attempt 0 uses cached/configured model,
+        # attempt 1 uses a freshly discovered model if attempt 0 returned
+        # a 404 or MODEL_NOT_FOUND (needs_rediscover=True).
+        for attempt in range(2):
+            model = await self._resolve_model()
+            if model is None:
+                return self._err(
+                    "❌ Gemini modellari ro'yxatini olishda xato.\n"
+                    "API kalitni va internet ulanishini tekshiring."
+                )
+
+            text, err_resp, needs_rediscover = await self._post_generate(
+                model, system_instruction, user_text, timeout
+            )
+
+            if text is not None:
+                # Success
+                return self._ok(text)
+
+            if needs_rediscover:
+                # Model returned 404 — permanently exclude it so _resolve_model()
+                # won't re-select it, then clear the cache to force rediscovery.
+                self._excluded_models.add(model)
+                self._resolved_model = None
+                logger.info(
+                    "Gemini model '%s' excluded after 404 (attempt %d) — "
+                    "rediscovering from %d remaining candidates…",
+                    model, attempt + 1,
+                    # Count will be approximate; just useful for logging
+                    attempt + 1,
+                )
+                # On attempt 1 (second try) we've already rediscovered once;
+                # if it still fails, surface a clean error.
+                if attempt == 1:
+                    return self._err(
+                        "❌ Gemini uchun mavjud model topilmadi.\n"
+                        "API kalit va kvotani tekshiring."
+                    )
+                # Otherwise loop to attempt 1 with a fresh, non-excluded model
+                continue
+
+            # A definite error (auth, quota, network, etc.) — return it
+            return err_resp  # type: ignore[return-value]
+
+        # Should not be reached, but satisfy type checker
+        return self._err("❌ Gemini: kutilmagan holat. Qayta urinib ko'ring.")
 
     # ── generate_text ─────────────────────────────────────────────────────────
 
