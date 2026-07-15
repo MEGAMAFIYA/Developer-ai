@@ -54,3 +54,37 @@ class AIFixBugStates(StatesGroup):
 
 class AIKeyStates(StatesGroup):
     waiting_key         = State()   # admin enters a new API key (+ optional provider prefix)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Phase 5 — Advanced AI Features (phase5.py)
+# ══════════════════════════════════════════════════════════════════════════════
+
+class AIBuilderStates(StatesGroup):
+    waiting_description = State()   # user describes the game to build
+    pending_save        = State()   # generation done; waiting for save/discard
+    waiting_filename    = State()   # user types filename to save as
+
+class AIGameplayStates(StatesGroup):
+    waiting_change  = State()   # game selected; user describes gameplay change
+    confirm_save    = State()   # AI done; waiting for save/discard
+
+class AIDesignStates(StatesGroup):
+    waiting_change  = State()   # game selected; user describes UI change
+    confirm_save    = State()   # AI done; waiting for save/discard
+
+class AIAssetStates(StatesGroup):
+    waiting_description = State()   # user describes SVG to generate
+    pending_save        = State()   # SVG generated; waiting for save/discard
+    waiting_filename    = State()   # user types .svg filename
+
+class AICodeSaveStates(StatesGroup):
+    waiting_code     = State()   # user pastes code to save
+    waiting_filename = State()   # user types target filename
+
+class AITestStates(StatesGroup):
+    waiting_code = State()   # user pastes HTML for AI review
+
+class AIAssetManagerFSM(StatesGroup):
+    pending_delete = State()   # confirm asset file deletion
+    waiting_upload = State()   # expecting Document message

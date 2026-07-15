@@ -78,6 +78,45 @@ AI_KEY_DELETE    = "ai:key:delete"       # 🗑 Prompt confirmation
 AI_KEY_DELETE_OK = "ai:key:delete:ok"   # ✅ Confirm delete
 AI_KEY_TEST      = "ai:key:test"         # 🔌 Test connection to provider
 
+# ── Phase 5 — Code Assistant sub-actions ─────────────────────────────────────
+AI_CODE_SAVE     = "ai:code:save"        # FSM: paste code → choose file → save
+AI_CODE_SAVE_OK  = "ai:code:save:ok"     # confirm overwrite existing file
+
+# ── Phase 5 — Game Builder ────────────────────────────────────────────────────
+AI_BUILDER_SAVE    = "ai:builder:save"     # prompt for filename after generation
+AI_BUILDER_DISCARD = "ai:builder:discard"  # discard generated game
+
+# ── Phase 5 — Gameplay Designer ───────────────────────────────────────────────
+AI_GAMEPLAY_LIST    = "ai:gameplay:list"    # refresh game list
+AI_GAMEPLAY_SAVE_OK = "ai:gameplay:save:ok" # confirm save after AI edit
+AI_GAMEPLAY_DISCARD = "ai:gameplay:discard" # discard AI result
+# dynamic: "ai:gameplay:sel:<slug>" — matched via startswith in filter
+
+# ── Phase 5 — UI Designer ────────────────────────────────────────────────────
+AI_DESIGN_LIST    = "ai:design:list"
+AI_DESIGN_SAVE_OK = "ai:design:save:ok"
+AI_DESIGN_DISCARD = "ai:design:discard"
+# dynamic: "ai:design:sel:<slug>" — matched via startswith in filter
+
+# ── Phase 5 — Asset Generator ────────────────────────────────────────────────
+AI_IMAGE_SAVE    = "ai:image:save"      # prompt for .svg filename
+AI_IMAGE_DISCARD = "ai:image:discard"   # discard SVG result
+
+# ── Phase 5 — Assets Manager ─────────────────────────────────────────────────
+AI_ASSETS_LIST   = "ai:assets:list"     # refresh list
+AI_ASSETS_UPLOAD = "ai:assets:upload"   # FSM: upload Document
+AI_ASSETS_DEL_OK = "ai:assets:del:ok"   # confirm delete
+AI_ASSETS_DEL_NO = "ai:assets:del:no"   # cancel delete
+# dynamic: "ai:assets:del:<filename>" — matched via startswith
+
+# ── Phase 5 — Preview ────────────────────────────────────────────────────────
+AI_PREVIEW_LIST = "ai:preview:list"     # refresh game list
+
+# ── Phase 5 — Test Center ────────────────────────────────────────────────────
+AI_TEST_CODE = "ai:test:code"   # FSM: paste code for AI validation
+AI_TEST_FILE = "ai:test:file"   # select existing game file to validate
+# dynamic: "ai:test:sel:<slug>" — matched via startswith
+
 # ── Flat list for middleware / tests ─────────────────────────────────────────
 ALL_AI_CALLBACKS = (
     AI_DESIGN,

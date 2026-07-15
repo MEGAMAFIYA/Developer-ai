@@ -383,3 +383,37 @@ async def ai_fix_bug(code: str) -> AIResponse:
         original_code=code,
         instruction=prompt,
     )
+
+
+# ── Phase 5 feature helpers ───────────────────────────────────────────────────
+
+async def ai_design_ui(game_code: str, instruction: str) -> AIResponse:
+    """🎨 Apply a UI/visual design change to an existing game."""
+    system = prompts.DESIGN_UI_SYSTEM
+    body   = prompts.DESIGN_UI_TEMPLATE.format(code=game_code[:8000], instruction=instruction)
+    prompt = f"{system}\n\n{body}"
+    return await get_manager().edit_code(original_code=game_code, instruction=prompt)
+
+
+async def ai_gameplay_change(game_code: str, instruction: str) -> AIResponse:
+    """🎮 Apply a gameplay mechanic change to an existing game."""
+    system = prompts.GAMEPLAY_SYSTEM
+    body   = prompts.GAMEPLAY_TEMPLATE.format(code=game_code[:8000], instruction=instruction)
+    prompt = f"{system}\n\n{body}"
+    return await get_manager().edit_code(original_code=game_code, instruction=prompt)
+
+
+async def ai_generate_svg(description: str) -> AIResponse:
+    """🖼 Generate an SVG sprite from a text description."""
+    system = prompts.ASSET_SVG_SYSTEM
+    body   = prompts.ASSET_SVG_TEMPLATE.format(description=description)
+    prompt = f"{system}\n\n{body}"
+    return await get_manager().generate_code(prompt, language="svg")
+
+
+async def ai_validate_code(code: str) -> AIResponse:
+    """🧪 Validate and review an HTML5 game file."""
+    system = prompts.VALIDATE_CODE_SYSTEM
+    body   = prompts.VALIDATE_CODE_TEMPLATE.format(code=code[:8000])
+    prompt = f"{system}\n\n{body}"
+    return await get_manager().analyze_code(prompt)
