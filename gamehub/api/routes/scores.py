@@ -94,14 +94,14 @@ async def post_score(payload: ScorePayload) -> dict:
     )
 
     logger.info(
-        "Score saved: user=%s game=%s score=%s new_record=%s rank=%s",
+        "Score processed: user=%s game=%s score=%s new_record=%s rank=%s diamonds=%s",
         user_id, payload.game, payload.score,
-        result["is_new_record"], result["rank"],
+        result["is_new_record"], result["rank"], diamonds_earned,
     )
 
     return {
-        "ok":           True,
-        "id":           result["row"]["id"],
+        "ok":            True,
+        "id":            result["row"]["id"] if result["row"] else None,
         "is_new_record": result["is_new_record"],
         "previous_best": result["previous_best"],
         "rank":          result["rank"],

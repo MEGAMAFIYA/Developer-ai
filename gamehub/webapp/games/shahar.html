@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Samolyot Jangi</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
 <style>
   /* ================= NEGIZ / RESET ================= */
   * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; user-select:none; }
@@ -894,6 +895,30 @@ function loop(ts) {
 }
 
 /* --------------------------- O'YIN TUGASHI / PAUZA --------------------------- */
+/* ======================================================
+   TELEGRAM WEBAPP: NATIJA YUBORISH
+====================================================== */
+async function submitScore(finalScore){
+  try {
+    const tg = window.Telegram && window.Telegram.WebApp;
+    if(!tg || !tg.initData) return;
+    const res = await fetch('/api/scores', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ game: 'shahar', score: finalScore, init_data: tg.initData })
+    });
+    if(!res.ok) return;
+    const data = await res.json();
+    if(data.is_new_record){
+      const rankStr = data.rank ? ` · #${data.rank} 🌍` : '';
+      document.getElementById("goBest").textContent =
+        `🎉 Yangi rekord!${rankStr} (` + finalScore + ')';
+    }
+  } catch(e) {
+    console.warn('submitScore error:', e);
+  }
+}
+
 function triggerGameOver() {
   G.running = false;
   Sound.gameOver();
@@ -903,6 +928,7 @@ function triggerGameOver() {
   document.getElementById("goScore").textContent = G.score;
   document.getElementById("goBest").textContent = bestData.score;
   document.getElementById("goBoss").textContent = G.bossesDefeated;
+  submitScore(G.score);
   document.getElementById("overlay-gameover").classList.remove("hidden");
 }
 

@@ -778,11 +778,18 @@
     try {
       const tg = window.Telegram && window.Telegram.WebApp;
       if(!tg || !tg.initData) return;
-      await fetch('/api/scores', {
+      const res = await fetch('/api/scores', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ game: 'snake', score: finalScore, init_data: tg.initData })
+        body: JSON.stringify({ game: 'ilon', score: finalScore, init_data: tg.initData })
       });
+      if(!res.ok) return;
+      const data = await res.json();
+      if(data.is_new_record){
+        const rankStr = data.rank ? ` · #${data.rank} 🌍` : '';
+        el.newBestLabel.textContent = `🎉 Yangi rekord!${rankStr}`;
+        el.newBestLabel.classList.remove('hidden');
+      }
     } catch(e) {
       console.warn('submitScore error:', e);
     }

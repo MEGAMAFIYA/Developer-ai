@@ -1,7 +1,11 @@
 """Game PostgreSQL database — player scores and leaderboards."""
 
+import logging
+
 import asyncpg
 from config import config
+
+logger = logging.getLogger(__name__)
 
 _pool: asyncpg.Pool | None = None
 
@@ -33,15 +37,20 @@ async def save_score(
     chat_id: int = 0,
     chat_title: str = "",
 ) -> dict:
-    """Insert a score row.
+    """Persist a score only when it beats the user's personal best.
 
     Returns a dict with:
-      row           – the inserted asyncpg Record as dict
+      row           – the inserted asyncpg Record as dict, or None if not saved
       is_new_record – True if this score beats the user's previous best
-      previous_best – the user's best score before this insert (0 if first)
-      rank          – global position after this insert (1-based)
+      previous_best – the user's best score before this call (0 if first time)
+      rank          – global position of the user's best score (1-based)
     """
     pool = await get_game_pool()
+    logger.info(
+        "Score received: user=%s game=%s score=%s chat=%s",
+        user_id, game_name, score, chat_id,
+    )
+
     async with pool.acquire() as conn:
         # ── 1. Capture previous personal best ──────────────────────────────
         prev: int | None = await conn.fetchval(
@@ -49,8 +58,35 @@ async def save_score(
             user_id, game_name,
         )
         previous_best: int = prev if prev is not None else 0
+        is_new_record: bool = (prev is None) or (score > previous_best)
 
-        # ── 2. Insert new score ─────────────────────────────────────────────
+        # ── 2. Only write to DB when score is a personal best ───────────────
+        if not is_new_record:
+            logger.info(
+                "Score rejected (not a new best): user=%s game=%s score=%s prev_best=%s",
+                user_id, game_name, score, previous_best,
+            )
+            # Return rank of the user's current best (not this score)
+            rank_val: int = await conn.fetchval(
+                """
+                SELECT COUNT(*) + 1
+                FROM (
+                    SELECT user_id, MAX(score) AS best
+                    FROM scores
+                    WHERE game_name = $1
+                    GROUP BY user_id
+                ) sub
+                WHERE sub.best > $2
+                """,
+                game_name, previous_best,
+            ) or 1
+            return {
+                "row":           None,
+                "is_new_record": False,
+                "previous_best": previous_best,
+                "rank":          int(rank_val),
+            }
+
         row = await conn.fetchrow(
             """
             INSERT INTO scores
@@ -60,11 +96,13 @@ async def save_score(
             """,
             user_id, username, first_name, game_name, score, chat_id, chat_title,
         )
+        logger.info(
+            "Score accepted (new best): user=%s game=%s score=%s prev_best=%s row_id=%s",
+            user_id, game_name, score, previous_best, row["id"],
+        )
 
-        is_new_record: bool = (prev is None) or (score > previous_best)
-
-        # ── 3. Global rank of this score ────────────────────────────────────
-        rank_val: int = await conn.fetchval(
+        # ── 3. Global rank of this new best ────────────────────────────────
+        rank_val = await conn.fetchval(
             """
             SELECT COUNT(*) + 1
             FROM (
@@ -78,9 +116,14 @@ async def save_score(
             game_name, score,
         ) or 1
 
+        logger.info(
+            "Ranking updated: user=%s game=%s rank=%s",
+            user_id, game_name, rank_val,
+        )
+
     return {
         "row":           dict(row),
-        "is_new_record": is_new_record,
+        "is_new_record": True,
         "previous_best": previous_best,
         "rank":          int(rank_val),
     }

@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Shahar Himoyasi</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
 <style>
   :root{
     --neon-cyan:#00f0ff;
@@ -1407,12 +1408,36 @@ function saveBestScore(){
   const best = parseInt(localStorage.getItem(LS_BEST_KEY)||"0",10);
   if(score>best){ localStorage.setItem(LS_BEST_KEY, String(score)); }
 }
+/* ======================================================
+   TELEGRAM WEBAPP: NATIJA YUBORISH
+====================================================== */
+async function submitScore(finalScore){
+  try {
+    const tg = window.Telegram && window.Telegram.WebApp;
+    if(!tg || !tg.initData) return;
+    const res = await fetch('/api/scores', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ game: 'himoya', score: finalScore, init_data: tg.initData })
+    });
+    if(!res.ok) return;
+    const data = await res.json();
+    if(data.is_new_record){
+      const rankStr = data.rank ? ` · #${data.rank} 🌍` : '';
+      showToast(`🎉 Yangi rekord!${rankStr}`);
+    }
+  } catch(e) {
+    console.warn('submitScore error:', e);
+  }
+}
+
 function triggerWin(){
   if(gameOverFlag) return;
   gameOverFlag=true; gameRunning=false;
   saveBestScore();
   sfx.win();
   $("winScore").textContent = score;
+  submitScore(score);
   setTimeout(()=>showScreen("winScreen"), 400);
 }
 function triggerLose(){
@@ -1422,6 +1447,7 @@ function triggerLose(){
   sfx.lose();
   $("loseWave").textContent = Math.min(wave,30);
   $("loseScore").textContent = score;
+  submitScore(score);
   setTimeout(()=>showScreen("loseScreen"), 400);
 }
 

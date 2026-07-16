@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Qanot Parvozi</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
 <style>
   * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color: transparent; user-select:none; }
   html, body {
@@ -340,6 +341,30 @@ function resumeGame(){
   pauseOverlay.classList.add('hidden');
   lastTime = performance.now();
 }
+/* ======================================================
+   TELEGRAM WEBAPP: NATIJA YUBORISH
+====================================================== */
+async function submitScore(finalScore){
+  try {
+    const tg = window.Telegram && window.Telegram.WebApp;
+    if(!tg || !tg.initData) return;
+    const res = await fetch('/api/scores', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ game: 'qushcha', score: finalScore, init_data: tg.initData })
+    });
+    if(!res.ok) return;
+    const data = await res.json();
+    if(data.is_new_record){
+      const rankStr = data.rank ? ` · #${data.rank} 🌍` : '';
+      newBestLabel.textContent = `🎉 Yangi rekord!${rankStr}`;
+      newBestLabel.classList.remove('hidden');
+    }
+  } catch(e) {
+    console.warn('submitScore error:', e);
+  }
+}
+
 function endGame(){
   state = STATE.OVER;
   playHit();
@@ -350,6 +375,7 @@ function endGame(){
   finalScoreEl.textContent = score;
   finalBestEl.textContent = isNew ? score : best;
   newBestLabel.classList.toggle('hidden', !isNew);
+  submitScore(score);
   gameOverOverlay.classList.remove('hidden');
 }
 
