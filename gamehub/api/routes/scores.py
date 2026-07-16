@@ -11,6 +11,7 @@ from pydantic import BaseModel
 
 from config import config
 from database.game_db import save_score
+from database.global_db import ensure_game_exists
 from services.diamond_service import award_for_score
 
 logger = logging.getLogger(__name__)
@@ -71,6 +72,11 @@ async def post_score(payload: ScorePayload) -> dict:
     first_name = user.get("first_name", "")
     chat_id    = int(chat.get("id", 0))
     chat_title = chat.get("title", "")
+
+    # Auto-register the game in the catalog if it doesn't exist yet.
+    # This allows new games to appear in /reyting without any manual
+    # backend changes — the first submitted score creates the entry.
+    await ensure_game_exists(payload.game)
 
     result = await save_score(
         user_id    = user_id,

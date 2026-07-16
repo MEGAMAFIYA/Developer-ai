@@ -964,6 +964,7 @@ function completeLevel() {
   if (state.level >= 20) {
     document.getElementById("winTotalScore").textContent = state.totalScore;
     document.getElementById("overlay-win").classList.remove("hidden");
+    submitScore(state.totalScore);
     return;
   }
 
