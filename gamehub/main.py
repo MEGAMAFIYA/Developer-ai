@@ -15,6 +15,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from config import config
 from database import init_databases, close_global_pool, close_game_pool
 from bot.router import main_router
+from bot.commands import register_commands
 from api.app import app as fastapi_app
 
 # Ensure logs/ directory exists before configuring file handler
@@ -45,6 +46,7 @@ async def start_bot() -> None:
     dp = Dispatcher(storage=MemoryStorage())
     dp.include_router(main_router)
 
+    await register_commands(bot)
     logger.info("Starting bot polling...")
     try:
         await dp.start_polling(bot, allowed_updates=["message", "callback_query"])
