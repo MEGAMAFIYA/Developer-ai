@@ -65,21 +65,21 @@ def ai_menu_keyboard() -> InlineKeyboardMarkup:
         (AI_FIX_BUG,      "❌ Xatoni tuzatish"),
     ]
 
-    # ── Phase 1/2 stubs (coming soon) ─────────────────────────────────────────
-    stub_items = [
-        (AI_DESIGN,   "🎨 Dizayn"),
-        (AI_IMAGE,    "🖼 Rasm"),
-        (AI_GAMEPLAY, "🎮 Gameplay"),
-        (AI_CODE,     "🧩 Kod yaratuvchi"),
-        (AI_BUILDER,  "🪄 AI Builder"),
+    # ── Phase 5 — Advanced AI Features (live) ─────────────────────────────────
+    phase5_items = [
+        (AI_CODE,     "🧩 Code Assistant"),
+        (AI_BUILDER,  "🪄 Game Builder"),
+        (AI_GAMEPLAY, "🎮 Gameplay Designer"),
+        (AI_DESIGN,   "🎨 UI Designer"),
+        (AI_IMAGE,    "🖼 Asset Generator"),
         (AI_ASSETS,   "📦 Assets"),
         (AI_PREVIEW,  "👁 Preview"),
-        (AI_TEST,     "🧪 Test"),
+        (AI_TEST,     "🧪 Test Center"),
     ]
 
     rows = []
 
-    # Live features section
+    # Phase 3 — live AI features (2-column grid)
     for i in range(0, len(live_items), 2):
         pair = live_items[i: i + 2]
         rows.append([
@@ -87,11 +87,9 @@ def ai_menu_keyboard() -> InlineKeyboardMarkup:
             for cb, label in pair
         ])
 
-    # Divider row (visual separator via disabled-looking text isn't possible,
-    # so we just leave a blank-ish label row — kept for future use)
-    # Stub section (2 columns)
-    for i in range(0, len(stub_items), 2):
-        pair = stub_items[i: i + 2]
+    # Phase 5 — Advanced AI Features (2-column grid)
+    for i in range(0, len(phase5_items), 2):
+        pair = phase5_items[i: i + 2]
         rows.append([
             InlineKeyboardButton(text=label, callback_data=cb)
             for cb, label in pair

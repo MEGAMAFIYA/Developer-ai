@@ -26,6 +26,7 @@ from handlers.developer.modules.ai import file_tools       # Phase 4 — File Ma
 from handlers.developer.modules.ai import database_tools   # Phase 4 — Database Manager
 from handlers.developer.modules.ai import github_tools     # Phase 4 — GitHub Manager
 from handlers.developer.modules.ai import project_tools    # Phase 4 — Project Manager
+from handlers.developer.modules.ai import phase5           # Phase 5 — Advanced AI Features
 
 # Single router exposed to developer/__init__.py
 router = Router(name="dev:ai")
@@ -36,3 +37,4 @@ router.include_router(file_tools.router)       # Phase 4 — File Manager
 router.include_router(database_tools.router)   # Phase 4 — Database Manager
 router.include_router(github_tools.router)     # Phase 4 — GitHub Manager
 router.include_router(project_tools.router)    # Phase 4 — Project Manager
+router.include_router(phase5.router)           # Phase 5 — Advanced AI Features
