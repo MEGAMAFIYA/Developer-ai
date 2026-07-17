@@ -19,15 +19,13 @@ logger = logging.getLogger(__name__)
 WEBAPP_DIR = Path(__file__).parent.parent / "webapp"
 
 
-def _build_keyboard(game: dict, in_group: bool = False) -> InlineKeyboardMarkup:
-    url = f"{config.WEBAPP_URL.rstrip('/')}/games/{game['slug']}"
-    # Telegram only allows web_app inline buttons in private chats.
-    # In groups/channels we fall back to a plain URL button.
-    btn = (
-        InlineKeyboardButton(text="🎮 O'ynash", url=url)
-        if in_group
-        else InlineKeyboardButton(text="🎮 O'ynash", web_app=WebAppInfo(url=url))
-    )
+def _build_keyboard(game: dict, chat_id: int = 0) -> InlineKeyboardMarkup:
+    # Embed chat_id as ?cid= so the game JS can include it in score submissions.
+    # WebAppInfo is supported in groups since Bot API 6.0 — always use it so
+    # tg.initData is available and scores are submitted from all contexts.
+    base = f"{config.WEBAPP_URL.rstrip('/')}/games/{game['slug']}"
+    url  = f"{base}?cid={chat_id}" if chat_id else base
+    btn  = InlineKeyboardButton(text="🎮 O'ynash", web_app=WebAppInfo(url=url))
     return InlineKeyboardMarkup(inline_keyboard=[[btn]])
 
 
@@ -40,8 +38,15 @@ def _build_caption(game: dict) -> str:
 
 async def send_game_card(message: Message, game: dict) -> None:
     """Send one game as a Telegram photo (or text fallback) with Play button."""
-    in_group = message.chat.type in ("group", "supergroup", "channel")
-    keyboard = _build_keyboard(game, in_group=in_group)
+    # Pass the actual chat_id so the game can submit group-scoped scores.
+    # For private chats chat_id is the user's own ID — we normalise to 0
+    # so all private-chat plays share the same "global" bucket.
+    chat_id = (
+        message.chat.id
+        if message.chat.type in ("group", "supergroup")
+        else 0
+    )
+    keyboard = _build_keyboard(game, chat_id=chat_id)
     caption  = _build_caption(game)
     image_url: str = game.get("image_url", "")
 

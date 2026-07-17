@@ -52,10 +52,11 @@ async def save_score(
     )
 
     async with pool.acquire() as conn:
-        # ── 1. Capture previous personal best ──────────────────────────────
+        # ── 1. Capture previous personal best for this (user, game, chat) ──
+        # chat_id=0 = private / global context; group chats have their own bucket.
         prev: int | None = await conn.fetchval(
-            "SELECT MAX(score) FROM scores WHERE user_id = $1 AND game_name = $2",
-            user_id, game_name,
+            "SELECT MAX(score) FROM scores WHERE user_id = $1 AND game_name = $2 AND chat_id = $3",
+            user_id, game_name, chat_id,
         )
         previous_best: int = prev if prev is not None else 0
         is_new_record: bool = (prev is None) or (score > previous_best)
@@ -63,10 +64,10 @@ async def save_score(
         # ── 2. Only write to DB when score is a personal best ───────────────
         if not is_new_record:
             logger.info(
-                "Score rejected (not a new best): user=%s game=%s score=%s prev_best=%s",
-                user_id, game_name, score, previous_best,
+                "Score rejected (not a new best): user=%s game=%s score=%s prev_best=%s chat=%s",
+                user_id, game_name, score, previous_best, chat_id,
             )
-            # Return rank of the user's current best (not this score)
+            # Return global rank of the user's current best (across all chat contexts)
             rank_val: int = await conn.fetchval(
                 """
                 SELECT COUNT(*) + 1

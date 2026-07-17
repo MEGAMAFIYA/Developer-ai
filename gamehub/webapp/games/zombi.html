@@ -852,10 +852,11 @@ async function submitScore(finalScore){
   try {
     const tg = window.Telegram && window.Telegram.WebApp;
     if(!tg || !tg.initData) return;
+    const chatId = parseInt(new URLSearchParams(window.location.search).get('cid') || '0', 10);
     const res = await fetch('/api/scores', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ game: 'zombi', score: finalScore, init_data: tg.initData })
+      body: JSON.stringify({ game: 'zombi', score: finalScore, init_data: tg.initData, chat_id: chatId })
     });
     if(!res.ok) return;
     const data = await res.json();

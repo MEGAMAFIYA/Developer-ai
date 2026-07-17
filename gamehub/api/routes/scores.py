@@ -26,7 +26,8 @@ router = APIRouter()
 class ScorePayload(BaseModel):
     game: str
     score: int
-    init_data: str  # raw Telegram WebApp initData string
+    init_data: str        # raw Telegram WebApp initData string
+    chat_id: int = 0      # group chat_id embedded in the WebApp URL by the bot (?cid=)
 
 
 def _validate_init_data(init_data: str) -> tuple[dict, dict]:
@@ -75,8 +76,16 @@ async def post_score(payload: ScorePayload) -> dict:
 
     username   = user.get("username", "")
     first_name = user.get("first_name", "")
-    chat_id    = int(chat.get("id", 0))
-    chat_title = chat.get("title", "")
+    # Prefer explicit chat_id embedded in the WebApp URL (?cid=) by the bot.
+    # This is the only reliable way to get the group ID when the WebApp is
+    # opened via an inline keyboard button (initData.chat is only set for
+    # attachment-menu launches, not for web_app keyboard buttons).
+    if payload.chat_id:
+        chat_id    = payload.chat_id
+        chat_title = chat.get("title", "")   # may be empty; that's fine
+    else:
+        chat_id    = int(chat.get("id", 0))
+        chat_title = chat.get("title", "")
 
     logger.info(
         "E2E RECV: user=%s (@%s) game=%s score=%s chat=%s",
