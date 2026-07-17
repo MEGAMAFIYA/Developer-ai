@@ -78,6 +78,11 @@ async def post_score(payload: ScorePayload) -> dict:
     chat_id    = int(chat.get("id", 0))
     chat_title = chat.get("title", "")
 
+    logger.info(
+        "E2E RECV: user=%s (@%s) game=%s score=%s chat=%s",
+        user_id, username, payload.game, payload.score, chat_id,
+    )
+
     # Auto-register the game in the catalog on first score submission.
     await ensure_game_exists(payload.game)
 
