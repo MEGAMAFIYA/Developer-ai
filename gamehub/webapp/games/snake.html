@@ -785,6 +785,7 @@
       });
       if(!res.ok) return;
       const data = await res.json();
+      if(!data.ok) return;
       // Server-confirmed record (true global best, not just local)
       if(data.is_new_record){
         const rankStr = data.rank ? ` · #${data.rank} 🌍` : '';

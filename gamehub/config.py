@@ -33,6 +33,8 @@ class Config:
     WEBAPP_URL: str = os.getenv("WEBAPP_URL", "").strip() or \
         f"https://{os.getenv('REPLIT_DEV_DOMAIN', 'localhost:8000')}"
 
+    DEVELOPER_MODE: bool = os.getenv("DEVELOPER_MODE", "False").lower() == "true"
+
     HOST: str = "0.0.0.0"
     PORT: int = int(os.getenv("PORT", "8000"))
 

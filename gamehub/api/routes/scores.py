@@ -10,7 +10,12 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from config import config
-from database.game_db import save_score
+from database.game_db import (
+    save_score,
+    verify_score_in_db,
+    get_global_leaderboard,
+    get_game_pool,
+)
 from database.global_db import ensure_game_exists
 from services.diamond_service import award_for_score
 
@@ -73,9 +78,7 @@ async def post_score(payload: ScorePayload) -> dict:
     chat_id    = int(chat.get("id", 0))
     chat_title = chat.get("title", "")
 
-    # Auto-register the game in the catalog if it doesn't exist yet.
-    # This allows new games to appear in /reyting without any manual
-    # backend changes — the first submitted score creates the entry.
+    # Auto-register the game in the catalog on first score submission.
     await ensure_game_exists(payload.game)
 
     result = await save_score(
@@ -88,13 +91,28 @@ async def post_score(payload: ScorePayload) -> dict:
         chat_title = chat_title,
     )
 
+    # Read-back verification: confirm the score actually persisted in the DB.
+    # Only runs for new records (i.e. rows that were actually inserted).
+    if result["is_new_record"]:
+        verified = await verify_score_in_db(user_id, payload.game, payload.score)
+        if not verified:
+            logger.error(
+                "Score save verification FAILED — row missing after INSERT: "
+                "user=%s game=%s score=%s",
+                user_id, payload.game, payload.score,
+            )
+            raise HTTPException(
+                status_code=500,
+                detail="Score save verification failed — row not found after INSERT",
+            )
+
     # Diamond hook — no-op until DIAMONDS_ENABLED = True
     diamonds_earned = await award_for_score(
-        user_id    = user_id,
-        username   = username,
-        first_name = first_name,
-        game_name  = payload.game,
-        score      = payload.score,
+        user_id       = user_id,
+        username      = username,
+        first_name    = first_name,
+        game_name     = payload.game,
+        score         = payload.score,
         is_new_record = result["is_new_record"],
         rank          = result["rank"],
     )
@@ -113,3 +131,69 @@ async def post_score(payload: ScorePayload) -> dict:
         "rank":          result["rank"],
         "diamonds":      diamonds_earned,
     }
+
+
+# ---------------------------------------------------------------------------
+# Dev pipeline test — only available when DEVELOPER_MODE=True
+# GET /api/scores/pipeline-test?game=snake&score=9999
+# Inserts a synthetic score, reads it back, snapshots the leaderboard,
+# then deletes the test row.  Returns pipeline_ok: true/false.
+# ---------------------------------------------------------------------------
+
+@router.get("/scores/pipeline-test")
+async def pipeline_test(game: str = "snake", score: int = 9999) -> dict:
+    if not config.DEVELOPER_MODE:
+        raise HTTPException(status_code=403, detail="Developer mode is disabled")
+
+    TEST_USER_ID    = 999_000_000
+    TEST_USERNAME   = "dev_pipeline_test"
+    TEST_FIRST_NAME = "DevTest"
+
+    steps: dict = {}
+
+    await ensure_game_exists(game)
+    steps["1_game_registered"] = True
+
+    pool = await get_game_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "DELETE FROM scores WHERE user_id=$1 AND game_name=$2",
+            TEST_USER_ID, game,
+        )
+
+        row = await conn.fetchrow(
+            """
+            INSERT INTO scores
+                (user_id, username, first_name, game_name, score, chat_id, chat_title)
+            VALUES ($1, $2, $3, $4, $5, 0, 'PipelineTest')
+            RETURNING *
+            """,
+            TEST_USER_ID, TEST_USERNAME, TEST_FIRST_NAME, game, score,
+        )
+        steps["2_inserted"] = {"id": row["id"], "score": row["score"]}
+
+        verified = await conn.fetchrow("SELECT * FROM scores WHERE id=$1", row["id"])
+        steps["3_read_back_ok"] = verified is not None
+        if verified:
+            steps["3_read_back_row"] = {"id": verified["id"], "score": verified["score"]}
+
+        lb_rows = await conn.fetch(
+            """
+            SELECT user_id, username, first_name, MAX(score) AS best_score
+            FROM scores WHERE game_name=$1
+            GROUP BY user_id, username, first_name
+            ORDER BY best_score DESC LIMIT 5
+            """,
+            game,
+        )
+        steps["4_leaderboard_top5"] = [
+            {"name": r["first_name"] or r["username"], "score": r["best_score"]}
+            for r in lb_rows
+        ]
+
+        await conn.execute("DELETE FROM scores WHERE id=$1", row["id"])
+        steps["5_cleanup_ok"] = True
+
+    steps["pipeline_ok"] = steps.get("3_read_back_ok", False)
+    logger.info("Pipeline test for game='%s': %s", game, steps)
+    return steps

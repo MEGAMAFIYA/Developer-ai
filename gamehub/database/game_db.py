@@ -201,6 +201,25 @@ async def get_user_best(user_id: int, game_name: str) -> dict | None:
     return dict(row) if row else None
 
 
+async def verify_score_in_db(user_id: int, game_name: str, score: int) -> dict | None:
+    """Read a just-inserted score back from the DB to confirm persistence.
+
+    Matches the most-recently inserted row for (user_id, game_name, score).
+    Returns the row dict if found, None if the write was silently lost.
+    """
+    pool = await get_game_pool()
+    row = await pool.fetchrow(
+        """
+        SELECT * FROM scores
+        WHERE user_id = $1 AND game_name = $2 AND score = $3
+        ORDER BY id DESC
+        LIMIT 1
+        """,
+        user_id, game_name, score,
+    )
+    return dict(row) if row else None
+
+
 # ---------------------------------------------------------------------------
 # Legacy helper kept for backwards compatibility
 # ---------------------------------------------------------------------------

@@ -859,6 +859,7 @@ async function submitScore(finalScore){
     });
     if(!res.ok) return;
     const data = await res.json();
+    if(!data.ok) return;
     // Server-confirmed record (true global best, not just local)
     const lbl = document.getElementById('serverRecordLabel');
     if(lbl && data.is_new_record){

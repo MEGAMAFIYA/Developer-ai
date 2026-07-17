@@ -355,6 +355,7 @@ async function submitScore(finalScore){
     });
     if(!res.ok) return;
     const data = await res.json();
+    if(!data.ok) return;
     if(data.is_new_record){
       const rankStr = data.rank ? ` · #${data.rank} 🌍` : '';
       newBestLabel.textContent = `🎉 Yangi rekord!${rankStr}`;
