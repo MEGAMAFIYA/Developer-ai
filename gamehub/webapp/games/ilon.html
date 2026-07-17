@@ -777,8 +777,9 @@
   async function submitScore(finalScore){
     try {
       const tg = window.Telegram && window.Telegram.WebApp;
-      if(!tg || !tg.initData) return;
       const chatId = parseInt(new URLSearchParams(window.location.search).get('cid') || '0', 10);
+      console.log('[ilon] submitScore | score=' + finalScore + ' | chat_id=' + chatId + ' | in_telegram=' + !!(tg && tg.initData));
+      if(!tg || !tg.initData) return;
       const res = await fetch('/api/scores', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

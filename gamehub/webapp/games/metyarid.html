@@ -429,6 +429,46 @@ function endGame(){
   finalBestEl.textContent = isNew ? score : best;
   newBestLabel.classList.toggle('hidden', !isNew);
   gameOverOverlay.classList.remove('hidden');
+  submitScore(score);
+}
+
+/* ======================================================
+   TELEGRAM WEBAPP: NATIJA YUBORISH
+   Called on every game-over regardless of score value.
+   The server compares submitted score against the stored
+   personal best and returns comparison_result + rank.
+====================================================== */
+async function submitScore(finalScore){
+  const tg = window.Telegram && window.Telegram.WebApp;
+  const chatId = parseInt(new URLSearchParams(window.location.search).get('cid') || '0', 10);
+  // Debug: visible in browser console for every game-over
+  console.log(
+    '[metyarid] submitScore | score=' + finalScore +
+    ' | chat_id=' + chatId +
+    ' | in_telegram=' + !!(tg && tg.initData)
+  );
+  try {
+    if(!tg || !tg.initData) return; // auth requires Telegram context
+    const res = await fetch('/api/scores', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ game: 'metyarid', score: finalScore, init_data: tg.initData, chat_id: chatId })
+    });
+    if(!res.ok) { console.warn('[metyarid] submitScore HTTP error', res.status); return; }
+    const data = await res.json();
+    if(!data.ok) return;
+    // Update game-over overlay with server-confirmed comparison result
+    if(data.is_new_record){
+      const rankStr = data.rank ? ' · #' + data.rank + ' 🌍' : '';
+      newBestLabel.textContent = '🎉 Yangi rekord!' + rankStr;
+      newBestLabel.classList.remove('hidden');
+    }
+    // Refresh displayed best from server (source of truth over localStorage)
+    const serverBest = data.is_new_record ? finalScore : data.previous_best;
+    if(typeof serverBest === 'number') finalBestEl.textContent = serverBest;
+  } catch(e) {
+    console.warn('[metyarid] submitScore error:', e);
+  }
 }
 
 function updateLivesHUD(){ hudLives.textContent = '♥'.repeat(Math.max(0,lives)) + '♡'.repeat(Math.max(0,3-lives)); }

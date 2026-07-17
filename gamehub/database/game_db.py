@@ -87,6 +87,16 @@ async def save_score(
             user_id, username, first_name, game_name, score, chat_id, chat_title,
         )
 
+        # ── Structured comparison log (game_id / user / group / scores / result) ──
+        logger.info(
+            "SCORE_COMPARISON | game=%s | user=%s | group=%s"
+            " | submitted=%s | stored_best=%s | result=%s | db_updated=%s",
+            game_name, user_id, chat_id,
+            score, previous_best,
+            "new_record" if is_new_record else "not_improved",
+            is_new_record,
+        )
+
         if is_new_record:
             logger.info(
                 "Score accepted (new best): user=%s game=%s score=%s prev_best=%s row_id=%s",
