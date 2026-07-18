@@ -1,7 +1,11 @@
 """Global PostgreSQL database — dynamic game catalogue."""
 
+import logging
+
 import asyncpg
 from config import config
+
+logger = logging.getLogger(__name__)
 
 _pool: asyncpg.Pool | None = None
 
@@ -9,7 +13,16 @@ _pool: asyncpg.Pool | None = None
 async def get_global_pool() -> asyncpg.Pool:
     global _pool
     if _pool is None:
-        _pool = await asyncpg.create_pool(config.GLOBAL_DATABASE_URL, min_size=1, max_size=10)
+        _pool = await asyncpg.create_pool(
+            config.GLOBAL_DATABASE_URL,
+            min_size=1,
+            max_size=5,
+            # Recycle idle connections before Neon's 5-minute idle timeout
+            max_inactive_connection_lifetime=300,
+            # Hard cap on any single query (prevents hung connections)
+            command_timeout=30,
+            server_settings={"application_name": "kichik_oyinlar_global"},
+        )
     return _pool
 
 
@@ -18,6 +31,17 @@ async def close_global_pool() -> None:
     if _pool:
         await _pool.close()
         _pool = None
+
+
+async def ping() -> bool:
+    """Return True if the pool is reachable (used by /health endpoint)."""
+    try:
+        pool = await get_global_pool()
+        await pool.fetchval("SELECT 1", timeout=2)
+        return True
+    except Exception as exc:
+        logger.warning("global_db ping failed: %s", exc)
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -80,12 +104,10 @@ async def ensure_game_exists(slug: str) -> None:
     await pool.execute(
         """
         INSERT INTO games (slug, name, description, html_file, category, active)
-        VALUES ($1, $2, '', $3, 'arcade', TRUE)
+        VALUES ($1, $1, '', $1 || '.html', 'arcade', TRUE)
         ON CONFLICT (slug) DO NOTHING
         """,
         slug,
-        slug,           # name defaults to slug until admin renames it
-        f"{slug}.html", # html_file derived from slug
     )
 
 

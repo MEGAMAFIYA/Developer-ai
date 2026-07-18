@@ -13,7 +13,16 @@ _pool: asyncpg.Pool | None = None
 async def get_game_pool() -> asyncpg.Pool:
     global _pool
     if _pool is None:
-        _pool = await asyncpg.create_pool(config.GAME_DATABASE_URL, min_size=1, max_size=10)
+        _pool = await asyncpg.create_pool(
+            config.GAME_DATABASE_URL,
+            min_size=1,
+            max_size=10,
+            # Recycle idle connections before Neon's 5-minute idle timeout
+            max_inactive_connection_lifetime=300,
+            # Hard cap on any single query (prevents hung connections)
+            command_timeout=30,
+            server_settings={"application_name": "kichik_oyinlar_game"},
+        )
     return _pool
 
 
@@ -22,6 +31,17 @@ async def close_game_pool() -> None:
     if _pool:
         await _pool.close()
         _pool = None
+
+
+async def ping() -> bool:
+    """Return True if the pool is reachable (used by /health endpoint)."""
+    try:
+        pool = await get_game_pool()
+        await pool.fetchval("SELECT 1", timeout=2)
+        return True
+    except Exception as exc:
+        logger.warning("game_db ping failed: %s", exc)
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -87,7 +107,8 @@ async def save_score(
             user_id, username, first_name, game_name, score, chat_id, chat_title,
         )
 
-        # ── Structured comparison log (game_id / user / group / scores / result) ──
+        # ── Structured comparison log — fires on EVERY submission ────────────
+        # Temporary: remove after real-group plays are verified in production.
         logger.info(
             "SCORE_COMPARISON | game=%s | user=%s | group=%s"
             " | submitted=%s | stored_best=%s | result=%s | db_updated=%s",

@@ -1,13 +1,16 @@
 """FastAPI application — serves WebApp static files and REST API."""
 
+import logging
 from pathlib import Path
 
 from fastapi import FastAPI
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
 from api.routes import scores as scores_router
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Mini O'yinlar", version="2.0.0", docs_url=None, redoc_url=None)
 
@@ -84,9 +87,32 @@ app.include_router(scores_router.router, prefix="/api")
 
 
 # ---------------------------------------------------------------------------
-# Health check
+# Health check  GET /health
 # ---------------------------------------------------------------------------
 
 @app.get("/health")
-async def health() -> dict:
-    return {"status": "ok"}
+async def health() -> JSONResponse:
+    """Production health check.
+
+    Probes both asyncpg pools with a lightweight SELECT 1 (2-second timeout).
+    Returns 200 {"status":"ok"} when both pools are reachable.
+    Returns 503 {"status":"degraded",...} if either pool fails — Render will
+    restart the instance when this endpoint returns non-2xx.
+    """
+    from database.game_db   import ping as ping_game
+    from database.global_db import ping as ping_global
+
+    game_ok   = await ping_game()
+    global_ok = await ping_global()
+
+    payload = {
+        "status":    "ok" if (game_ok and global_ok) else "degraded",
+        "game_db":   "ok" if game_ok   else "unreachable",
+        "global_db": "ok" if global_ok else "unreachable",
+    }
+
+    status_code = 200 if (game_ok and global_ok) else 503
+    if status_code != 200:
+        logger.warning("Health check degraded: %s", payload)
+
+    return JSONResponse(content=payload, status_code=status_code)

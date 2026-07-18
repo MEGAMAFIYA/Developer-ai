@@ -1,12 +1,15 @@
 services:
   - type: web
     name: kichik-oyinlar-bot
-    env: python
+    env: docker
     region: frankfurt
     plan: free
-    buildCommand: pip install -r gamehub/requirements.txt
-    startCommand: cd gamehub && python main.py
+    dockerfilePath: ./Dockerfile
     healthCheckPath: /health
+
+    # Render injects PORT automatically; app reads os.getenv("PORT", "8000").
+    # WEBAPP_URL must be set to this service's public URL after first deploy,
+    # e.g. https://kichik-oyinlar-bot.onrender.com
     envVars:
       - key: BOT_TOKEN
         sync: false
@@ -17,6 +20,8 @@ services:
       - key: SESSION_SECRET
         sync: false
       - key: WEBAPP_URL
-        sync: false
+        sync: false          # set to https://<your-app>.onrender.com after deploy
       - key: DEVELOPER_MODE
         value: "false"
+      - key: RENDER
+        value: "true"        # used by main.py to switch to stdout-only logging
