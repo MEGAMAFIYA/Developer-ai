@@ -193,10 +193,15 @@ async def pipeline_test(game: str = "snake", score: int = 9999) -> dict:
 
         lb_rows = await conn.fetch(
             """
-            SELECT user_id, username, first_name, MAX(score) AS best_score
-            FROM scores WHERE game_name=$1
-            GROUP BY user_id, username, first_name
-            ORDER BY best_score DESC LIMIT 5
+            SELECT s.user_id, s.username, s.first_name, s.score AS best_score
+            FROM scores s
+            INNER JOIN (
+                SELECT user_id, MAX(score) AS top_score
+                FROM scores WHERE game_name=$1 GROUP BY user_id
+            ) best ON best.user_id=s.user_id
+                   AND best.top_score=s.score
+                   AND s.game_name=$1
+            ORDER BY best_score DESC, s.id ASC LIMIT 5
             """,
             game,
         )

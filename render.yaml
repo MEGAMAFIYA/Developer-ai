@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: kichik-oyinlar-bot
+    env: python
+    region: frankfurt
+    plan: free
+    buildCommand: pip install -r gamehub/requirements.txt
+    startCommand: cd gamehub && python main.py
+    healthCheckPath: /health
+    envVars:
+      - key: BOT_TOKEN
+        sync: false
+      - key: GLOBAL_DATABASE_URL
+        sync: false
+      - key: GAME_DATABASE_URL
+        sync: false
+      - key: SESSION_SECRET
+        sync: false
+      - key: WEBAPP_URL
+        sync: false
+      - key: DEVELOPER_MODE
+        value: "false"
