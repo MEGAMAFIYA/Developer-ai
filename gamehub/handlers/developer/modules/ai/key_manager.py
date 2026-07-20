@@ -180,7 +180,7 @@ async def msg_key_input(message: Message, state: FSMContext) -> None:
 
 # Provider nomi yuborilgan bo'lsa, uni o'zgartir
     if raw.lower() in _VALID_PROVIDERS:
-    provider = raw.lower()
+        provider = raw.lower()
 
     await set_setting("ai_provider", provider)
     await state.update_data(provider=provider)
