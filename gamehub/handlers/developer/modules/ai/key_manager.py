@@ -182,16 +182,16 @@ async def msg_key_input(message: Message, state: FSMContext) -> None:
     if raw.lower() in _VALID_PROVIDERS:
         provider = raw.lower()
 
-    await set_setting("ai_provider", provider)
-    await state.update_data(provider=provider)
+        await set_setting("ai_provider", provider)
+        await state.update_data(provider=provider)
 
-    await message.answer(
+        await message.answer(
         f"✅ Provider o'zgartirildi: <code>{provider}</code>\n\n"
         "Endi API kalitni yuboring.",
         reply_markup=_cancel_keyboard(),
-        parse_mode="HTML",
-    )
-    return
+            parse_mode="HTML",
+        )
+        return
 
     data = await state.get_data()
     provider = data.get("provider", "")
