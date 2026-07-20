@@ -128,9 +128,9 @@ _TEST_CONFIGS: dict[str, dict] = {
         "auth": "bearer",
     },
     "openrouter": {
-        "url": "https://openrouter.ai/api/v1/chat/completions",
-        "payload": lambda model: {
-            "model": model or "openai/gpt-4o-mini",
+    "url": "https://openrouter.ai/api/v1/chat/completions",
+    "payload": lambda model: {
+        "model": model or "qwen/qwen3-coder:free", 
             "messages": [{"role": "user", "content": "Hi"}],
             "max_tokens": 1,
         },
