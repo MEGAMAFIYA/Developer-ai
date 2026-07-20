@@ -179,7 +179,7 @@ async def msg_key_input(message: Message, state: FSMContext) -> None:
         pass
 
 # Provider nomi yuborilgan bo'lsa, uni o'zgartir
-if raw.lower() in _VALID_PROVIDERS:
+    if raw.lower() in _VALID_PROVIDERS:
     provider = raw.lower()
 
     await set_setting("ai_provider", provider)
@@ -195,18 +195,6 @@ if raw.lower() in _VALID_PROVIDERS:
 
     data = await state.get_data()
     provider = data.get("provider", "")
-
-    # If admin typed a provider name instead of a key, handle it
-    if raw.lower() in _VALID_PROVIDERS and not provider:
-        provider = raw.lower()
-        await state.update_data(provider=provider)
-        await message.answer(
-            f"✅ Provider seçildi: <code>{provider}</code>\n\n"
-            f"Endi API kalitingizni yuboring:",
-            reply_markup=_cancel_keyboard(),
-            parse_mode="HTML",
-        )
-        return
 
     # If provider is still unset, treat first word as provider, rest as key
     if not provider:
