@@ -101,9 +101,16 @@ def _cancel_kb() -> InlineKeyboardMarkup:
 
 
 def _result_kb() -> InlineKeyboardMarkup:
-    """Shown after AI returns a result."""
+    """Shown after AI returns a result (single-turn features)."""
     return InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text="⬅️ AI Menyuga qaytish", callback_data=AI_MENU),
+    ]])
+
+
+def _chat_result_kb() -> InlineKeyboardMarkup:
+    """Shown after each AI Chat reply — lets the user keep the conversation going."""
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="❌ Bekor qilish", callback_data=AI_CANCEL),
     ]])
 
 
@@ -143,13 +150,7 @@ async def _process(
     feature_name: str,
     coro,
 ) -> None:
-    """
-    Generic post-state handler:
-    1. Clear FSM state.
-    2. Show "generating…" notice.
-    3. Await the service coroutine.
-    4. Replace notice with result (or error).
-    """
+    """Generic single-turn handler: clears FSM, awaits AI, shows result."""
     await state.clear()
     sent = await message.answer(f"⏳ <b>{feature_name}</b> — AI javob tayyorlamoqda…", parse_mode="HTML")
     result = await coro
@@ -162,8 +163,46 @@ async def _process(
             await _send_long(message, text)
     else:
         err_msg = result.error or "Noma\u02bblum xato"
-        error_text = f"❌ <b>Xato</b>\n\n<code>{err_msg}</code>"
-        await sent.edit_text(error_text, reply_markup=_result_kb(), parse_mode="HTML")
+        await sent.edit_text(
+            f"❌ <b>Xato</b>\n\n<code>{err_msg}</code>",
+            reply_markup=_result_kb(),
+            parse_mode="HTML",
+        )
+
+
+async def _chat_process(message: Message, coro) -> None:
+    """AI Chat handler — does NOT clear FSM state so the conversation continues.
+
+    After each reply the ❌ Bekor qilish button is shown; the user can keep
+    sending messages until they explicitly cancel.
+    """
+    sent = await message.answer("⏳ <b>AI Chat</b> — javob tayyorlamoqda…", parse_mode="HTML")
+    result = await coro
+    if result.ok:
+        text = result.content
+        if not text.strip():
+            await sent.edit_text(
+                "⚠️ AI bo'sh javob qaytardi. Iltimos, boshqacha so'rang.",
+                reply_markup=_chat_result_kb(),
+                parse_mode="HTML",
+            )
+            return
+        if len(text) <= _TG_MAX:
+            await sent.edit_text(text, reply_markup=_chat_result_kb(), parse_mode="HTML")
+        else:
+            await sent.delete()
+            # Send all chunks; attach cancel button only to the last one
+            chunks = [text[i: i + _TG_MAX] for i in range(0, len(text), _TG_MAX)]
+            for idx, chunk in enumerate(chunks):
+                kb = _chat_result_kb() if idx == len(chunks) - 1 else None
+                await message.answer(chunk, reply_markup=kb, parse_mode="HTML")
+    else:
+        err_msg = result.error or "Noma\u02bblum xato"
+        await sent.edit_text(
+            f"❌ <b>Xato</b>\n\n<code>{err_msg}</code>",
+            reply_markup=_chat_result_kb(),
+            parse_mode="HTML",
+        )
 
 
 # ── ❌ Cancel (callback + /cancel command) ────────────────────────────────────
@@ -211,13 +250,11 @@ async def cb_chat_start(query: CallbackQuery, state: FSMContext) -> None:
 
 @router.message(AIChatStates.waiting_message)
 async def msg_chat(message: Message, state: FSMContext) -> None:
+    """Receive user message and reply — FSM state stays active for next message."""
     if not await _guard_msg(message):
         return
-    await _process(
-        message, state,
-        "AI Chat",
-        services.ai_chat(message.text or ""),
-    )
+    # State is intentionally NOT cleared here; cleared only via ❌ Bekor qilish
+    await _chat_process(message, services.ai_chat(message.text or ""))
 
 
 # ── 📝 Kod yozdirish ──────────────────────────────────────────────────────────

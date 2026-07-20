@@ -18,6 +18,7 @@ Auth: Authorization: Bearer {api_key}
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Optional
 
@@ -37,8 +38,8 @@ class OpenRouterProvider(BaseAIProvider):
     _SITE_NAME      = "GameHub Bot"
 
     # Timeouts (seconds)
-    _TIMEOUT_TEXT   = 60
-    _TIMEOUT_CODE   = 120   # code/game generation can be slow
+    _TIMEOUT_TEXT   = 600
+    _TIMEOUT_CODE   = 600
 
     def __init__(self, api_key: str, model: str) -> None:
         super().__init__(api_key, model or self._DEFAULT_MODEL)
@@ -75,15 +76,25 @@ class OpenRouterProvider(BaseAIProvider):
                     headers=headers,
                 ) as resp:
                     if resp.status == 200:
-                        data = await resp.json()
+                        # UTF-8 safe: read raw bytes, decode explicitly
+                        raw_bytes = await resp.read()
+                        try:
+                            data = json.loads(raw_bytes.decode("utf-8"))
+                        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                            return self._err(
+                                f"Javobni o'qishda xato (encoding): {exc}"
+                            )
                         content: Optional[str] = (
                             data.get("choices", [{}])[0]
                             .get("message", {})
                             .get("content")
                         )
-                        if content:
+                        if content is not None and content.strip():
                             return self._ok(content.strip())
-                        return self._err("OpenRouter bo'sh javob qaytardi.")
+                        return self._err(
+                            "OpenRouter bo'sh javob qaytardi.\n"
+                            "Model boshqa so'rov bilan urinib ko'ring."
+                        )
 
                     if resp.status == 401:
                         return self._err(
