@@ -116,7 +116,7 @@ def ai_menu_keyboard() -> InlineKeyboardMarkup:
 
     # Phase 4 — API key management (full-width)
     rows.append([
-        InlineKeyboardButton(text="🔑 API Sozlamalar", callback_data=AI_KEY_SETTINGS),
+        InlineKeyboardButton(text="🔑 AI API Sozlamalari", callback_data=AI_KEY_SETTINGS),
     ])
 
     # Footer: back to Developer Mode main menu

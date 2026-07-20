@@ -92,11 +92,24 @@ def get_ai_status() -> dict:
     }
 
 
+def mask_key(key: str) -> str:
+    """Mask an API key for safe display: first 8 chars + *** + last 4 chars."""
+    if not key:
+        return "—"
+    if len(key) <= 12:
+        return key[:2] + "*" * max(len(key) - 2, 1)
+    return key[:8] + "*" * 17 + key[-4:]
+
+
 def build_status_text() -> str:
-    """Human-readable status block for the AI key management screen."""
-    s = get_ai_status()
-    provider = s["provider"] or "—"
-    model    = s["model"] or "—"
+    """Human-readable status block for the 🔑 AI API Sozlamalari screen."""
+    s       = get_ai_status()
+    m       = get_manager()
+    api_key = m._provider.api_key if m._provider else ""
+
+    provider   = s["provider"] or "—"
+    model      = s["model"]    or "—"
+    masked_key = mask_key(api_key)
 
     if not s["provider"]:
         status_line = "❌ Provider o'rnatilmagan"
@@ -109,8 +122,8 @@ def build_status_text() -> str:
         f"🔑 <b>AI API Sozlamalari</b>\n\n"
         f"Holat: {status_line}\n"
         f"Provider: <code>{provider}</code>\n"
-        f"Model: <code>{model}</code>\n\n"
-        f"<i>API key xavfsiz bazada saqlanadi va faqat sizga ko'rinadi.</i>"
+        f"Model: <code>{model}</code>\n"
+        f"API Key: <code>{masked_key}</code>"
     )
 
 

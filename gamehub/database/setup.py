@@ -198,22 +198,30 @@ async def init_databases() -> None:
 
 
 async def _load_ai_settings() -> None:
-    """Read AI provider/key/model from the settings table and reload manager."""
-    from database.global_db import get_setting
-    provider = await get_setting("ai_provider")
-    api_key  = await get_setting("ai_api_key")
-    model    = await get_setting("ai_model")
+    """Load AI settings with priority: DB (1st) → env vars (2nd) → provider defaults (3rd).
 
-    # Only override env config if DB has explicit values
+    DB values set via Telegram always win over .env / config.py defaults.
+    If DB has no value for a given key, the env-var fallback is used.
+    Provider-level defaults (_DEFAULT_MODEL etc.) are handled inside the provider classes.
+    """
+    import config as cfg
+    from database.global_db import get_setting
+
+    db_provider = await get_setting("ai_provider")
+    db_api_key  = await get_setting("ai_api_key")
+    db_model    = await get_setting("ai_model")
+
+    # Priority 1 = DB, Priority 2 = env var
+    provider = db_provider or cfg.config.AI_PROVIDER or ""
+    api_key  = db_api_key  or cfg.config.AI_API_KEY  or ""
+    model    = db_model    or cfg.config.AI_MODEL    or ""
+
     if provider or api_key:
         from handlers.developer.modules.ai import services
-        services.reload_manager(
-            provider=provider or "",
-            api_key=api_key or "",
-            model=model or "",
-        )
+        services.reload_manager(provider=provider, api_key=api_key, model=model)
         logger.info(
-            "AI settings loaded from DB: provider=%s, key_set=%s",
-            provider or "none",
-            bool(api_key),
+            "AI settings loaded: provider=%s key_set=%s model=%s "
+            "(db_provider=%s db_key=%s db_model=%s)",
+            provider or "none", bool(api_key), model or "none",
+            bool(db_provider), bool(db_api_key), bool(db_model),
         )

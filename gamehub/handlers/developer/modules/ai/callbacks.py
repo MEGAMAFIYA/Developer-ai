@@ -73,7 +73,9 @@ AI_LOG_VIEW     = "ai:log"           # 📋 Action Log viewer
 
 # ── Phase 4 — API Key Management (key_manager.py) ────────────────────────────
 AI_KEY_SETTINGS  = "ai:key"              # 🔑 Open key management screen
-AI_KEY_CHANGE    = "ai:key:change"       # ✏️ Enter new API key (FSM)
+AI_PROVIDER_CHANGE = "ai:key:provider"   # ✏️ Change provider (independent FSM)
+AI_MODEL_CHANGE    = "ai:key:model"      # 🧠 Change model (independent FSM)
+AI_KEY_CHANGE    = "ai:key:change"       # 🔑 Change API key (independent FSM)
 AI_KEY_DELETE    = "ai:key:delete"       # 🗑 Prompt confirmation
 AI_KEY_DELETE_OK = "ai:key:delete:ok"   # ✅ Confirm delete
 AI_KEY_TEST      = "ai:key:test"         # 🔌 Test connection to provider

@@ -50,10 +50,17 @@ class AIFixBugStates(StatesGroup):
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Phase 4 — API Key Management (key_manager.py)
+# Each setting is controlled independently via its own FSM state.
 # ══════════════════════════════════════════════════════════════════════════════
 
+class AIProviderStates(StatesGroup):
+    waiting_provider    = State()   # admin selects a new provider name
+
+class AIModelStates(StatesGroup):
+    waiting_model       = State()   # admin enters a new model name
+
 class AIKeyStates(StatesGroup):
-    waiting_key         = State()   # admin enters a new API key (+ optional provider prefix)
+    waiting_key         = State()   # admin enters a new API key
 
 
 # ══════════════════════════════════════════════════════════════════════════════
