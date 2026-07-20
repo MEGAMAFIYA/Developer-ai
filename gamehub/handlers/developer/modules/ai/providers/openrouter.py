@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 class OpenRouterProvider(BaseAIProvider):
     NAME = "openrouter"
 
-    _DEFAULT_MODEL  = "openai/gpt-4o"
+    _DEFAULT_MODEL = "qwen/qwen3-coder:free"
     _BASE_URL       = "https://openrouter.ai/api/v1/chat/completions"
     _SITE_URL       = ""
     _SITE_NAME      = "GameHub Bot"
