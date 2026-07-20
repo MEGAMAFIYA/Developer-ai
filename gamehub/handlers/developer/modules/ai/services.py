@@ -121,7 +121,7 @@ _TEST_CONFIGS: dict[str, dict] = {
     "openai": {
         "url": "https://api.openai.com/v1/chat/completions",
         "payload": lambda model: {
-            "model": model or "gpt-4o-mini",
+            "model": model or "qwen/qwen3-coder:free", 
             "messages": [{"role": "user", "content": "Hi"}],
             "max_tokens": 1,
         },
