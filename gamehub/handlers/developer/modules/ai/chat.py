@@ -231,7 +231,7 @@ except TelegramBadRequest:
             chunks = [text[i: i + _TG_MAX] for i in range(0, len(text), _TG_MAX)]
             for idx, chunk in enumerate(chunks):
                 kb = _chat_result_kb() if idx == len(chunks) - 1 else None
-            await message.answer(chunk, reply_markup=kb, parse_mode="HTML")
+        await message.answer(chunk, reply_markup=kb, parse_mode="HTML")
     else:
         err_msg = result.error or "Noma\u02bblum xato"
         await sent.edit_text(
