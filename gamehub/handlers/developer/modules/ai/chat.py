@@ -141,7 +141,17 @@ async def _send_long(message: Message, text: str) -> None:
     for i in range(0, len(text), _TG_MAX):
         chunk = text[i: i + _TG_MAX]
         kb = _result_kb() if i + _TG_MAX >= len(text) else None
-        await message.answer(chunk, reply_markup=kb, parse_mode="HTML")
+        try:
+    await message.answer(
+        chunk,
+        reply_markup=kb,
+        parse_mode="HTML",
+    )
+except TelegramBadRequest:
+    await message.answer(
+        chunk,
+        reply_markup=kb,
+    )
 
 
 async def _process(
