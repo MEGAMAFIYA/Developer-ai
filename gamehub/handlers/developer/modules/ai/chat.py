@@ -157,7 +157,20 @@ async def _process(
     if result.ok:
         text = result.content
         if len(text) <= _TG_MAX:
-            await sent.edit_text(text, reply_markup=_result_kb(), parse_mode="HTML")
+            from aiogram.exceptions import TelegramBadRequest
+
+try:
+    await sent.edit_text(
+        text,
+        reply_markup=_chat_result_kb(),
+        parse_mode="HTML",
+    )
+except TelegramBadRequest:
+    await sent.edit_text(
+        text,
+        reply_markup=_chat_result_kb(),
+        parse_mode=None,
+    )
         else:
             await sent.delete()
             await _send_long(message, text)
@@ -188,7 +201,20 @@ async def _chat_process(message: Message, coro) -> None:
             )
             return
         if len(text) <= _TG_MAX:
-            await sent.edit_text(text, reply_markup=_chat_result_kb(), parse_mode="HTML")
+            from aiogram.exceptions import TelegramBadRequest
+
+try:
+    await sent.edit_text(
+        text,
+        reply_markup=_chat_result_kb(),
+        parse_mode="HTML",
+    )
+except TelegramBadRequest:
+    await sent.edit_text(
+        text,
+        reply_markup=_chat_result_kb(),
+        parse_mode=None,
+    )
         else:
             await sent.delete()
             # Send all chunks; attach cancel button only to the last one
