@@ -170,21 +170,23 @@ async def _process(
         if len(text) <= _TG_MAX:
             from aiogram.exceptions import TelegramBadRequest
 
-try:
-    await sent.edit_text(
-        text,
+            try:
+                await sent.edit_text(
+                    text,
         reply_markup=_chat_result_kb(),
-        parse_mode="HTML",
-    )
-except TelegramBadRequest:
-    await sent.edit_text(
-        text,
+                    parse_mode="HTML",
+                )
+            except TelegramBadRequest:
+ 
+                await sent.edit_text(
+                    text,
         reply_markup=_chat_result_kb(),
-        parse_mode=None,
-    )
+                    parse_mode=None,
+                )
         else:
-            await sent.delete()
-            await _send_long(message, text)
+             await sent.delete()
+             await _send_long(message,
+         text)
     else:
         err_msg = result.error or "Noma\u02bblum xato"
         await sent.edit_text(
