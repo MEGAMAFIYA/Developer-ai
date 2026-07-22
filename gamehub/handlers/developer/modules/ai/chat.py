@@ -255,11 +255,17 @@ async def _chat_process(message: Message, coro) -> None:
                     )
     else:
         err_msg = result.error or "Noma\u02bblum xato"
-        await sent.edit_text(
-            f"❌ <b>Xato</b>\n\n<code>{err_msg}</code>",
-            reply_markup=_chat_result_kb(),
-            parse_mode="HTML",
-        )
+        try:
+            await sent.edit_text(
+                f"❌ <b>Xato</b>\n\n<code>{err_msg}</code>",
+                reply_markup=_chat_result_kb(),
+                parse_mode="HTML",
+            )
+        except TelegramBadRequest:
+            await sent.edit_text(
+                f"❌ Xato\n\n{err_msg}",
+                reply_markup=_chat_result_kb(),
+            )
 
 
 # ── ❌ Cancel (callback + /cancel command) ────────────────────────────────────
