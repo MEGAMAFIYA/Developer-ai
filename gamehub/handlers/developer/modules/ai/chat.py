@@ -199,40 +199,45 @@ async def _process(
 async def _chat_process(message: Message, coro) -> None:
     """AI Chat handler — does NOT clear FSM state so the conversation continues.
 
-    After each reply the ❌ Bekor qilish button is shown; the user can keep
-    sending messages until they explicitly cancel.
-    """
-    sent = await message.answer("⏳ <b>AI Chat</b> — javob tayyorlamoqda…", parse_mode="HTML")
-    result = await coro
-    if result.ok:
-        text = result.content
-        if not text.strip():
+After each reply the ❌ Bekor qilish button is shown; the user can keep
+sending messages until they explicitly cancel.
+"""
+sent = await message.answer(
+    "⏳ <b>AI Chat</b> — javob tayyorlamoqda…",
+    parse_mode="HTML",
+)
+
+result = await coro
+
+if result.ok:
+    text = result.content
+
+    if not text.strip():
+        await sent.edit_text(
+            "⚠️ AI bo'sh javob qaytardi. Iltimos, boshqacha so'rang.",
+            reply_markup=_chat_result_kb(),
+            parse_mode="HTML",
+        )
+        return
+
+    if len(text) <= _TG_MAX:
+        from aiogram.exceptions import TelegramBadRequest
+
+        try:
             await sent.edit_text(
-                "⚠️ AI bo'sh javob qaytardi. Iltimos, boshqacha so'rang.",
+                text,
                 reply_markup=_chat_result_kb(),
                 parse_mode="HTML",
             )
-            return
-if len(text) <= _TG_MAX:
-    from aiogram.exceptions import TelegramBadRequest
-
-    try:
-        await sent.edit_text(
-            text,
-       
-reply_markup=_chat_result_kb(),
-            parse_mode="HTML",
-        )
-    except TelegramBadRequest:
-        await sent.edit_text(
-            text, 
-reply_markup=_chat_result_kb(),
-        parse_mode=None,
-        )
-
-        else:
-            await sent.delete()
-            # Send all chunks; attach cancel button only to the last one
+        except TelegramBadRequest:
+            await sent.edit_text(
+                text,
+                reply_markup=_chat_result_kb(),
+                parse_mode=None,
+            )
+    else:
+        await sent.delete()
+        # Send all chunks; attach cancel button only to the last one
             chunks = [text[i: i + _TG_MAX] for i in range(0, len(text), _TG_MAX)]
             
 for idx, chunk in enumerate(chunks):
