@@ -244,7 +244,7 @@ for idx, chunk in enumerate(chunks):
     )
     else:
         err_msg = result.error or "Noma\u02bblum xato"
-    await sent.edit_text(
+        await sent.edit_text(
             f"❌ <b>Xato</b>\n\n<code>{err_msg}</code>",
             reply_markup=_chat_result_kb(),
             parse_mode="HTML",
