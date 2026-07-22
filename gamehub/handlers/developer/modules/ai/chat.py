@@ -213,21 +213,23 @@ async def _chat_process(message: Message, coro) -> None:
                 parse_mode="HTML",
             )
             return
-        if len(text) <= _TG_MAX:
-            from aiogram.exceptions import TelegramBadRequest
+if len(text) <= _TG_MAX:
+    from aiogram.exceptions import TelegramBadRequest
 
-try:
-    await sent.edit_text(
-        text,
-        reply_markup=_chat_result_kb(),
-        parse_mode="HTML",
-    )
-except TelegramBadRequest:
-    await sent.edit_text(
-        text,
-        reply_markup=_chat_result_kb(),
+    try:
+        await sent.edit_text(
+            text,
+       
+reply_markup=_chat_result_kb(),
+            parse_mode="HTML",
+        )
+    except TelegramBadRequest:
+        await sent.edit_text(
+            text, 
+reply_markup=_chat_result_kb(),
         parse_mode=None,
-    )
+        )
+
         else:
             await sent.delete()
             # Send all chunks; attach cancel button only to the last one
