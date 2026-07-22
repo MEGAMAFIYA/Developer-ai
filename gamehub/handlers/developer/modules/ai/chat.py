@@ -36,6 +36,7 @@ from __future__ import annotations
 import logging
 
 from aiogram import Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import (
@@ -137,7 +138,11 @@ async def _guard_msg(message: Message) -> bool:
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 async def _send_long(message: Message, text: str) -> None:
-    """Send text, splitting into ≤4096-char chunks if needed."""
+    """Send text, splitting into ≤4096-char chunks if needed.
+
+    The last chunk gets the "back to menu" button; intermediate chunks have none.
+    Each chunk falls back to plain text if HTML parse fails.
+    """
     for i in range(0, len(text), _TG_MAX):
         chunk = text[i: i + _TG_MAX]
         kb = _result_kb() if i + _TG_MAX >= len(text) else None
@@ -148,7 +153,6 @@ async def _send_long(message: Message, text: str) -> None:
                 parse_mode="HTML",
             )
         except TelegramBadRequest:
-    
             await message.answer(
                 chunk,
                 reply_markup=kb,
@@ -163,30 +167,29 @@ async def _process(
 ) -> None:
     """Generic single-turn handler: clears FSM, awaits AI, shows result."""
     await state.clear()
-    sent = await message.answer(f"⏳ <b>{feature_name}</b> — AI javob tayyorlamoqda…", parse_mode="HTML")
+    sent = await message.answer(
+        f"⏳ <b>{feature_name}</b> — AI javob tayyorlamoqda…",
+        parse_mode="HTML",
+    )
     result = await coro
     if result.ok:
         text = result.content
         if len(text) <= _TG_MAX:
-            from aiogram.exceptions import TelegramBadRequest
-
             try:
                 await sent.edit_text(
                     text,
-        reply_markup=_chat_result_kb(),
+                    reply_markup=_result_kb(),
                     parse_mode="HTML",
                 )
             except TelegramBadRequest:
- 
                 await sent.edit_text(
                     text,
-        reply_markup=_chat_result_kb(),
+                    reply_markup=_result_kb(),
                     parse_mode=None,
                 )
         else:
-             await sent.delete()
-             await _send_long(message,
-         text)
+            await sent.delete()
+            await _send_long(message, text)
     else:
         err_msg = result.error or "Noma\u02bblum xato"
         await sent.edit_text(
@@ -199,54 +202,57 @@ async def _process(
 async def _chat_process(message: Message, coro) -> None:
     """AI Chat handler — does NOT clear FSM state so the conversation continues.
 
-After each reply the ❌ Bekor qilish button is shown; the user can keep
-sending messages until they explicitly cancel.
-"""
-sent = await message.answer(
-    "⏳ <b>AI Chat</b> — javob tayyorlamoqda…",
-    parse_mode="HTML",
-)
+    After each reply the ❌ Bekor qilish button is shown; the user can keep
+    sending messages until they explicitly cancel.
+    """
+    sent = await message.answer(
+        "⏳ <b>AI Chat</b> — javob tayyorlamoqda…",
+        parse_mode="HTML",
+    )
 
-result = await coro
+    result = await coro
 
-if result.ok:
-    text = result.content
+    if result.ok:
+        text = result.content
 
-    if not text.strip():
-        await sent.edit_text(
-            "⚠️ AI bo'sh javob qaytardi. Iltimos, boshqacha so'rang.",
-            reply_markup=_chat_result_kb(),
-            parse_mode="HTML",
-        )
-        return
-
-    if len(text) <= _TG_MAX:
-        from aiogram.exceptions import TelegramBadRequest
-
-        try:
+        if not text.strip():
             await sent.edit_text(
-                text,
+                "⚠️ AI bo'sh javob qaytardi. Iltimos, boshqacha so'rang.",
                 reply_markup=_chat_result_kb(),
                 parse_mode="HTML",
             )
-        except TelegramBadRequest:
-            await sent.edit_text(
-                text,
-                reply_markup=_chat_result_kb(),
-                parse_mode=None,
-            )
-    else:
-        await sent.delete()
-        # Send all chunks; attach cancel button only to the last one
+            return
+
+        if len(text) <= _TG_MAX:
+            try:
+                await sent.edit_text(
+                    text,
+                    reply_markup=_chat_result_kb(),
+                    parse_mode="HTML",
+                )
+            except TelegramBadRequest:
+                await sent.edit_text(
+                    text,
+                    reply_markup=_chat_result_kb(),
+                    parse_mode=None,
+                )
+        else:
+            await sent.delete()
+            # Send all chunks; attach cancel button only to the last one
             chunks = [text[i: i + _TG_MAX] for i in range(0, len(text), _TG_MAX)]
-            
-for idx, chunk in enumerate(chunks):
-    kb = _chat_result_kb() if idx == len(chunks) - 1 else None
-    await message.answer(
-        chunk,
-        reply_markup=kb,
-        parse_mode="HTML"
-    )
+            for idx, chunk in enumerate(chunks):
+                kb = _chat_result_kb() if idx == len(chunks) - 1 else None
+                try:
+                    await message.answer(
+                        chunk,
+                        reply_markup=kb,
+                        parse_mode="HTML",
+                    )
+                except TelegramBadRequest:
+                    await message.answer(
+                        chunk,
+                        reply_markup=kb,
+                    )
     else:
         err_msg = result.error or "Noma\u02bblum xato"
         await sent.edit_text(
