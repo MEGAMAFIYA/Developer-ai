@@ -19,6 +19,7 @@ Every action is logged to ai_actions.log via action_log.
 from __future__ import annotations
 
 import asyncio
+import html as _html
 import logging
 import zipfile
 from datetime import datetime
@@ -195,12 +196,17 @@ def _search_lines(lines: list[str], query: str) -> list[str]:
 
 
 def _fmt_log_block(lines: list[str], header: str, max_chars: int = 3200) -> str:
+    """Build an HTML message block from log lines.
+
+    The raw log content is HTML-escaped before being placed inside a <pre>
+    block so that <, >, and & in error messages never break parse_mode="HTML".
+    """
     body = "".join(lines)
     if not body:
         body = "(bo'sh)"
     if len(body) > max_chars:
         body = "...(qisqartirildi)...\n" + body[-max_chars:]
-    return f"{header}\n<pre>{body}</pre>"
+    return f"{header}\n<pre>{_html.escape(body)}</pre>"
 
 
 def _log_summary() -> str:

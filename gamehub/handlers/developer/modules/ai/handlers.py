@@ -18,9 +18,11 @@ Adding a new sub-feature
    (or just add it here; this file is already included)
 """
 
+import html as _html
 import logging
 
 from aiogram import Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import CallbackQuery
 
 import config as cfg
@@ -83,20 +85,72 @@ async def cb_ai_menu_back(query: CallbackQuery) -> None:
 
 # ── 📋 Action Log ─────────────────────────────────────────────────────────────
 
+_LOG_HEADER = "📋 <b>Action Log</b> (so'nggi 30 ta)\n\n"
+_TG_MAX     = 4096
+
+
 @router.callback_query(lambda c: c.data == AI_LOG_VIEW)
 async def cb_log_view(query: CallbackQuery) -> None:
-    """Show the last 30 entries from ai_actions.log."""
+    """Show the last 30 entries from ai_actions.log.
+
+    • HTML-escapes all log content so special characters never break parsing.
+    • Splits into multiple messages when content exceeds 4096 chars.
+    • Falls back to plain text if HTML rendering still fails.
+    """
     if not await _guard(query):
         return
     await query.answer()
-    await query.message.edit_text("📋 Log o'qilmoqda...", parse_mode="HTML")
+    await query.message.edit_text("📋 Log o'qilmoqda…")
+
     recent = await read_recent(30)
-    text = (
-        "📋 <b>Action Log</b> (so'nggi 30 ta)\n\n"
-        f"<pre>{recent[:3600]}</pre>"
-    )
-    await query.message.edit_text(
-        text,
-        reply_markup=ai_back_keyboard(),
-        parse_mode="HTML",
-    )
+
+    # HTML-escape the raw log text so <, >, & never break parse_mode="HTML"
+    escaped = _html.escape(recent)
+
+    # Build the first chunk (header + as much content as fits)
+    header   = _LOG_HEADER
+    pre_open = "<pre>"
+    pre_close = "</pre>"
+    # Max body chars inside the <pre> block for the first message
+    first_body_max = _TG_MAX - len(header) - len(pre_open) - len(pre_close)
+
+    if len(escaped) <= first_body_max:
+        # Fits in one message
+        text = header + pre_open + escaped + pre_close
+        try:
+            await query.message.edit_text(
+                text,
+                reply_markup=ai_back_keyboard(),
+                parse_mode="HTML",
+            )
+        except TelegramBadRequest:
+            await query.message.edit_text(
+                f"📋 Action Log (so'nggi 30 ta)\n\n{recent}",
+                reply_markup=ai_back_keyboard(),
+            )
+    else:
+        # First message: header + first slice inside <pre>
+        first_body = escaped[:first_body_max]
+        first_text = header + pre_open + first_body + pre_close
+        try:
+            await query.message.edit_text(first_text, parse_mode="HTML")
+        except TelegramBadRequest:
+            await query.message.edit_text(
+                f"📋 Action Log\n\n{recent[:_TG_MAX - len(_LOG_HEADER)]}"
+            )
+
+        # Remaining chunks as new messages
+        rest = escaped[first_body_max:]
+        chunk_max = _TG_MAX - len(pre_open) - len(pre_close)
+        chunks = [rest[i: i + chunk_max] for i in range(0, len(rest), chunk_max)]
+        for idx, chunk in enumerate(chunks):
+            kb   = ai_back_keyboard() if idx == len(chunks) - 1 else None
+            body = pre_open + chunk + pre_close
+            try:
+                await query.message.answer(body, reply_markup=kb, parse_mode="HTML")
+            except TelegramBadRequest:
+                raw_chunk = recent[
+                    first_body_max + idx * chunk_max:
+                    first_body_max + (idx + 1) * chunk_max
+                ]
+                await query.message.answer(raw_chunk, reply_markup=kb)
