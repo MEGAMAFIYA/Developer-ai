@@ -234,9 +234,14 @@ reply_markup=_chat_result_kb(),
             await sent.delete()
             # Send all chunks; attach cancel button only to the last one
             chunks = [text[i: i + _TG_MAX] for i in range(0, len(text), _TG_MAX)]
-            for idx, chunk in enumerate(chunks):
-                kb = _chat_result_kb() if idx == len(chunks) - 1 else None
-    await message.answer(chunk, reply_markup=kb, parse_mode="HTML")
+            
+for idx, chunk in enumerate(chunks):
+    kb = _chat_result_kb() if idx == len(chunks) - 1 else None
+    await message.answer(
+        chunk,
+        reply_markup=kb,
+        parse_mode="HTML"
+    )
     else:
         err_msg = result.error or "Noma\u02bblum xato"
     await sent.edit_text(
