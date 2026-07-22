@@ -34,6 +34,7 @@ Both clear state and restore the AI sub-menu.
 from __future__ import annotations
 
 import logging
+import re
 
 from aiogram import Router
 from aiogram.exceptions import TelegramBadRequest
@@ -47,6 +48,7 @@ from aiogram.types import (
 )
 
 import config as cfg
+from handlers.developer.modules.ai import project_search as _ps
 from handlers.developer.modules.ai.callbacks import (
     AI_CANCEL,
     AI_CHAT,
@@ -133,6 +135,100 @@ async def _guard_msg(message: Message) -> bool:
         return True
     await message.answer("⛔ Ruxsat yo'q.")
     return False
+
+
+# ── Project command patterns ──────────────────────────────────────────────────
+# Recognised in AI Chat before falling through to the normal AI provider.
+# All patterns are case-insensitive.
+
+_RE_OPEN = re.compile(
+    r"^\s*(?:open|show|read|ko[`']?rsat|och(?:ir)?)\s+(.+)$",
+    re.IGNORECASE,
+)
+_RE_FIND = re.compile(
+    r"^\s*(?:find|locate|top(?:ish)?|izla)\s+(\S+)\s*$",
+    re.IGNORECASE,
+)
+_RE_SEARCH = re.compile(
+    r"^\s*(?:search\s+for|search|grep|qidir(?:ish)?)\s+(.+)$",
+    re.IGNORECASE,
+)
+_RE_LIST_FOLDER = re.compile(
+    r"""^\s*
+        (?:
+            (?:show|list)\s+(?:all\s+)?files?\s+(?:in|inside|under|from)\s+  |
+            files?\s+(?:in|inside|under|from)\s+
+        )
+        (.+)$""",
+    re.IGNORECASE | re.VERBOSE,
+)
+_RE_LIST_EVERY = re.compile(
+    r"^\s*(?:list\s+every|list\s+all|show\s+all)\s+(.+?)(?:\s+(?:module|file|fayl|handler|router))?s?\s*$",
+    re.IGNORECASE,
+)
+_RE_STRUCTURE = re.compile(
+    r"^\s*(?:project\s+structure|file\s+tree|project\s+map|list\s+all\s+files"
+    r"|loyiha\s+tuzilmasi|fayl\s+xaritasi|analyze\s+project\s+structure)\s*$",
+    re.IGNORECASE,
+)
+
+
+async def _handle_project_command(text: str) -> "_ps.ProjectResult | None":
+    """Detect and dispatch a project-aware command.
+
+    Returns a ProjectResult if the text matches a known pattern,
+    or None if it should be forwarded to the normal AI provider.
+    """
+    t = text.strip()
+
+    if _RE_STRUCTURE.match(t):
+        return await _ps.project_structure()
+
+    m = _RE_OPEN.match(t)
+    if m:
+        return await _ps.open_file(m.group(1).strip())
+
+    m = _RE_FIND.match(t)
+    if m:
+        return await _ps.find_identifier(m.group(1).strip())
+
+    m = _RE_SEARCH.match(t)
+    if m:
+        return await _ps.search_text(m.group(1).strip())
+
+    m = _RE_LIST_FOLDER.match(t)
+    if m:
+        return await _ps.list_files(m.group(1).strip())
+
+    m = _RE_LIST_EVERY.match(t)
+    if m:
+        return await _ps.list_files(m.group(1).strip())
+
+    return None
+
+
+async def _send_project_result(message: Message, result: "_ps.ProjectResult") -> None:
+    """Send a ProjectResult back to the user inside an AI Chat session.
+
+    Keeps FSM state active (no clear) so the conversation continues.
+    Uses _chat_result_kb() so the ❌ Bekor qilish button is always present.
+    Falls back from HTML to plain text on TelegramBadRequest.
+    """
+    text = result.text
+    if len(text) <= _TG_MAX:
+        try:
+            await message.answer(text, reply_markup=_chat_result_kb(), parse_mode="HTML")
+        except TelegramBadRequest:
+            await message.answer(text, reply_markup=_chat_result_kb())
+        return
+    # Long result — split into chunks; last chunk gets the keyboard
+    chunks = [text[i: i + _TG_MAX] for i in range(0, len(text), _TG_MAX)]
+    for idx, chunk in enumerate(chunks):
+        kb = _chat_result_kb() if idx == len(chunks) - 1 else None
+        try:
+            await message.answer(chunk, reply_markup=kb, parse_mode="HTML")
+        except TelegramBadRequest:
+            await message.answer(chunk, reply_markup=kb)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -305,7 +401,14 @@ async def cb_chat_start(query: CallbackQuery, state: FSMContext) -> None:
         "💬 <b>AI Chat</b>\n\n"
         "Savolingizni yoki muammoingizni yozing.\n"
         "AI o'zbek tilida javob beradi.\n\n"
-        "<i>Misol: «Snake o'yinida tezlikni qanday oshiraman?»</i>",
+        "<i>Misol: «Snake o'yinida tezlikni qanday oshiraman?»</i>\n\n"
+        "📁 <b>Loyiha buyruqlari:</b>\n"
+        "<code>Open services.py</code>\n"
+        "<code>Find _chat_process</code>\n"
+        "<code>Search for TelegramBadRequest</code>\n"
+        "<code>Show all files inside handlers</code>\n"
+        "<code>List every ai module</code>\n"
+        "<code>Project structure</code>",
         reply_markup=_cancel_kb(),
         parse_mode="HTML",
     )
@@ -313,11 +416,24 @@ async def cb_chat_start(query: CallbackQuery, state: FSMContext) -> None:
 
 @router.message(AIChatStates.waiting_message)
 async def msg_chat(message: Message, state: FSMContext) -> None:
-    """Receive user message and reply — FSM state stays active for next message."""
+    """Receive user message and reply — FSM state stays active for next message.
+
+    Project-aware commands (open/find/search/list) are handled locally before
+    the message is forwarded to the AI provider.  FSM state is never cleared
+    here; it is cleared only when the user presses ❌ Bekor qilish.
+    """
     if not await _guard_msg(message):
         return
-    # State is intentionally NOT cleared here; cleared only via ❌ Bekor qilish
-    await _chat_process(message, services.ai_chat(message.text or ""))
+    user_text = message.text or ""
+
+    # ── Try project command first ──────────────────────────────────────────
+    project_result = await _handle_project_command(user_text)
+    if project_result is not None:
+        await _send_project_result(message, project_result)
+        return
+
+    # ── Normal AI chat ─────────────────────────────────────────────────────
+    await _chat_process(message, services.ai_chat(user_text))
 
 
 # ── 📝 Kod yozdirish ──────────────────────────────────────────────────────────
