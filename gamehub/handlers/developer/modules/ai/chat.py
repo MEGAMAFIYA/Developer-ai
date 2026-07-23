@@ -493,6 +493,7 @@ async def cmd_cancel(message: Message, state: FSMContext) -> None:
 async def cb_chat_start(query: CallbackQuery, state: FSMContext) -> None:
     if not await _guard_cb(query):
         return
+    await state.clear()
     await state.set_state(AIChatStates.waiting_message)
     await query.answer()
     await query.message.edit_text(
@@ -540,6 +541,7 @@ async def msg_chat(message: Message, state: FSMContext) -> None:
 async def cb_write_code_start(query: CallbackQuery, state: FSMContext) -> None:
     if not await _guard_cb(query):
         return
+    await state.clear()
     await state.set_state(AIWriteCodeStates.waiting_prompt)
     await query.answer()
     await query.message.edit_text(
@@ -581,6 +583,7 @@ async def msg_write_code(message: Message, state: FSMContext) -> None:
 async def cb_edit_code_start(query: CallbackQuery, state: FSMContext) -> None:
     if not await _guard_cb(query):
         return
+    await state.clear()
     await state.set_state(AIEditCodeStates.waiting_code)
     await query.answer()
     await query.message.edit_text(
@@ -633,6 +636,7 @@ async def msg_edit_code_instruct(message: Message, state: FSMContext) -> None:
 async def cb_analyze_start(query: CallbackQuery, state: FSMContext) -> None:
     if not await _guard_cb(query):
         return
+    await state.clear()
     await state.set_state(AIAnalyzeCodeStates.waiting_code)
     await query.answer()
     await query.message.edit_text(
@@ -665,6 +669,7 @@ async def msg_analyze(message: Message, state: FSMContext) -> None:
 async def cb_create_game_start(query: CallbackQuery, state: FSMContext) -> None:
     if not await _guard_cb(query):
         return
+    await state.clear()
     await state.set_state(AICreateGameStates.waiting_description)
     await query.answer()
     await query.message.edit_text(
@@ -697,6 +702,7 @@ async def msg_create_game(message: Message, state: FSMContext) -> None:
 async def cb_improve_game_start(query: CallbackQuery, state: FSMContext) -> None:
     if not await _guard_cb(query):
         return
+    await state.clear()
     await state.set_state(AIImproveGameStates.waiting_code)
     await query.answer()
     await query.message.edit_text(
@@ -727,6 +733,7 @@ async def msg_improve_game(message: Message, state: FSMContext) -> None:
 async def cb_find_bug_start(query: CallbackQuery, state: FSMContext) -> None:
     if not await _guard_cb(query):
         return
+    await state.clear()
     await state.set_state(AIFindBugStates.waiting_code)
     await query.answer()
     await query.message.edit_text(
@@ -757,6 +764,7 @@ async def msg_find_bug(message: Message, state: FSMContext) -> None:
 async def cb_fix_bug_start(query: CallbackQuery, state: FSMContext) -> None:
     if not await _guard_cb(query):
         return
+    await state.clear()
     await state.set_state(AIFixBugStates.waiting_code)
     await query.answer()
     await query.message.edit_text(

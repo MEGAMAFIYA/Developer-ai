@@ -23,6 +23,7 @@ import logging
 
 from aiogram import Router
 from aiogram.exceptions import TelegramBadRequest
+from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery
 
 import config as cfg
@@ -57,10 +58,15 @@ async def _guard(query: CallbackQuery) -> bool:
 # ── Entry point: DEV_AI → show AI sub-menu ────────────────────────────────────
 
 @router.callback_query(lambda c: c.data == DEV_AI)
-async def cb_ai_menu_entry(query: CallbackQuery) -> None:
-    """Called when admin taps 🤖 AI Developer from the main dev menu."""
+async def cb_ai_menu_entry(query: CallbackQuery, state: FSMContext) -> None:
+    """Called when admin taps 🤖 AI Developer from the main dev menu.
+
+    Clears any active FSM state so stale states from a previous AI feature
+    (e.g. AIChatStates.waiting_message) never leak into subsequent features.
+    """
     if not await _guard(query):
         return
+    await state.clear()
     await query.answer()
     await query.message.edit_text(
         AI_MENU_TEXT,
@@ -72,9 +78,16 @@ async def cb_ai_menu_entry(query: CallbackQuery) -> None:
 # ── AI_MENU: back to AI sub-menu (from any feature screen) ───────────────────
 
 @router.callback_query(lambda c: c.data == AI_MENU)
-async def cb_ai_menu_back(query: CallbackQuery) -> None:
+async def cb_ai_menu_back(query: CallbackQuery, state: FSMContext) -> None:
+    """Clears any active FSM state before showing the AI menu.
+
+    Without this clear(), any active state (e.g. AIChatStates.waiting_message)
+    would persist across menu navigations and intercept messages intended for
+    the next selected feature.
+    """
     if not await _guard(query):
         return
+    await state.clear()
     await query.answer()
     await query.message.edit_text(
         AI_MENU_TEXT,
