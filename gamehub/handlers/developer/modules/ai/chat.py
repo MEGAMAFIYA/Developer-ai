@@ -140,19 +140,35 @@ async def _guard_msg(message: Message) -> bool:
 # ── Project command patterns ──────────────────────────────────────────────────
 # Recognised in AI Chat before falling through to the normal AI provider.
 # All patterns are case-insensitive.
+#
+# DISPATCH ORDER (matters — more specific patterns come first):
+#   1. _RE_STRUCTURE   — whole-project tree, no folder argument
+#   2. _RE_TREE_SUB    — subtree of a specific folder
+#   3. _RE_LIST_FOLDER — "show/list [all] files in/inside <folder>"
+#   4. _RE_LIST_PLAIN  — "list [all] <folder>"  (no "files" keyword required)
+#   5. _RE_LIST_EVERY  — "list every/show all <folder>"
+#   6. _RE_LIST_REVERSED — "<folder> files"
+#   7. _RE_OPEN        — file opener (AFTER all list patterns to avoid grabbing them)
+#   8. _RE_FIND        — identifier finder
+#   9. _RE_SEARCH      — full-text grep
 
-_RE_OPEN = re.compile(
-    r"^\s*(?:open|show|read|ko[`']?rsat|och(?:ir)?)\s+(.+)$",
+# ── Whole-project structure (no folder argument) ──────────────────────────────
+_RE_STRUCTURE = re.compile(
+    r"^\s*(?:project\s+structure|file\s+tree|project\s+map|list\s+all\s+files"
+    r"|loyiha\s+tuzilmasi|fayl\s+xaritasi|analyze\s+project\s+structure)\s*$",
     re.IGNORECASE,
 )
-_RE_FIND = re.compile(
-    r"^\s*(?:find|locate|top(?:ish)?|izla)\s+(\S+)\s*$",
+
+# ── Subtree: "tree handlers", "project tree handlers/developer", etc. ─────────
+# Matches:  [project] (tree|structure|tuzilma) <folder>
+# Does NOT match "project structure" alone (no folder) — that hits _RE_STRUCTURE.
+_RE_TREE_SUB = re.compile(
+    r"^\s*(?:project\s+)?(?:tree|structure|tuzilma)\s+(\S+(?:\/\S+)*)\s*$",
     re.IGNORECASE,
 )
-_RE_SEARCH = re.compile(
-    r"^\s*(?:search\s+for|search|grep|qidir(?:ish)?)\s+(.+)$",
-    re.IGNORECASE,
-)
+
+# ── Folder listing: "show/list [all] files in/inside <folder>" ───────────────
+# Also: "files in/inside <folder>"
 _RE_LIST_FOLDER = re.compile(
     r"""^\s*
         (?:
@@ -162,13 +178,47 @@ _RE_LIST_FOLDER = re.compile(
         (.+)$""",
     re.IGNORECASE | re.VERBOSE,
 )
+
+# ── Folder listing: "list [all] <folder>" or "show all <folder>" ──────────────
+# Examples: "list handlers", "list all handlers/developer", "show all handlers"
+# "show all X" is captured here (before _RE_LIST_EVERY) so the lazy quantifier
+# in _RE_LIST_EVERY cannot strip a trailing 's' off the folder name.
+# Plain "show X" (without "all") is intentionally excluded — it falls through
+# to _RE_OPEN so bare filenames like "show main.py" still work correctly.
+_RE_LIST_PLAIN = re.compile(
+    r"^\s*(?:list\s+(?:all\s+)?|show\s+all\s+)(\S+(?:\/\S+)*)\s*$",
+    re.IGNORECASE,
+)
+
+# ── Folder listing: "list every/show all <folder>" ───────────────────────────
 _RE_LIST_EVERY = re.compile(
     r"^\s*(?:list\s+every|list\s+all|show\s+all)\s+(.+?)(?:\s+(?:module|file|fayl|handler|router))?s?\s*$",
     re.IGNORECASE,
 )
-_RE_STRUCTURE = re.compile(
-    r"^\s*(?:project\s+structure|file\s+tree|project\s+map|list\s+all\s+files"
-    r"|loyiha\s+tuzilmasi|fayl\s+xaritasi|analyze\s+project\s+structure)\s*$",
+
+# ── Folder listing: "<folder> files"  (folder name first) ────────────────────
+# Example: "handlers files", "handlers/developer files"
+_RE_LIST_REVERSED = re.compile(
+    r"^\s*(\S+(?:\/\S+)*)\s+files?\s*$",
+    re.IGNORECASE,
+)
+
+# ── File opener: "open/show/read <path>" ─────────────────────────────────────
+# Intentionally last among the "show" patterns so list variants take priority.
+_RE_OPEN = re.compile(
+    r"^\s*(?:open|show|read|ko[`']?rsat|och(?:ir)?)\s+(.+)$",
+    re.IGNORECASE,
+)
+
+# ── Identifier finder ─────────────────────────────────────────────────────────
+_RE_FIND = re.compile(
+    r"^\s*(?:find|locate|top(?:ish)?|izla)\s+(\S+)\s*$",
+    re.IGNORECASE,
+)
+
+# ── Full-text search ──────────────────────────────────────────────────────────
+_RE_SEARCH = re.compile(
+    r"^\s*(?:search\s+for|search|grep|qidir(?:ish)?)\s+(.+)$",
     re.IGNORECASE,
 )
 
@@ -178,31 +228,55 @@ async def _handle_project_command(text: str) -> "_ps.ProjectResult | None":
 
     Returns a ProjectResult if the text matches a known pattern,
     or None if it should be forwarded to the normal AI provider.
+
+    Patterns are checked in priority order (most specific first) so that
+    "show all files inside handlers" is never mis-parsed as open_file.
     """
     t = text.strip()
 
+    # 1. Whole-project structure (exact phrases, no trailing folder)
     if _RE_STRUCTURE.match(t):
         return await _ps.project_structure()
 
-    m = _RE_OPEN.match(t)
+    # 2. Subtree tree view: "tree handlers", "project structure handlers/dev"
+    m = _RE_TREE_SUB.match(t)
     if m:
-        return await _ps.open_file(m.group(1).strip())
+        return await _ps.list_files(m.group(1).strip())
 
-    m = _RE_FIND.match(t)
-    if m:
-        return await _ps.find_identifier(m.group(1).strip())
-
-    m = _RE_SEARCH.match(t)
-    if m:
-        return await _ps.search_text(m.group(1).strip())
-
+    # 3. "show/list [all] files in/inside <folder>" or "files in <folder>"
     m = _RE_LIST_FOLDER.match(t)
     if m:
         return await _ps.list_files(m.group(1).strip())
 
+    # 4. "list [all] <folder>"  (no "files" keyword required)
+    m = _RE_LIST_PLAIN.match(t)
+    if m:
+        return await _ps.list_files(m.group(1).strip())
+
+    # 5. "list every/show all <folder>"
     m = _RE_LIST_EVERY.match(t)
     if m:
         return await _ps.list_files(m.group(1).strip())
+
+    # 6. "<folder> files"
+    m = _RE_LIST_REVERSED.match(t)
+    if m:
+        return await _ps.list_files(m.group(1).strip())
+
+    # 7. File opener — checked AFTER all list patterns
+    m = _RE_OPEN.match(t)
+    if m:
+        return await _ps.open_file(m.group(1).strip())
+
+    # 8. Identifier finder
+    m = _RE_FIND.match(t)
+    if m:
+        return await _ps.find_identifier(m.group(1).strip())
+
+    # 9. Full-text search
+    m = _RE_SEARCH.match(t)
+    if m:
+        return await _ps.search_text(m.group(1).strip())
 
     return None
 
