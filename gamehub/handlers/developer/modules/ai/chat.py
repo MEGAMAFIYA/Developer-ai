@@ -73,6 +73,7 @@ from handlers.developer.modules.ai.states import (
     AIFixBugStates,
 )
 from handlers.developer.modules.ai import services
+from handlers.developer.modules.ai.action_log import log_action
 
 logger = logging.getLogger(__name__)
 router = Router(name="dev:ai:chat")
@@ -334,8 +335,14 @@ async def _process(
     state: FSMContext,
     feature_name: str,
     coro,
+    action: str = "AI_FEATURE",
 ) -> None:
-    """Generic single-turn handler: clears FSM, awaits AI, shows result."""
+    """Generic single-turn handler: clears FSM, awaits AI, shows result.
+
+    *action* is the log key written to ai_actions.log, e.g. ``"AI_WRITE_CODE"``.
+    Successful calls log ``action`` with result ``"ok"``; failures log
+    ``action + "_ERROR"`` with the error message.
+    """
     await state.clear()
     sent = await message.answer(
         f"⏳ <b>{feature_name}</b> — AI javob tayyorlamoqda…",
@@ -360,12 +367,19 @@ async def _process(
         else:
             await sent.delete()
             await _send_long(message, text)
+        await log_action(message.from_user.id, action, feature_name, "ok")
     else:
         err_msg = result.error or "Noma\u02bblum xato"
         await sent.edit_text(
             f"❌ <b>Xato</b>\n\n<code>{err_msg}</code>",
             reply_markup=_result_kb(),
             parse_mode="HTML",
+        )
+        await log_action(
+            message.from_user.id,
+            f"{action}_ERROR",
+            feature_name,
+            err_msg[:200],
         )
 
 
@@ -374,6 +388,8 @@ async def _chat_process(message: Message, coro) -> None:
 
     After each reply the ❌ Bekor qilish button is shown; the user can keep
     sending messages until they explicitly cancel.
+
+    Logs one ``AI_CHAT`` entry per completed turn (success or error).
     """
     sent = await message.answer(
         "⏳ <b>AI Chat</b> — javob tayyorlamoqda…",
@@ -381,6 +397,7 @@ async def _chat_process(message: Message, coro) -> None:
     )
 
     result = await coro
+    prompt = (message.text or "")[:100]   # first 100 chars as context for the log
 
     if result.ok:
         text = result.content
@@ -390,6 +407,9 @@ async def _chat_process(message: Message, coro) -> None:
                 "⚠️ AI bo'sh javob qaytardi. Iltimos, boshqacha so'rang.",
                 reply_markup=_chat_result_kb(),
                 parse_mode="HTML",
+            )
+            await log_action(
+                message.from_user.id, "AI_CHAT_ERROR", prompt, "empty_response"
             )
             return
 
@@ -423,6 +443,7 @@ async def _chat_process(message: Message, coro) -> None:
                         chunk,
                         reply_markup=kb,
                     )
+        await log_action(message.from_user.id, "AI_CHAT", prompt, "ok")
     else:
         err_msg = result.error or "Noma\u02bblum xato"
         try:
@@ -436,6 +457,9 @@ async def _chat_process(message: Message, coro) -> None:
                 f"❌ Xato\n\n{err_msg}",
                 reply_markup=_chat_result_kb(),
             )
+        await log_action(
+            message.from_user.id, "AI_CHAT_ERROR", prompt, err_msg[:200]
+        )
 
 
 # ── ❌ Cancel (callback + /cancel command) ────────────────────────────────────
@@ -547,6 +571,7 @@ async def msg_write_code(message: Message, state: FSMContext) -> None:
         message, state,
         "Kod yozdirish",
         services.ai_write_code(text, language=lang),
+        "AI_WRITE_CODE",
     )
 
 
@@ -598,6 +623,7 @@ async def msg_edit_code_instruct(message: Message, state: FSMContext) -> None:
         message, state,
         "Kodni tahrirlash",
         services.ai_edit_code(code, instruction),
+        "AI_EDIT_CODE",
     )
 
 
@@ -629,6 +655,7 @@ async def msg_analyze(message: Message, state: FSMContext) -> None:
         message, state,
         "Kodni tahlil qilish",
         services.ai_analyze_code(message.text or ""),
+        "AI_ANALYZE_CODE",
     )
 
 
@@ -660,6 +687,7 @@ async def msg_create_game(message: Message, state: FSMContext) -> None:
         message, state,
         "O'yin yaratish",
         services.ai_create_game(message.text or ""),
+        "AI_CREATE_GAME",
     )
 
 
@@ -689,6 +717,7 @@ async def msg_improve_game(message: Message, state: FSMContext) -> None:
         message, state,
         "O'yinni yaxshilash",
         services.ai_improve_game(message.text or ""),
+        "AI_IMPROVE_GAME",
     )
 
 
@@ -718,6 +747,7 @@ async def msg_find_bug(message: Message, state: FSMContext) -> None:
         message, state,
         "Bug topish",
         services.ai_find_bugs(message.text or ""),
+        "AI_FIND_BUG",
     )
 
 
@@ -748,4 +778,5 @@ async def msg_fix_bug(message: Message, state: FSMContext) -> None:
         message, state,
         "Xatoni tuzatish",
         services.ai_fix_bug(message.text or ""),
+        "AI_FIX_BUG",
     )
