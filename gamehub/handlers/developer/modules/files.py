@@ -28,6 +28,7 @@ from aiogram.types import (
 )
 
 import config as cfg
+from database.global_db import deactivate_games_by_html_file
 from handlers.developer.callbacks import (
     DEV_FILES,
     DEV_FILES_LIST,
@@ -232,7 +233,21 @@ async def cb_file_delete_ok(q: CallbackQuery, state: FSMContext) -> None:
     try:
         size = path.stat().st_size if path.exists() else 0
         path.unlink(missing_ok=True)
-        await log_action(q.from_user.id, "FILE_DELETE", filename, f"size={size}")
+
+        # Keep the game registry in sync: if an HTML file was deleted,
+        # deactivate every game whose html_file points to it so that
+        # /oyinlar stops listing it immediately (no restart required).
+        deactivated = 0
+        if filename.endswith(".html"):
+            try:
+                deactivated = await deactivate_games_by_html_file(filename)
+            except Exception as db_exc:
+                logger.warning("Could not deactivate game record for %s: %s", filename, db_exc)
+
+        log_detail = f"size={size}"
+        if deactivated:
+            log_detail += f" deactivated_games={deactivated}"
+        await log_action(q.from_user.id, "FILE_DELETE", filename, log_detail)
         await q.answer(f"✅ {filename} o'chirildi")
     except Exception as exc:
         await q.answer(f"❌ Xato: {exc}", show_alert=True)
