@@ -11,6 +11,7 @@ Features
 
 from __future__ import annotations
 
+import html as _html
 import logging
 from pathlib import Path
 
@@ -98,7 +99,8 @@ def _list_files() -> list[str]:
         return []
     return sorted(
         f.name for f in _GAMES_DIR.iterdir()
-        if f.is_file() and f.suffix in (".html", ".js", ".css", ".json")
+        if f.is_file() and f.suffix in (".html", ".js", ".css", ".json",
+                                         ".py", ".svg", ".txt")
     )
 
 
@@ -124,7 +126,7 @@ def _files_text(files: list[str]) -> str:
     for name in files:
         path = _GAMES_DIR / name
         size = _fmt_size(path.stat().st_size) if path.exists() else "?"
-        lines.append(f"  📄 {name} <i>({size})</i>")
+        lines.append(f"  📄 {_html.escape(name)} <i>({size})</i>")
     lines.append("\n📌 Faylni bosib ko'rish, yuklab olish yoki o'chirish mumkin.")
     return "\n".join(lines)
 
@@ -156,16 +158,17 @@ async def cb_file_view(q: CallbackQuery) -> None:
     await q.answer()
     try:
         content = path.read_text(encoding="utf-8", errors="replace")
-        preview = content[:3000]
-        if len(content) > 3000:
-            preview += f"\n\n… (yana {len(content)-3000} belgi)"
+        snippet = content[:3000]
+        truncation = f"\n\n… (yana {len(content)-3000} belgi)" if len(content) > 3000 else ""
+        # Escape so Telegram's HTML parser never interprets file contents as markup
+        escaped = _html.escape(snippet) + (_html.escape(truncation) if truncation else "")
         text = (
-            f"📄 <b>{filename}</b>\n"
+            f"📄 <b>{_html.escape(filename)}</b>\n"
             f"<i>{_fmt_size(path.stat().st_size)}</i>\n\n"
-            f"<pre>{preview[:3800]}</pre>"
+            f"<pre>{escaped[:3800]}</pre>"
         )
     except Exception as exc:
-        text = f"❌ O'qishda xato: {exc}"
+        text = f"❌ O'qishda xato: {_html.escape(str(exc))}"
     await q.message.edit_text(
         text[:_TG_MAX],
         reply_markup=back_keyboard("⬅️ Ro'yxatga qaytish"),
@@ -193,7 +196,10 @@ async def cb_file_download(q: CallbackQuery) -> None:
         await q.message.answer(f"❌ Yuborishda xato: {exc}")
 
 
-@router.callback_query(lambda c: c.data.startswith(_DEL_PFX))
+@router.callback_query(
+    lambda c: c.data.startswith(_DEL_PFX)
+    and c.data not in (DEV_FILES_DEL_OK, DEV_FILES_DEL_NO)
+)
 async def cb_file_delete_confirm(q: CallbackQuery, state: FSMContext) -> None:
     if not await _guard(q):
         return
@@ -207,7 +213,7 @@ async def cb_file_delete_confirm(q: CallbackQuery, state: FSMContext) -> None:
     await state.update_data(filename=filename)
     await q.message.edit_text(
         f"🗑 <b>O'chirishni tasdiqlang</b>\n\n"
-        f"Fayl: <code>{filename}</code>\n"
+        f"Fayl: <code>{_html.escape(filename)}</code>\n"
         f"O'lcham: {_fmt_size(path.stat().st_size)}\n\n"
         "⚠️ Bu amalni qaytarib bo'lmaydi!",
         reply_markup=_confirm_del_kb(filename),
