@@ -28,7 +28,7 @@ from aiogram.types import (
 )
 
 import config as cfg
-from database.global_db import deactivate_games_by_html_file
+from database.global_db import delete_game_by_html_file, is_image_url_shared
 from handlers.developer.callbacks import (
     DEV_FILES,
     DEV_FILES_LIST,
@@ -234,19 +234,32 @@ async def cb_file_delete_ok(q: CallbackQuery, state: FSMContext) -> None:
         size = path.stat().st_size if path.exists() else 0
         path.unlink(missing_ok=True)
 
-        # Keep the game registry in sync: if an HTML file was deleted,
-        # deactivate every game whose html_file points to it so that
-        # /oyinlar stops listing it immediately (no restart required).
-        deactivated = 0
+        # Keep the game registry in sync: hard-delete every DB record that
+        # points to this HTML file, then remove any now-orphaned local image.
+        deleted_slugs: list[str] = []
         if filename.endswith(".html"):
             try:
-                deactivated = await deactivate_games_by_html_file(filename)
+                deleted_rows = await delete_game_by_html_file(filename)
+                deleted_slugs = [r["slug"] for r in deleted_rows]
+                # Remove local images that no other game references.
+                for row in deleted_rows:
+                    img_url: str = row.get("image_url") or ""
+                    if not img_url.startswith("/webapp/"):
+                        continue  # remote or empty — never touch filesystem
+                    try:
+                        shared = await is_image_url_shared(img_url)
+                        if not shared:
+                            img_path = _BASE / img_url.lstrip("/")
+                            img_path.unlink(missing_ok=True)
+                            logger.info("Removed orphaned image: %s", img_path)
+                    except Exception as img_exc:
+                        logger.warning("Could not remove image %s: %s", img_url, img_exc)
             except Exception as db_exc:
-                logger.warning("Could not deactivate game record for %s: %s", filename, db_exc)
+                logger.warning("Could not delete game record for %s: %s", filename, db_exc)
 
         log_detail = f"size={size}"
-        if deactivated:
-            log_detail += f" deactivated_games={deactivated}"
+        if deleted_slugs:
+            log_detail += f" deleted_slugs={','.join(deleted_slugs)}"
         await log_action(q.from_user.id, "FILE_DELETE", filename, log_detail)
         await q.answer(f"✅ {filename} o'chirildi")
     except Exception as exc:

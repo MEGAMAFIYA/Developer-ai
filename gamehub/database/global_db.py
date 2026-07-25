@@ -147,24 +147,35 @@ async def delete_setting(key: str) -> None:
     await pool.execute("DELETE FROM settings WHERE key = $1", key)
 
 
-async def deactivate_games_by_html_file(html_file: str) -> int:
-    """Set active=FALSE for every game whose html_file matches the given filename.
+async def delete_game_by_html_file(html_file: str) -> list[dict]:
+    """Hard-delete every game record whose html_file matches.
 
-    Returns the number of rows affected.  Called by the Files module whenever a
-    game HTML file is deleted from disk, so the game immediately disappears from
-    /oyinlar without requiring a bot restart.
+    Returns the list of deleted rows (each as a dict) so the caller can
+    inspect image_url and clean up orphaned local assets.  Called by the
+    Files module when a game HTML file is removed from disk.
     """
     pool = await get_global_pool()
-    result = await pool.execute(
-        "UPDATE games SET active = FALSE WHERE html_file = $1 AND active = TRUE",
+    rows = await pool.fetch(
+        "DELETE FROM games WHERE html_file = $1 RETURNING *",
         html_file,
     )
-    # asyncpg returns "UPDATE N" — extract the count
-    try:
-        count = int(result.split()[-1])
-    except (ValueError, IndexError):
-        count = 0
-    return count
+    return [dict(r) for r in rows]
+
+
+async def is_image_url_shared(image_url: str) -> bool:
+    """Return True if at least one game record still references this image_url.
+
+    Used after deleting a game to decide whether its local image asset can
+    be safely removed without breaking another game's card.
+    """
+    if not image_url:
+        return False
+    pool = await get_global_pool()
+    count = await pool.fetchval(
+        "SELECT COUNT(*) FROM games WHERE image_url = $1",
+        image_url,
+    )
+    return (count or 0) > 0
 
 
 async def update_game(
