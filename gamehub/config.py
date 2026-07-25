@@ -29,9 +29,19 @@ class Config:
     AI_MODEL: str    = os.getenv("AI_MODEL", "")       # e.g. gpt-4o, gemini-1.5-pro, claude-3-5-sonnet
     AI_API_KEY: str  = os.getenv("AI_API_KEY", "")     # provider API key
 
-    # Public URL for WebApp — prefer WEBAPP_URL from env if non-empty, else Replit domain
-    WEBAPP_URL: str = os.getenv("WEBAPP_URL", "").strip() or \
-        f"https://{os.getenv('REPLIT_DEV_DOMAIN', 'localhost:8000')}"
+    # Public URL for WebApp.
+    # When running on Replit, REPLIT_DEV_DOMAIN is always the live domain for
+    # the current deployment — it is always preferred over any statically-
+    # configured WEBAPP_URL so that Play buttons and score submissions never
+    # route to a stale deployment (e.g. a previous Render host).
+    # On non-Replit environments (local dev, CI) we fall back to WEBAPP_URL,
+    # then to localhost.
+    _replit_domain: str = os.getenv("REPLIT_DEV_DOMAIN", "").strip()
+    WEBAPP_URL: str = (
+        f"https://{_replit_domain}"
+        if _replit_domain
+        else (os.getenv("WEBAPP_URL", "").strip() or "http://localhost:8000")
+    )
 
     DEVELOPER_MODE: bool = os.getenv("DEVELOPER_MODE", "False").lower() == "true"
 

@@ -76,6 +76,15 @@ ALTER TABLE scores ADD COLUMN IF NOT EXISTS chat_title VARCHAR(128) NOT NULL DEF
 """
 _IDX_CHAT_ID = "CREATE INDEX IF NOT EXISTS idx_scores_chat_id ON scores (chat_id)"
 
+# Unique constraint required for the ON CONFLICT UPSERT in save_score().
+# Without this index the UPSERT would fail at runtime (PostgreSQL requires a
+# unique constraint or unique index matching the ON CONFLICT column list).
+# CREATE UNIQUE INDEX IF NOT EXISTS is safe to run on every startup.
+_UIDX_SCORES_UPSERT = """
+CREATE UNIQUE INDEX IF NOT EXISTS uidx_scores_user_game_chat
+    ON scores (user_id, game_name, chat_id)
+"""
+
 # Settings — generic key/value store for admin configuration (AI key, etc.)
 _CREATE_SETTINGS = """
 CREATE TABLE IF NOT EXISTS settings (
@@ -129,6 +138,8 @@ async def init_databases() -> None:
         await conn.execute(_ADD_SCORES_CHAT_ID)
         await conn.execute(_ADD_SCORES_CHAT_TITLE)
         await conn.execute(_IDX_CHAT_ID)
+        # Unique index required by the ON CONFLICT UPSERT in save_score()
+        await conn.execute(_UIDX_SCORES_UPSERT)
         # Diamond reward system (disabled until DIAMONDS_ENABLED = True)
         await conn.execute(_CREATE_DIAMONDS)
     logger.info("Game DB schema ready.")

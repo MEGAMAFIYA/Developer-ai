@@ -28,7 +28,8 @@ from aiogram.types import (
 )
 
 import config as cfg
-from database.global_db import delete_game_by_html_file, is_image_url_shared
+from database.global_db import delete_game_by_html_file, ensure_game_exists, is_image_url_shared
+from database.game_db import delete_scores_by_game_name
 from handlers.developer.callbacks import (
     DEV_FILES,
     DEV_FILES_LIST,
@@ -235,12 +236,27 @@ async def cb_file_delete_ok(q: CallbackQuery, state: FSMContext) -> None:
         path.unlink(missing_ok=True)
 
         # Keep the game registry in sync: hard-delete every DB record that
-        # points to this HTML file, then remove any now-orphaned local image.
+        # points to this HTML file, then remove any now-orphaned local image,
+        # and finally purge all score rows for every deleted game slug so that
+        # Statistics, leaderboards, and /reyting show no orphaned data.
         deleted_slugs: list[str] = []
         if filename.endswith(".html"):
             try:
                 deleted_rows = await delete_game_by_html_file(filename)
                 deleted_slugs = [r["slug"] for r in deleted_rows]
+
+                # FIX #3 — purge scores for every deleted slug.
+                for slug in deleted_slugs:
+                    try:
+                        n = await delete_scores_by_game_name(slug)
+                        logger.info(
+                            "Purged %s score row(s) for deleted game=%s", n, slug
+                        )
+                    except Exception as score_exc:
+                        logger.warning(
+                            "Could not purge scores for game=%s: %s", slug, score_exc
+                        )
+
                 # Remove local images that no other game references.
                 for row in deleted_rows:
                     img_url: str = row.get("image_url") or ""
@@ -324,6 +340,19 @@ async def msg_file_upload(m: Message, state: FSMContext) -> None:
         await m.bot.download(doc, destination=str(dest))
         await log_action(m.from_user.id, "FILE_UPLOAD", filename,
                          f"size={dest.stat().st_size}")
+
+        # FIX #4 — auto-register the game in the catalog so it immediately
+        # appears in /reyting without needing a score submission first.
+        if filename.endswith(".html"):
+            slug = filename[:-5]  # strip ".html"
+            try:
+                await ensure_game_exists(slug)
+                logger.info("Auto-registered game slug=%s after upload", slug)
+            except Exception as reg_exc:
+                logger.warning(
+                    "Could not auto-register game slug=%s: %s", slug, reg_exc
+                )
+
         await m.answer(
             f"✅ <b>{filename}</b> muvaffaqiyatli yuklandi!\n"
             f"O'lcham: {_fmt_size(dest.stat().st_size)}",

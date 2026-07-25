@@ -101,7 +101,8 @@ async def save_score(
                 SET score      = GREATEST(scores.score, EXCLUDED.score),
                     username   = EXCLUDED.username,
                     first_name = EXCLUDED.first_name,
-                    chat_title = EXCLUDED.chat_title
+                    chat_title = EXCLUDED.chat_title,
+                    created_at = NOW()
             RETURNING *
             """,
             user_id, username, first_name, game_name, score, chat_id, chat_title,
@@ -286,6 +287,31 @@ async def verify_score_in_db(user_id: int, game_name: str, score: int) -> dict |
         user_id, game_name, score,
     )
     return dict(row) if row else None
+
+
+# ---------------------------------------------------------------------------
+# Deletion helpers
+# ---------------------------------------------------------------------------
+
+async def delete_scores_by_game_name(game_name: str) -> int:
+    """Hard-delete every score row for the given game slug.
+
+    Called when a game is permanently removed from the catalog so that
+    Statistics, leaderboards, and /reyting show no orphaned data.
+    Returns the number of rows deleted.
+    """
+    pool = await get_game_pool()
+    result = await pool.execute(
+        "DELETE FROM scores WHERE game_name = $1",
+        game_name,
+    )
+    # asyncpg returns "DELETE N" as a string; extract the count.
+    try:
+        count = int(result.split()[-1])
+    except (ValueError, IndexError):
+        count = 0
+    logger.info("Deleted %s score rows for game=%s", count, game_name)
+    return count
 
 
 # ---------------------------------------------------------------------------
