@@ -102,64 +102,8 @@ CREATE TABLE IF NOT EXISTS diamonds (
 # Seed data — ON CONFLICT DO UPDATE keeps re-runs idempotent
 # ---------------------------------------------------------------------------
 
-INITIAL_GAMES = [
-    {
-        "slug":        "snake",
-        "name":        "🐍 Ilon O'yini",
-        "description": "Klassik ilon o'yini. Ovqat ye, o'sib bor!",
-        "html_file":   "snake.html",
-        "category":    "arcade",
-        "image_url":   "",
-    },
-    {
-        "slug":        "ilon",
-        "name":        "🐍 Neon Ilon",
-        "description": "Neon uslubdagi klassik ilon o'yini. Tezroq o'ynang!",
-        "html_file":   "ilon.html",
-        "category":    "arcade",
-        "image_url":   "",
-    },
-    {
-        "slug":        "zombi",
-        "name":        "🧟 Zombi Omon Qolish",
-        "description": "Zombilardan omon qol va yashab qol!",
-        "html_file":   "zombi.html",
-        "category":    "arcade",
-        "image_url":   "",
-    },
-    {
-        "slug":        "himoya",
-        "name":        "🏰 Shahar Himoyasi",
-        "description": "Shaharni dushman to'lqinlaridan himoya qiling! 30 ta to'lqin.",
-        "html_file":   "himoya.html",
-        "category":    "strategy",
-        "image_url":   "",
-    },
-    {
-        "slug":        "labirint",
-        "name":        "🌀 Labirintdan Qochish",
-        "description": "Labirint ichida yo'l toping va qoching! 20 ta daraja.",
-        "html_file":   "labirint.html",
-        "category":    "puzzle",
-        "image_url":   "",
-    },
-    {
-        "slug":        "shahar",
-        "name":        "✈️ Samolyot Jangi",
-        "description": "Samolyotda dushman kemalarini yo'q qiling!",
-        "html_file":   "shahar.html",
-        "category":    "arcade",
-        "image_url":   "",
-    },
-    {
-        "slug":        "qushcha",
-        "name":        "🐦 Qanot Parvozi",
-        "description": "Qushni uchiring va to'siqlardan o'ting!",
-        "html_file":   "qushcha.html",
-        "category":    "arcade",
-        "image_url":   "",
-    },
-]
+# All initial games have been removed. New games are uploaded via Developer → Files.
+INITIAL_GAMES: list[dict] = []
 
 
 # ---------------------------------------------------------------------------
