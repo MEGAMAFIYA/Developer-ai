@@ -7,6 +7,7 @@ from aiogram.types import (
     Message,
     InlineKeyboardMarkup,
     InlineKeyboardButton,
+    WebAppInfo,
     FSInputFile,
 )
 
@@ -24,7 +25,7 @@ def _build_keyboard(game: dict, chat_id: int = 0) -> InlineKeyboardMarkup:
 
     btn = InlineKeyboardButton(
         text="🎮 O'ynash",
-        url=url
+        web_app=WebAppInfo(url=url)
     )
 
     return InlineKeyboardMarkup(

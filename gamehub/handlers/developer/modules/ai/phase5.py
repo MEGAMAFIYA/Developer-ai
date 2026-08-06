@@ -38,6 +38,7 @@ from aiogram.types import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     Message,
+    WebAppInfo,
 )
 
 import config as cfg
@@ -988,7 +989,7 @@ async def cb_ai_preview(q: CallbackQuery) -> None:
     rows = [
         [InlineKeyboardButton(
             text=f"{'✅' if g.get('active') else '❌'} {g['name']}",
-            url=f"{webapp_url}/games/{g['html_file']}",
+            web_app=WebAppInfo(url=f"{webapp_url}/games/{g['html_file']}"),
         )]
         for g in games
     ]
