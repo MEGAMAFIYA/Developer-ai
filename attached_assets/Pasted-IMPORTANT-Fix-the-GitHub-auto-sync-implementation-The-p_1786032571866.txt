@@ -1,0 +1,148 @@
+IMPORTANT: Fix the GitHub auto-sync implementation.
+
+The previous implementation does NOT work.
+
+A new game added through /yangi is successfully saved and playable on the server, but the HTML and thumbnail NEVER appear in the GitHub repository.
+
+Your task is to FIND THE ROOT CAUSE and FIX IT.
+
+Requirements:
+
+1. Trace the complete /yangi pipeline.
+
+Telegram
+↓
+Admin FSM
+↓
+Receive HTML
+↓
+Save HTML
+↓
+Receive thumbnail (photo/document/GIF)
+↓
+Save thumbnail
+↓
+Create database record
+↓
+GitHub auto push
+
+Show exactly where the GitHub push should occur.
+
+2. Inspect services/github_service.py completely.
+
+Verify:
+- repository path
+- git working directory
+- branch name
+- git add
+- git commit
+- git push
+- authentication
+- remote origin
+
+Print the exact command sequence being executed.
+
+3. Verify that the HTML file actually exists BEFORE git add.
+
+Print:
+
+absolute html path
+exists=True/False
+
+Print the same for the thumbnail.
+
+4. Verify git add really stages the files.
+
+Run:
+
+git status --short
+
+before add
+
+after add
+
+before commit
+
+after commit
+
+Include the outputs in logs.
+
+5. Verify commit is really created.
+
+Run:
+
+git log --oneline -1
+
+and print the newest commit.
+
+6. Verify push really happens.
+
+Print:
+
+current remote
+current branch
+git push output
+exit code
+
+If push fails,
+print the COMPLETE stderr.
+
+Do NOT hide exceptions.
+
+7. If AUTO_GITHUB_PUSH=False,
+log that explicitly.
+
+8. If the repository is not a git repository,
+detect it and explain why.
+
+9. If the repository is detached,
+detect it.
+
+10. If Replit is using another working directory,
+detect it automatically instead of assuming paths.
+
+11. Add detailed INFO logs for every GitHub step.
+
+Example:
+
+[GITHUB] HTML found
+[GITHUB] Image found
+[GITHUB] git add OK
+[GITHUB] git commit OK
+[GITHUB] git push OK
+
+or
+
+[GITHUB] git push FAILED:
+<complete stderr>
+
+12. Backward compatibility is REQUIRED.
+
+Do NOT modify:
+
+- Telegram menus
+- FSM
+- Game creation
+- Database
+- Score API
+- Leaderboard
+- Existing GitHub tools
+
+Only repair the GitHub auto-sync.
+
+IMPORTANT:
+
+Do NOT guess.
+
+Trace the real execution.
+
+Find the first failing step.
+
+Fix only that step.
+
+After finishing, provide:
+
+- files modified
+- root cause
+- exact fix
+- sample logs proving HTML and thumbnail were successfully pushed to GitHub.

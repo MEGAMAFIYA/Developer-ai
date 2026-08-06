@@ -338,6 +338,8 @@ async def cb_save(callback: CallbackQuery, state: FSMContext, bot: Bot) -> None:
 
         # 3.5. GitHub auto-push (non-fatal: failure never cancels the game save)
         gh_status_line = ""
+        if not config.AUTO_GITHUB_PUSH:
+            logger.info("[GITHUB] AUTO_GITHUB_PUSH=False — push o'tkazib yuborildi")
         if config.AUTO_GITHUB_PUSH:
             from services.github_service import push_game_files
             from services.upload_service import GAMES_DIR, ASSETS_DIR
