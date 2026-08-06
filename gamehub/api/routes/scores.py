@@ -40,6 +40,11 @@ def _validate_init_data(init_data: str) -> tuple[dict, dict]:
     received_hash = params.pop("hash", None)
 
     if not received_hash:
+        logger.warning(
+            "AUTH 401 — missing hash: init_data_length=%d hash_present=False "
+            "reason='hash field absent from init_data'",
+            len(init_data),
+        )
         raise HTTPException(status_code=401, detail="Missing hash in init_data")
 
     data_check_string = "\n".join(f"{k}={v}" for k, v in sorted(params.items()))
@@ -47,6 +52,11 @@ def _validate_init_data(init_data: str) -> tuple[dict, dict]:
     computed   = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
 
     if not hmac.compare_digest(computed, received_hash):
+        logger.warning(
+            "AUTH 401 — HMAC mismatch: init_data_length=%d hash_present=True "
+            "hmac_verified=False reason='computed signature does not match received hash'",
+            len(init_data),
+        )
         raise HTTPException(status_code=401, detail="Invalid init_data signature")
 
     try:
@@ -68,10 +78,32 @@ async def post_score(payload: ScorePayload) -> dict:
     if payload.score < 0:
         raise HTTPException(status_code=400, detail="Score cannot be negative")
 
+    # ── Incoming request diagnostics ─────────────────────────────────────────
+    init_data_empty  = not payload.init_data or payload.init_data.strip() == ""
+    init_data_length = len(payload.init_data) if payload.init_data else 0
+    hash_present     = "hash=" in payload.init_data if payload.init_data else False
+    logger.info(
+        "SCORE REQUEST: game=%s score=%s chat_id=%s | "
+        "init_data_received=%s init_data_empty=%s init_data_length=%d hash_present=%s",
+        payload.game, payload.score, payload.chat_id,
+        not init_data_empty, init_data_empty, init_data_length, hash_present,
+    )
+    if init_data_empty:
+        logger.warning(
+            "AUTH 401 — empty init_data: game=%s score=%s "
+            "reason='Telegram.WebApp.initData was not received (empty string)'",
+            payload.game, payload.score,
+        )
+
     user, chat = _validate_init_data(payload.init_data)
 
     user_id: int = user.get("id", 0)
     if not user_id:
+        logger.warning(
+            "AUTH 401 — user_id missing: game=%s score=%s init_data_length=%d "
+            "reason='user field in init_data parsed but contained no id'",
+            payload.game, payload.score, init_data_length,
+        )
         raise HTTPException(status_code=401, detail="User ID not found")
 
     username   = user.get("username", "")
