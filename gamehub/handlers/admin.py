@@ -336,6 +336,27 @@ async def cb_save(callback: CallbackQuery, state: FSMContext, bot: Bot) -> None:
             active=True,
         )
 
+        # 3.5. GitHub auto-push (non-fatal: failure never cancels the game save)
+        gh_status_line = ""
+        if config.AUTO_GITHUB_PUSH:
+            from services.github_service import push_game_files
+            from services.upload_service import GAMES_DIR, ASSETS_DIR
+            _html_path  = GAMES_DIR  / f"{slug}.html"
+            _image_path = ASSETS_DIR / f"{slug}{image_ext}"
+            gh_ok, gh_msg = await push_game_files(slug, _html_path, _image_path)
+            if gh_ok:
+                logger.info("GitHub push OK: slug=%s | %s", slug, gh_msg)
+                gh_status_line = f"\n🐙 GitHub: ✅ push qilindi"
+            else:
+                logger.error("GitHub push FAILED: slug=%s | %s", slug, gh_msg)
+                gh_status_line = f"\n🐙 GitHub: ⚠️ push amalga oshmadi (o'yin saqlandi)"
+                await callback.message.answer(
+                    f"⚠️ <b>GitHub push xatosi</b>\n\n"
+                    f"O'yin muvaffaqiyatli saqlandi, lekin GitHub'ga push qilinmadi.\n\n"
+                    f"<code>{gh_msg[:300]}</code>",
+                    parse_mode="HTML",
+                )
+
         # 4. Edit the preview message to remove the confirm buttons
         await callback.message.edit_reply_markup(reply_markup=None)
 
@@ -347,7 +368,8 @@ async def cb_save(callback: CallbackQuery, state: FSMContext, bot: Bot) -> None:
             f"📝 Ta'rif: {game['description']}\n"
             f"🗂 Kategoriya: {game['category']}\n"
             f"📄 HTML: <code>{game['html_file']}</code>\n"
-            f"🖼 Rasm: <code>{game['image_url']}</code>\n\n"
+            f"🖼 Rasm: <code>{game['image_url']}</code>"
+            f"{gh_status_line}\n\n"
             f"Hoziroq ko'rish: /oyinlar {game['slug']}",
             parse_mode="HTML",
         )
@@ -356,7 +378,7 @@ async def cb_save(callback: CallbackQuery, state: FSMContext, bot: Bot) -> None:
         from services.game_service import send_game_card
         await send_game_card(callback.message, game)
 
-        logger.info("Admin saved new game: slug=%s", slug)
+        logger.info("Admin saved new game: slug=%s auto_github_push=%s", slug, config.AUTO_GITHUB_PUSH)
 
     except Exception:
         logger.exception("Failed to save game slug=%s", slug)

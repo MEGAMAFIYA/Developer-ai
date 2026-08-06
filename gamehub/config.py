@@ -45,6 +45,10 @@ class Config:
 
     DEVELOPER_MODE: bool = os.getenv("DEVELOPER_MODE", "False").lower() == "true"
 
+    # When True, /yangi automatically commits and pushes new game files
+    # (HTML + image) to the remote GitHub repository after saving to disk.
+    AUTO_GITHUB_PUSH: bool = os.getenv("AUTO_GITHUB_PUSH", "False").lower() == "true"
+
     HOST: str = "0.0.0.0"
     PORT: int = int(os.getenv("PORT", "8000"))
 
