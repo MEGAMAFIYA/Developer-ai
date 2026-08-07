@@ -45,10 +45,14 @@ def _repository_path(local_path: Path) -> str:
 
 
 def _api_url(path: str) -> str:
-    return (
-        f"{_API_BASE}/repos/{config.GITHUB_OWNER}/"
-        f"{config.GITHUB_REPO.rstrip('.git')}/contents/{path}"
-    )
+    repo = config.GITHUB_REPO
+    if repo.endswith(".git"):
+        repo = repo[:-4]
+    final_url = f"{_API_BASE}/repos/{config.GITHUB_OWNER}/{repo}/contents/{path}"
+    logger.info("[GITHUB API] owner=%s", config.GITHUB_OWNER)
+    logger.info("[GITHUB API] repo=%s", repo)
+    logger.info("[GITHUB API] final_url=%s", final_url)
+    return final_url
 
 
 def _headers() -> dict[str, str]:
