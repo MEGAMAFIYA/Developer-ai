@@ -1,92 +1,147 @@
-"""GitHub auto-push service for /yangi game uploads.
+"""GitHub Contents API upload service for ``/yangi`` game uploads.
 
-Called by handlers/admin.py after a new game is saved to disk and DB.
-Uses the same asyncio subprocess pattern as
-handlers/developer/modules/ai/github_tools.py — no new dependencies.
+The public interface intentionally remains compatible with the existing
+handler:
 
-Public API
-──────────
     push_game_files(slug, html_path, image_path) -> (ok: bool, message: str)
+
+This service uses GitHub's REST Contents API directly. It does not require a
+local Git executable, a ``.git`` directory, or a Git working tree.
 """
 
 from __future__ import annotations
 
-import asyncio
+import base64
+import json
 import logging
 from pathlib import Path
+
+import aiohttp
 
 from config import config
 
 logger = logging.getLogger(__name__)
 
-# Detect the git root by walking up from this file's location.
-# Works correctly regardless of which directory the server is launched from.
-def _find_git_root(start: Path) -> Path:
-    """Walk up from *start* until a .git directory is found, then return that directory.
-    Falls back to the workspace root (parents[2] of this file) if .git is not found.
+_API_BASE = "https://api.github.com"
+_API_VERSION = "2022-11-28"
+_REQUEST_TIMEOUT = 30
+
+
+def _repository_path(local_path: Path) -> str:
+    """Convert a local gamehub path to the repository-relative API path.
+
+    Render may check out the project under a different absolute directory
+    (for example ``/app``), so no absolute filesystem path is sent to GitHub.
+    The repository layout is explicitly rooted at ``gamehub/``.
     """
-    current = start.resolve()
-    for parent in [current, *current.parents]:
-        if (parent / ".git").exists():
-            return parent
-    # Fallback: gamehub/services/ → gamehub/ → workspace/
-    return Path(__file__).resolve().parents[2]
-
-_GIT_ROOT = _find_git_root(Path(__file__).parent)
-
-
-async def _git(*args: str) -> tuple[int, str, str]:
-    """Run a git subcommand from the git root.
-
-    Returns (returncode, stdout, stderr).
-    Always has a 30-second timeout to prevent hangs on credential prompts.
-    """
+    resolved = local_path.resolve()
+    parts = resolved.parts
     try:
-        proc = await asyncio.create_subprocess_exec(
-            "git", *args,
-            cwd=str(_GIT_ROOT),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        out, err = await asyncio.wait_for(proc.communicate(), timeout=30)
-        return proc.returncode, out.decode(errors="replace"), err.decode(errors="replace")
-    except asyncio.TimeoutError:
-        return -1, "", "Timeout: 30 soniya ichida git javob bermadi"
-    except FileNotFoundError:
-        return -1, "", "git topilmadi (PATH da yo'q)"
-    except Exception as exc:
-        return -1, "", str(exc)
+        gamehub_index = parts.index("gamehub")
+    except ValueError:
+        # Keep compatibility with callers that already pass a repository path.
+        return local_path.as_posix().lstrip("/")
+    return Path(*parts[gamehub_index:]).as_posix()
 
 
-async def _current_branch() -> str:
-    """Return the current branch name.
+def _api_url(path: str) -> str:
+    return (
+        f"{_API_BASE}/repos/{config.GITHUB_OWNER}/"
+        f"{config.GITHUB_REPO.rstrip('.git')}/contents/{path}"
+    )
 
-    Falls back to config.GITHUB_BRANCH (then 'main') on detached HEAD or error.
+
+def _headers() -> dict[str, str]:
+    return {
+        "Accept": "application/vnd.github+json",
+        "Authorization": f"Bearer {config.GITHUB_TOKEN}",
+        "X-GitHub-Api-Version": _API_VERSION,
+        "Content-Type": "application/json",
+        "User-Agent": "GameHub-Bot",
+    }
+
+
+def _response_body_preview(body: str) -> str:
+    """Return a useful, bounded error body without exposing credentials."""
+    return body[:1000] if body else "(bo'sh javob)"
+
+
+async def _get_existing_sha(
+    session: aiohttp.ClientSession,
+    path: str,
+) -> tuple[str | None, str | None]:
+    """Read a file's SHA before updating it.
+
+    Returns ``(sha, None)`` for an existing file, ``(None, None)`` for a
+    missing file, or ``(None, error)`` for an unexpected API failure.
     """
-    rc, out, _ = await _git("rev-parse", "--abbrev-ref", "HEAD")
-    if rc != 0:
-        return config.GITHUB_BRANCH or "main"
-    branch = out.strip()
-    if not branch or branch == "HEAD":
-        # Detached HEAD — use configured branch
-        logger.warning("[GITHUB] Detached HEAD aniqlandi — config.GITHUB_BRANCH ishlatiladi")
-        return config.GITHUB_BRANCH or "main"
-    return branch
+    url = _api_url(path)
+    params = {"ref": config.GITHUB_BRANCH} if config.GITHUB_BRANCH else None
+    async with session.get(url, headers=_headers(), params=params) as response:
+        body = await response.text(encoding="utf-8", errors="replace")
+        logger.info("[GITHUB API] HTTP status GET %s: %s", path, response.status)
+
+        if response.status == 200:
+            try:
+                data = json.loads(body)
+            except json.JSONDecodeError as exc:
+                error = f"SHA javobini o'qishda xato: {exc}"
+                logger.error("[GITHUB API] Response body on error: %s", _response_body_preview(body))
+                return None, error
+            sha = data.get("sha")
+            if not sha:
+                error = "GitHub javobida fayl SHA topilmadi"
+                logger.error("[GITHUB API] Response body on error: %s", _response_body_preview(body))
+                return None, error
+            return sha, None
+
+        if response.status == 404:
+            return None, None
+
+        logger.error("[GITHUB API] Response body on error: %s", _response_body_preview(body))
+        return None, f"SHA olishda HTTP {response.status}: {_response_body_preview(body)}"
 
 
-def _authenticated_push_url() -> str | None:
-    """Return an HTTPS URL with the token embedded for a credential-free push.
+async def _upload_file(
+    session: aiohttp.ClientSession,
+    *,
+    local_path: Path,
+    repository_path: str,
+    commit_message: str,
+    label: str,
+) -> tuple[bool, str]:
+    """Create or update one repository file through the Contents API."""
+    try:
+        file_bytes = local_path.read_bytes()
+    except OSError as exc:
+        message = f"{label} faylini o'qib bo'lmadi: {exc}"
+        logger.error("[GITHUB API] Response body on error: %s", message)
+        return False, message
 
-    Returns None if GITHUB_TOKEN, GITHUB_OWNER, or GITHUB_REPO are not configured.
-    Never logs the token itself.
-    """
-    token = config.GITHUB_TOKEN
-    owner = config.GITHUB_OWNER
-    repo  = config.GITHUB_REPO
-    if not (token and owner and repo):
-        return None
-    repo_name = repo.rstrip(".git")
-    return f"https://{token}@github.com/{owner}/{repo_name}.git"
+    sha, sha_error = await _get_existing_sha(session, repository_path)
+    if sha_error:
+        return False, sha_error
+
+    payload: dict[str, str] = {
+        "message": commit_message,
+        "content": base64.b64encode(file_bytes).decode("ascii"),
+    }
+    if sha:
+        payload["sha"] = sha
+    if config.GITHUB_BRANCH:
+        payload["branch"] = config.GITHUB_BRANCH
+
+    url = _api_url(repository_path)
+    async with session.put(url, headers=_headers(), json=payload) as response:
+        body = await response.text(encoding="utf-8", errors="replace")
+        logger.info("[GITHUB API] HTTP status PUT %s: %s", repository_path, response.status)
+
+        if response.status in (200, 201):
+            logger.info("[GITHUB API] Upload %s OK", label)
+            return True, body
+
+        logger.error("[GITHUB API] Response body on error: %s", _response_body_preview(body))
+        return False, f"{label} upload HTTP {response.status}: {_response_body_preview(body)}"
 
 
 async def push_game_files(
@@ -94,172 +149,70 @@ async def push_game_files(
     html_path: Path,
     image_path: Path,
 ) -> tuple[bool, str]:
-    """Commit and push new game files to the remote GitHub repository.
+    """Upload the new game's HTML and image through GitHub Contents API.
 
-    Stages ONLY the two provided files (HTML + image/GIF/PNG/WEBP) so that
-    unrelated working-tree changes are not accidentally committed.
-
-    Rules
-    ─────
-    • git identity is set to "GameHub Bot" before every run (idempotent).
-    • If git reports "nothing to commit" the function returns success=True —
-      the files are already in sync with the remote.
-    • Any git error returns success=False with a descriptive message; the
-      caller (cb_save in admin.py) treats this as a non-fatal warning.
-
-    Returns
-    ───────
-    (True,  success_message)  on success or already-synced
-    (False, error_message)    on any git failure
+    Each successful Contents API PUT creates the corresponding GitHub commit.
+    The shared commit message is ``Add game: {slug}``; after both uploads
+    succeed, the service reports the operation as committed.
     """
+    if not config.GITHUB_TOKEN or not config.GITHUB_OWNER or not config.GITHUB_REPO:
+        message = "GITHUB_TOKEN, GITHUB_OWNER yoki GITHUB_REPO sozlanmagan"
+        logger.error("[GITHUB API] Response body on error: %s", message)
+        return False, message
+
+    if not html_path.exists():
+        message = f"HTML fayl topilmadi: {html_path}"
+        logger.error("[GITHUB API] Response body on error: %s", message)
+        return False, message
+    if not image_path.exists():
+        message = f"IMAGE fayl topilmadi: {image_path}"
+        logger.error("[GITHUB API] Response body on error: %s", message)
+        return False, message
+
+    html_repo_path = _repository_path(html_path)
+    image_repo_path = _repository_path(image_path)
+    commit_message = f"Add game: {slug}"
+
+    logger.info(
+        "[GITHUB API] Upload START: slug=%s html=%s image=%s",
+        slug,
+        html_repo_path,
+        image_repo_path,
+    )
+
+    timeout = aiohttp.ClientTimeout(total=_REQUEST_TIMEOUT)
     try:
-        logger.info("[GITHUB] push_game_files START: slug=%s git_root=%s", slug, _GIT_ROOT)
-
-        # ── -1. Verify this is a git repository ───────────────────────────
-        rc_check, _, err_check = await _git("rev-parse", "--is-inside-work-tree")
-        if rc_check != 0:
-            msg = (
-                f"[GITHUB] git repozitoriyasi topilmadi "
-                f"(cwd={_GIT_ROOT}): {err_check.strip()}"
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            html_ok, html_result = await _upload_file(
+                session,
+                local_path=html_path,
+                repository_path=html_repo_path,
+                commit_message=commit_message,
+                label="HTML",
             )
-            logger.error(msg)
-            return False, msg
+            if not html_ok:
+                return False, html_result
 
-        # ── -0.5. Detect detached HEAD ────────────────────────────────────
-        rc_hd, hd_out, _ = await _git("rev-parse", "--abbrev-ref", "HEAD")
-        if rc_hd == 0 and hd_out.strip() == "HEAD":
-            logger.warning(
-                "[GITHUB] Detached HEAD holati aniqlandi — "
-                "config.GITHUB_BRANCH=%s ishlatiladi", config.GITHUB_BRANCH
+            image_ok, image_result = await _upload_file(
+                session,
+                local_path=image_path,
+                repository_path=image_repo_path,
+                commit_message=commit_message,
+                label="IMAGE",
             )
+            if not image_ok:
+                return False, image_result
 
-        # ── 0. Git identity (required for commits) ────────────────────────
-        await _git("config", "user.email", "bot@gamehub.local")
-        await _git("config", "user.name",  "GameHub Bot")
-
-        # ── 0.5. Verify files exist on disk before staging ────────────────
-        logger.info(
-            "[GITHUB] HTML  path: %s | exists=%s", html_path,  html_path.exists()
-        )
-        logger.info(
-            "[GITHUB] Image path: %s | exists=%s", image_path, image_path.exists()
-        )
-
-        if html_path.exists():
-            logger.info("[GITHUB] HTML found")
-        else:
-            logger.warning("[GITHUB] HTML NOT FOUND: %s", html_path)
-
-        if image_path.exists():
-            logger.info("[GITHUB] Image found")
-        else:
-            logger.warning("[GITHUB] Image NOT FOUND: %s", image_path)
-
-        # ── 1. Stage only the new game files ─────────────────────────────
-        files_to_add: list[str] = []
-        for p in (html_path, image_path):
-            if p.exists():
-                try:
-                    files_to_add.append(str(p.relative_to(_GIT_ROOT)))
-                except ValueError:
-                    logger.warning(
-                        "[GITHUB] %s git root tashqarisida, o'tkazib yuborildi", p
-                    )
-
-        if not files_to_add:
-            msg = "[GITHUB] Sahna qo'shish uchun fayl topilmadi (disk da mavjud emas)"
-            logger.error(msg)
-            return False, msg
-
-        # git status BEFORE add
-        _, status_before, _ = await _git("status", "--short")
-        logger.info(
-            "[GITHUB] git status (before add):\n%s",
-            status_before.strip() or "(clean)"
-        )
-
-        rc_add, _, err_add = await _git("add", *files_to_add)
-        if rc_add != 0:
-            logger.error("[GITHUB] git add FAILED: %s", err_add.strip())
-            return False, f"git add xatosi: {err_add.strip()}"
-        logger.info("[GITHUB] git add OK: %s", files_to_add)
-
-        # git status AFTER add / BEFORE commit
-        _, status_after_add, _ = await _git("status", "--short")
-        logger.info(
-            "[GITHUB] git status (after add / before commit):\n%s",
-            status_after_add.strip() or "(clean)"
-        )
-
-        # ── 2. Commit ─────────────────────────────────────────────────────
-        commit_msg = f"Add game: {slug}"
-        rc_commit, out_commit, err_commit = await _git("commit", "-m", commit_msg)
-
-        # git status AFTER commit
-        _, status_after_commit, _ = await _git("status", "--short")
-        logger.info(
-            "[GITHUB] git status (after commit):\n%s",
-            status_after_commit.strip() or "(clean)"
-        )
-
-        if rc_commit != 0:
-            combined = (out_commit + err_commit).lower()
-            if "nothing to commit" in combined or "nothing added" in combined:
-                logger.info(
-                    "[GITHUB] slug=%s allaqachon committed — push o'tkazib yuborildi",
-                    slug,
-                )
-                return True, "Allaqachon committed (push o'tkazib yuborildi)"
-            logger.error(
-                "[GITHUB] git commit FAILED: %s",
-                (err_commit or out_commit).strip()
-            )
-            return False, f"git commit xatosi: {(err_commit or out_commit).strip()}"
-        logger.info("[GITHUB] git commit OK")
-
-        # git log to confirm newest commit
-        _, log_out, _ = await _git("log", "--oneline", "-1")
-        logger.info("[GITHUB] git log --oneline -1: %s", log_out.strip())
-
-        # ── 3. Push with authentication ───────────────────────────────────
-        branch   = await _current_branch()
-        auth_url = _authenticated_push_url()
-
-        logger.info("[GITHUB] push branch: %s", branch)
-
-        if auth_url:
-            # Push to the authenticated URL without modifying the stored remote.
-            # Use HEAD:{branch} so the local HEAD always maps to the correct remote branch.
-            logger.info(
-                "[GITHUB] push remote: https://***@github.com/%s/%s.git",
-                config.GITHUB_OWNER, config.GITHUB_REPO,
-            )
-            rc_push, out_push, err_push = await _git(
-                "push", auth_url, f"HEAD:{branch}"
-            )
-        else:
-            # Token not configured — attempt push with stored origin (will likely fail on HTTPS)
-            logger.warning(
-                "[GITHUB] GITHUB_TOKEN/GITHUB_OWNER/GITHUB_REPO sozlanmagan — "
-                "autentifikatsiyasiz push urinilmoqda (origin)"
-            )
-            rc_push, out_push, err_push = await _git("push", "origin", branch)
-
-        logger.info("[GITHUB] push exit code: %d", rc_push)
-
-        if rc_push != 0:
-            detail = (err_push or out_push).strip()
-            logger.error("[GITHUB] git push FAILED:\n%s", detail)
-            return False, f"git push xatosi (branch={branch}): {detail}"
-
-        logger.info("[GITHUB] git push OK")
-        pushed = ", ".join(files_to_add)
-        logger.info(
-            "[GITHUB] slug=%s muvaffaqiyatli push qilindi | branch=%s | files=[%s]",
-            slug, branch, pushed,
-        )
-        return True, f"branch={branch} | {pushed}"
-
+            logger.info("[GITHUB API] Commit OK: %s", commit_message)
+            return True, f"{commit_message} | HTML va IMAGE yuklandi"
+    except aiohttp.ClientError as exc:
+        message = f"GitHub API tarmoq xatosi: {exc}"
+        logger.error("[GITHUB API] Response body on error: %s", message)
+        return False, message
+    except TimeoutError:
+        message = f"GitHub API timeout: {_REQUEST_TIMEOUT} soniya"
+        logger.error("[GITHUB API] Response body on error: %s", message)
+        return False, message
     except Exception as exc:
-        logger.exception("[GITHUB] kutilmagan xato: slug=%s", slug)
-        return False, f"Kutilmagan xato: {exc}"
+        logger.exception("[GITHUB API] Unexpected error: %s", exc)
+        return False, f"GitHub API kutilmagan xatosi: {exc}"
