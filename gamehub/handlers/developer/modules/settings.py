@@ -32,6 +32,10 @@ from handlers.developer.callbacks import (
     DEV_SET_WEBAPP,
     DEV_SET_WEBAPP_OK,
     DEV_SET_WEBAPP_NO,
+    DEV_SET_GITHUB,
+    DEV_SET_GITHUB_OK,
+    DEV_SET_GITHUB_NO,
+    DEV_SET_GITHUB_REFRESH,
 )
 from handlers.developer.keyboards import back_keyboard
 from handlers.developer.modules.ai.action_log import log_action
@@ -48,6 +52,7 @@ _WEBAPP_KEY = "webapp_url_override"
 
 class SettingsFSM(StatesGroup):
     waiting_webapp_url = State()
+    waiting_github = State()
 
 
 # ── Guard ─────────────────────────────────────────────────────────────────────
@@ -78,6 +83,7 @@ async def _settings_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="👁 Ko'rish",      callback_data=DEV_SET_VIEW),
             InlineKeyboardButton(text="🌐 WebApp URL",   callback_data=DEV_SET_WEBAPP),
         ],
+        [InlineKeyboardButton(text="🐙 GitHub loyiha", callback_data=DEV_SET_GITHUB)],
         [maint_btn],
         [InlineKeyboardButton(text="⬅️ Orqaga", callback_data="dev:menu")],
     ])
@@ -111,6 +117,10 @@ async def _config_text() -> str:
     ai_mod  = await get_setting("ai_model")     or cfg.config.AI_MODEL     or "—"
     ai_key  = await get_setting("ai_api_key")   or cfg.config.AI_API_KEY
     ai_key_disp = _mask(ai_key) if ai_key else "<i>yo'q</i>"
+    gh_owner = await get_setting("github_owner") or cfg.config.GITHUB_OWNER or "—"
+    gh_repo = await get_setting("github_repo") or cfg.config.GITHUB_REPO or "—"
+    gh_branch = await get_setting("github_branch") or cfg.config.GITHUB_BRANCH or "main"
+    gh_token = "✅ o'rnatilgan" if cfg.config.GITHUB_TOKEN else "❌ secret yo'q"
 
     lines = [
         "⚙️ <b>Joriy konfiguratsiya</b>\n",
@@ -123,6 +133,12 @@ async def _config_text() -> str:
         f"Provider: <code>{ai_prov}</code>",
         f"Model:    <code>{ai_mod}</code>",
         f"API Key:  {ai_key_disp}",
+        "",
+        "🐙 <b>GitHub loyiha</b>",
+        f"Owner:  <code>{gh_owner}</code>",
+        f"Repo:   <code>{gh_repo}</code>",
+        f"Branch: <code>{gh_branch}</code>",
+        f"Token:  {gh_token}",
     ]
     return "\n".join(lines)
 
@@ -258,3 +274,109 @@ async def cb_set_webapp_no(q: CallbackQuery, state: FSMContext) -> None:
         reply_markup=await _settings_keyboard(),
         parse_mode="HTML",
     )
+
+
+@router.callback_query(lambda c: c.data == DEV_SET_GITHUB)
+async def cb_set_github_start(q: CallbackQuery, state: FSMContext) -> None:
+    if not await _guard(q):
+        return
+    await q.answer()
+    owner = await get_setting("github_owner") or cfg.config.GITHUB_OWNER or ""
+    repo = await get_setting("github_repo") or cfg.config.GITHUB_REPO or ""
+    branch = await get_setting("github_branch") or cfg.config.GITHUB_BRANCH or "main"
+    await state.set_state(SettingsFSM.waiting_github)
+    await q.message.edit_text(
+        "🐙 <b>GitHub loyiha sozlamalari</b>\n\n"
+        f"Joriy: <code>{owner}/{repo}@{branch}</code>\n\n"
+        "Quyidagi formatda yuboring:\n"
+        "<code>owner/repository branch</code>\n\n"
+        "Masalan: <code>my-org/gamehub main</code>\n"
+        "Token Telegram orqali kiritilmaydi — GITHUB_TOKEN secret sifatida saqlanadi.",
+        reply_markup=back_keyboard("❌ Bekor"),
+        parse_mode="HTML",
+    )
+
+
+@router.message(StateFilter(SettingsFSM.waiting_github))
+async def msg_set_github(m: Message, state: FSMContext) -> None:
+    if not _is_admin(m.from_user.id):
+        return
+    raw = (m.text or "").strip()
+    parts = raw.split()
+    if len(parts) != 2 or "/" not in parts[0] or not all(parts):
+        await m.answer(
+            "⛔ Format noto'g'ri. Masalan: <code>my-org/gamehub main</code>",
+            parse_mode="HTML",
+        )
+        return
+    owner, repo = parts[0].split("/", 1)
+    if not owner or not repo or repo.endswith(".git"):
+        repo = repo.removesuffix(".git")
+    await state.update_data(github_owner=owner, github_repo=repo, github_branch=parts[1])
+    await m.answer(
+        f"🐙 <b>GitHub sozlamalari</b>\n\n"
+        f"Owner: <code>{owner}</code>\n"
+        f"Repo: <code>{repo}</code>\n"
+        f"Branch: <code>{parts[1]}</code>\n\n"
+        "Saqlaysizmi?",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="✅ Saqlash", callback_data=DEV_SET_GITHUB_OK),
+            InlineKeyboardButton(text="❌ Bekor", callback_data=DEV_SET_GITHUB_NO),
+        ]]),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(
+    StateFilter(SettingsFSM.waiting_github),
+    lambda c: c.data == DEV_SET_GITHUB_OK,
+)
+async def cb_set_github_ok(q: CallbackQuery, state: FSMContext) -> None:
+    if not await _guard(q):
+        return
+    data = await state.get_data()
+    await state.clear()
+    try:
+        await set_setting("github_owner", data["github_owner"])
+        await set_setting("github_repo", data["github_repo"])
+        await set_setting("github_branch", data["github_branch"])
+        await q.answer("✅ GitHub sozlamalari saqlandi")
+        await q.message.edit_text(
+            "✅ GitHub loyiha sozlamalari saqlandi.\n"
+            "Token GITHUB_TOKEN secretidan olinadi.",
+            reply_markup=await _settings_keyboard(),
+            parse_mode="HTML",
+        )
+        await log_action(q.from_user.id, "SETTINGS_GITHUB", "repository", "updated")
+    except Exception as exc:
+        await q.message.edit_text(
+            f"❌ Saqlashda xato: <code>{exc}</code>",
+            reply_markup=await _settings_keyboard(),
+            parse_mode="HTML",
+        )
+
+
+@router.callback_query(
+    StateFilter(SettingsFSM.waiting_github),
+    lambda c: c.data == DEV_SET_GITHUB_NO,
+)
+async def cb_set_github_no(q: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    await q.answer("Bekor qilindi")
+    await q.message.edit_text(
+        "⚙️ <b>Sozlamalar</b>",
+        reply_markup=await _settings_keyboard(),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(lambda c: c.data == DEV_SET_GITHUB_REFRESH)
+async def cb_set_github_refresh(q: CallbackQuery) -> None:
+    if not await _guard(q):
+        return
+    from services.project_provider import get_project_provider
+    try:
+        entries = await get_project_provider().refresh()
+        await q.answer(f"✅ Cache yangilandi: {len(entries)} ta entry")
+    except Exception as exc:
+        await q.answer(f"❌ {str(exc)[:180]}", show_alert=True)

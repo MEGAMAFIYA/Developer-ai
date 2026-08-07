@@ -12,8 +12,8 @@ Features
 from __future__ import annotations
 
 import html as _html
+import io
 import logging
-from pathlib import Path
 
 from aiogram import Router, F
 from aiogram.filters import StateFilter
@@ -21,7 +21,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import (
     CallbackQuery,
-    FSInputFile,
+    BufferedInputFile,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     Message,
@@ -38,12 +38,12 @@ from handlers.developer.callbacks import (
 )
 from handlers.developer.keyboards import back_keyboard
 from handlers.developer.modules.ai.action_log import log_action
+from services.project_provider import ProjectProviderError, get_project_provider
 
 logger = logging.getLogger(__name__)
 router = Router(name="dev:files")
 
-_BASE      = Path(__file__).resolve().parents[3]          # gamehub/
-_GAMES_DIR = _BASE / "webapp" / "games"
+_GAMES_DIR = "webapp/games"
 _TG_MAX    = 4096
 _VIEW_PFX  = "dev:files:view:"    # dynamic: dev:files:view:<filename>
 _DEL_PFX   = "dev:files:del:"     # dynamic: dev:files:del:<filename>
@@ -96,14 +96,15 @@ def _confirm_del_kb(filename: str) -> InlineKeyboardMarkup:
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _list_files() -> list[str]:
-    if not _GAMES_DIR.exists():
-        return []
-    return sorted(
-        f.name for f in _GAMES_DIR.iterdir()
-        if f.is_file() and f.suffix in (".html", ".js", ".css", ".json",
-                                         ".py", ".svg", ".txt")
-    )
+async def _list_files() -> list[dict]:
+    entries = await get_project_provider().list_files(_GAMES_DIR)
+    allowed = {".html", ".js", ".css", ".json", ".py", ".svg", ".txt"}
+    return [
+        {"name": entry.path.rsplit("/", 1)[-1], "path": entry.path, "size": entry.size}
+        for entry in entries
+        if entry.kind == "file"
+        and "." + entry.path.rsplit(".", 1)[-1].lower() in allowed
+    ]
 
 
 def _fmt_size(n: int) -> str:
@@ -114,21 +115,22 @@ def _fmt_size(n: int) -> str:
     return f"{n/1024**2:.1f} MB"
 
 
-def _files_text(files: list[str]) -> str:
+def _files_text(files: list[dict]) -> str:
     if not files:
         return (
             "📂 <b>Fayl Menejeri</b>\n\n"
-            f"<code>{_GAMES_DIR}</code>\n\n"
+            f"<code>{_GAMES_DIR}/</code>\n\n"
             "Hech qanday fayl topilmadi."
         )
     lines = [
         f"📂 <b>Fayl Menejeri</b> ({len(files)} ta fayl)\n",
-        f"<code>{_GAMES_DIR}</code>\n",
+        f"<code>{_GAMES_DIR}/</code>\n",
     ]
-    for name in files:
-        path = _GAMES_DIR / name
-        size = _fmt_size(path.stat().st_size) if path.exists() else "?"
-        lines.append(f"  📄 {_html.escape(name)} <i>({size})</i>")
+    for file in files:
+        lines.append(
+            f"  📄 {_html.escape(file['path'])} "
+            f"<i>({_fmt_size(file['size'])})</i>"
+        )
     lines.append("\n📌 Faylni bosib ko'rish, yuklab olish yoki o'chirish mumkin.")
     return "\n".join(lines)
 
@@ -140,7 +142,11 @@ async def cb_files_main(q: CallbackQuery) -> None:
     if not await _guard(q):
         return
     await q.answer()
-    files = _list_files()
+    try:
+        files = await _list_files()
+    except Exception as exc:
+        files = []
+        logger.warning("GitHub file listing failed: %s", exc)
     await q.message.edit_text(
         _files_text(files)[:_TG_MAX],
         reply_markup=_files_keyboard(files),
@@ -153,20 +159,21 @@ async def cb_file_view(q: CallbackQuery) -> None:
     if not await _guard(q):
         return
     filename = q.data[len(_VIEW_PFX):]
-    path = _GAMES_DIR / filename
-    if not path.exists() or not path.is_file():
+    try:
+        file = await get_project_provider().get_file(filename)
+    except (FileNotFoundError, ProjectProviderError):
         await q.answer("Fayl topilmadi.", show_alert=True)
         return
     await q.answer()
     try:
-        content = path.read_text(encoding="utf-8", errors="replace")
+        content = file.content
         snippet = content[:3000]
         truncation = f"\n\n… (yana {len(content)-3000} belgi)" if len(content) > 3000 else ""
         # Escape so Telegram's HTML parser never interprets file contents as markup
         escaped = _html.escape(snippet) + (_html.escape(truncation) if truncation else "")
         text = (
             f"📄 <b>{_html.escape(filename)}</b>\n"
-            f"<i>{_fmt_size(path.stat().st_size)}</i>\n\n"
+            f"<i>{_fmt_size(file.size)}</i>\n\n"
             f"<pre>{escaped[:3800]}</pre>"
         )
     except Exception as exc:
@@ -183,15 +190,16 @@ async def cb_file_download(q: CallbackQuery) -> None:
     if not await _guard(q):
         return
     filename = q.data[len(_DL_PFX):]
-    path = _GAMES_DIR / filename
-    if not path.exists():
+    try:
+        raw, _ = await get_project_provider().get_file_bytes(filename)
+    except (FileNotFoundError, ProjectProviderError):
         await q.answer("Fayl topilmadi.", show_alert=True)
         return
     await q.answer("⏳ Yuklanmoqda…")
     try:
         await q.message.answer_document(
-            FSInputFile(path, filename=filename),
-            caption=f"📥 {filename} ({_fmt_size(path.stat().st_size)})",
+            BufferedInputFile(raw, filename=filename.rsplit("/", 1)[-1]),
+            caption=f"📥 {filename} ({_fmt_size(len(raw))})",
         )
         await log_action(q.from_user.id, "FILE_DOWNLOAD", filename, "ok")
     except Exception as exc:
@@ -206,8 +214,9 @@ async def cb_file_delete_confirm(q: CallbackQuery, state: FSMContext) -> None:
     if not await _guard(q):
         return
     filename = q.data[len(_DEL_PFX):]
-    path = _GAMES_DIR / filename
-    if not path.exists():
+    try:
+        file = await get_project_provider().get_file(filename)
+    except (FileNotFoundError, ProjectProviderError):
         await q.answer("Fayl topilmadi.", show_alert=True)
         return
     await q.answer()
@@ -216,7 +225,7 @@ async def cb_file_delete_confirm(q: CallbackQuery, state: FSMContext) -> None:
     await q.message.edit_text(
         f"🗑 <b>O'chirishni tasdiqlang</b>\n\n"
         f"Fayl: <code>{_html.escape(filename)}</code>\n"
-        f"O'lcham: {_fmt_size(path.stat().st_size)}\n\n"
+        f"O'lcham: {_fmt_size(file.size)}\n\n"
         "⚠️ Bu amalni qaytarib bo'lmaydi!",
         reply_markup=_confirm_del_kb(filename),
         parse_mode="HTML",
@@ -230,10 +239,10 @@ async def cb_file_delete_ok(q: CallbackQuery, state: FSMContext) -> None:
     data = await state.get_data()
     filename = data.get("filename", "")
     await state.clear()
-    path = _GAMES_DIR / filename
     try:
-        size = path.stat().st_size if path.exists() else 0
-        path.unlink(missing_ok=True)
+        file = await get_project_provider().get_file(filename, force=True)
+        size = file.size
+        await get_project_provider().delete_file(filename, f"Delete {filename}")
 
         # Keep the game registry in sync: hard-delete every DB record that
         # points to this HTML file, then remove any now-orphaned local image,
@@ -257,19 +266,6 @@ async def cb_file_delete_ok(q: CallbackQuery, state: FSMContext) -> None:
                             "Could not purge scores for game=%s: %s", slug, score_exc
                         )
 
-                # Remove local images that no other game references.
-                for row in deleted_rows:
-                    img_url: str = row.get("image_url") or ""
-                    if not img_url.startswith("/webapp/"):
-                        continue  # remote or empty — never touch filesystem
-                    try:
-                        shared = await is_image_url_shared(img_url)
-                        if not shared:
-                            img_path = _BASE / img_url.lstrip("/")
-                            img_path.unlink(missing_ok=True)
-                            logger.info("Removed orphaned image: %s", img_path)
-                    except Exception as img_exc:
-                        logger.warning("Could not remove image %s: %s", img_url, img_exc)
             except Exception as db_exc:
                 logger.warning("Could not delete game record for %s: %s", filename, db_exc)
 
@@ -281,7 +277,7 @@ async def cb_file_delete_ok(q: CallbackQuery, state: FSMContext) -> None:
     except Exception as exc:
         await q.answer(f"❌ Xato: {exc}", show_alert=True)
         return
-    files = _list_files()
+    files = await _list_files()
     await q.message.edit_text(
         _files_text(files)[:_TG_MAX],
         reply_markup=_files_keyboard(files),
@@ -293,7 +289,7 @@ async def cb_file_delete_ok(q: CallbackQuery, state: FSMContext) -> None:
 async def cb_file_delete_no(q: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
     await q.answer("Bekor qilindi")
-    files = _list_files()
+    files = await _list_files()
     await q.message.edit_text(
         _files_text(files)[:_TG_MAX],
         reply_markup=_files_keyboard(files),
@@ -334,16 +330,21 @@ async def msg_file_upload(m: Message, state: FSMContext) -> None:
             reply_markup=back_keyboard(),
         )
         return
-    dest = _GAMES_DIR / filename
-    _GAMES_DIR.mkdir(parents=True, exist_ok=True)
     try:
-        await m.bot.download(doc, destination=str(dest))
+        buffer = io.BytesIO()
+        await m.bot.download(doc, destination=buffer)
+        raw = buffer.getvalue()
+        await get_project_provider().put_file(
+            f"{_GAMES_DIR}/{filename}",
+            raw,
+            f"Upload {filename}",
+        )
         await log_action(m.from_user.id, "FILE_UPLOAD", filename,
-                         f"size={dest.stat().st_size}")
+                         f"size={len(raw)}")
 
         await m.answer(
             f"✅ <b>{filename}</b> muvaffaqiyatli yuklandi!\n"
-            f"O'lcham: {_fmt_size(dest.stat().st_size)}",
+            f"O'lcham: {_fmt_size(len(raw))}",
             parse_mode="HTML",
             reply_markup=back_keyboard(),
         )

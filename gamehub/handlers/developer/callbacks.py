@@ -109,6 +109,10 @@ DEV_SET_MAINT_OFF = "dev:set:maint:off"
 DEV_SET_WEBAPP    = "dev:set:webapp"
 DEV_SET_WEBAPP_OK = "dev:set:webapp:ok"
 DEV_SET_WEBAPP_NO = "dev:set:webapp:no"
+DEV_SET_GITHUB    = "dev:set:github"
+DEV_SET_GITHUB_OK = "dev:set:github:ok"
+DEV_SET_GITHUB_NO = "dev:set:github:no"
+DEV_SET_GITHUB_REFRESH = "dev:set:github:refresh"
 
 # ── GitHub sub-actions ───────────────────────────────────────────────────────
 DEV_GH_COMMITS = "dev:gh:commits"

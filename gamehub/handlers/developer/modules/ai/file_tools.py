@@ -17,12 +17,8 @@ Safety rules
 
 from __future__ import annotations
 
-import asyncio
 import difflib
 import logging
-import shutil
-from datetime import datetime
-from pathlib import Path
 
 from aiogram import Router
 from aiogram.filters import StateFilter
@@ -44,13 +40,11 @@ from handlers.developer.modules.ai.callbacks import (
 )
 from handlers.developer.modules.ai.menu import ai_menu_keyboard, AI_MENU_TEXT
 from handlers.developer.modules.ai.action_log import log_action
+from services.project_provider import ProjectProviderError, get_project_provider
 
 logger = logging.getLogger(__name__)
 router = Router(name="dev:ai:file_tools")
 
-# ── Paths ─────────────────────────────────────────────────────────────────────
-_BASE       = Path(__file__).resolve().parents[4]   # gamehub/
-_BACKUP_DIR = _BASE / "backups"
 _TG_MAX     = 4096
 
 
@@ -145,13 +139,11 @@ async def cb_file_manager_menu(q: CallbackQuery, state: FSMContext) -> None:
 
 # ── File helpers ──────────────────────────────────────────────────────────────
 
-def _resolve(user_path: str) -> Path | None:
-    """Resolve path relative to BASE_DIR; return None if outside gamehub/."""
+def _resolve(user_path: str) -> str | None:
+    """Normalize a repository path and reject traversal."""
     try:
-        p = (_BASE / user_path.lstrip("/")).resolve()
-        p.relative_to(_BASE)
-        return p
-    except ValueError:
+        return get_project_provider().normalize_path(user_path)
+    except ProjectProviderError:
         return None
 
 def _diff_text(old: str, new: str, filename: str, max_lines: int = 60) -> str:
@@ -166,23 +158,6 @@ def _diff_text(old: str, new: str, filename: str, max_lines: int = 60) -> str:
     if len(diff) > max_lines:
         block += f"\n... +{len(diff) - max_lines} qator"
     return block
-
-async def _backup(path: Path) -> Path:
-    _BACKUP_DIR.mkdir(parents=True, exist_ok=True)
-    ts   = datetime.now().strftime("%Y%m%d_%H%M%S")
-    dest = _BACKUP_DIR / f"{ts}_{path.name}"
-    await asyncio.to_thread(shutil.copy2, str(path), str(dest))
-    return dest
-
-async def _read_file(path: Path) -> str:
-    return await asyncio.to_thread(path.read_text, "utf-8")
-
-async def _write_file(path: Path, content: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    await asyncio.to_thread(path.write_text, content, "utf-8")
-
-async def _delete_file(path: Path) -> None:
-    await asyncio.to_thread(path.unlink)
 
 def _send_chunks(text: str, parse_mode: str | None = None):
     """Split text into ≤4096-char list of chunks."""
@@ -218,15 +193,19 @@ async def msg_file_create_path(m: Message, state: FSMContext) -> None:
         await m.answer("Xavfli yoki noto'g'ri yo'l. Qaytadan yozing.",
                        reply_markup=_cancel_kb())
         return
-    if path.exists():
-        await m.answer(f"Fayl allaqachon mavjud: <code>{path.relative_to(_BASE)}</code>\n"
+    try:
+        await get_project_provider().get_file(path)
+    except FileNotFoundError:
+        pass
+    else:
+        await m.answer(f"Fayl allaqachon mavjud: <code>{path}</code>\n"
                        "Tahrirlash uchun Faylni tahrirlash tugmasini ishlating.",
                        reply_markup=_cancel_kb(), parse_mode="HTML")
         return
-    await state.update_data(path=str(path))
+    await state.update_data(path=path)
     await state.set_state(FileCreateStates.waiting_content)
     await m.answer(
-        f"Yo'l: <code>{path.relative_to(_BASE)}</code>\n\n"
+        f"Yo'l: <code>{path}</code>\n\n"
         "Kontent yuboring (matn yoki kod):",
         reply_markup=_cancel_kb(), parse_mode="HTML",
     )
@@ -238,7 +217,7 @@ async def msg_file_create_content(m: Message, state: FSMContext) -> None:
         return
     content = m.text or ""
     data    = await state.get_data()
-    path    = Path(data["path"])
+    path    = data["path"]
     lines   = content.splitlines()
     preview = "\n".join(lines[:30])
     if len(lines) > 30:
@@ -247,7 +226,7 @@ async def msg_file_create_content(m: Message, state: FSMContext) -> None:
     await state.set_state(FileCreateStates.confirming)
     await m.answer(
         f"<b>Fayl yaratish — preview</b>\n\n"
-        f"Fayl: <code>{path.relative_to(_BASE)}</code>\n"
+        f"Fayl: <code>{path}</code>\n"
         f"Qatorlar: {len(lines)}\n\n"
         f"<pre>{preview[:800]}</pre>\n\n"
         "Tasdiqlaysizmi?",
@@ -268,8 +247,10 @@ async def cb_file_create_confirm(q: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
     await q.answer()
     try:
-        await _write_file(path, content)
-        rel = path.relative_to(_BASE)
+        await get_project_provider().put_file(
+            path, content, f"Create {path}"
+        )
+        rel = path
         await q.message.edit_text(
             f"Fayl yaratildi: <code>{rel}</code>\n"
             f"Qatorlar: {len(content.splitlines())}",
@@ -309,13 +290,15 @@ async def msg_file_read(m: Message, state: FSMContext) -> None:
     if not path:
         await m.answer("Xavfli yoki noto'g'ri yo'l.")
         return
-    if not path.exists():
+    try:
+        await get_project_provider().get_file(path)
+    except FileNotFoundError:
         await m.answer(f"Fayl topilmadi: <code>{m.text}</code>",
                        parse_mode="HTML")
         return
     try:
-        content = await _read_file(path)
-        rel     = path.relative_to(_BASE)
+        content = (await get_project_provider().get_file(path)).content
+        rel     = path
         header  = (f"<b>Fayl:</b> <code>{rel}</code>\n"
                    f"<b>Hajm:</b> {len(content)} bayt | "
                    f"{len(content.splitlines())} qator\n\n")
@@ -356,14 +339,16 @@ async def msg_file_edit_path(m: Message, state: FSMContext) -> None:
     if not path:
         await m.answer("Xavfli yoki noto'g'ri yo'l.", reply_markup=_cancel_kb())
         return
-    if not path.exists():
+    try:
+        await get_project_provider().get_file(path)
+    except FileNotFoundError:
         await m.answer(f"Fayl topilmadi: <code>{m.text}</code>",
                        reply_markup=_cancel_kb(), parse_mode="HTML")
         return
     try:
-        old_content = await _read_file(path)
-        rel         = path.relative_to(_BASE)
-        await state.update_data(path=str(path), old_content=old_content)
+        old_content = (await get_project_provider().get_file(path)).content
+        rel         = path
+        await state.update_data(path=path, old_content=old_content)
         await state.set_state(FileEditStates.waiting_content)
         preview = "\n".join(old_content.splitlines()[:20])
         if len(old_content.splitlines()) > 20:
@@ -386,7 +371,7 @@ async def msg_file_edit_content(m: Message, state: FSMContext) -> None:
         return
     new_content = m.text or ""
     data        = await state.get_data()
-    path        = Path(data["path"])
+    path        = data["path"]
     old_content = data["old_content"]
 
     diff = _diff_text(old_content, new_content, path.name)
@@ -398,11 +383,11 @@ async def msg_file_edit_content(m: Message, state: FSMContext) -> None:
     await state.set_state(FileEditStates.confirming)
     await m.answer(
         f"<b>Faylni tahrirlash — diff</b>\n\n"
-        f"Fayl: <code>{path.relative_to(_BASE)}</code>\n"
+        f"Fayl: <code>{path}</code>\n"
         f"Eski: {len(old_content.splitlines())} qator  "
         f"Yangi: {len(new_content.splitlines())} qator\n\n"
         f"<pre>{diff_preview}</pre>\n\n"
-        "Backup yaratiladi. Tasdiqlaysizmi?",
+        "GitHub commit yaratiladi. Tasdiqlaysizmi?",
         reply_markup=_confirm_kb(), parse_mode="HTML",
     )
 
@@ -415,20 +400,21 @@ async def cb_file_edit_confirm(q: CallbackQuery, state: FSMContext) -> None:
     if not await _guard_cb(q):
         return
     data        = await state.get_data()
-    path        = Path(data["path"])
+    path        = data["path"]
     new_content = data["new_content"]
     await state.clear()
     await q.answer()
     try:
-        backup = await _backup(path)
-        await _write_file(path, new_content)
-        rel = path.relative_to(_BASE)
+        await get_project_provider().put_file(
+            path, new_content, f"Edit {path}"
+        )
+        rel = path
         await q.message.edit_text(
             f"Fayl yangilandi: <code>{rel}</code>\n"
-            f"Backup: <code>{backup.name}</code>",
+            "GitHub tarixida oldingi versiya saqlandi.",
             reply_markup=_back_kb(), parse_mode="HTML",
         )
-        await log_action(q.from_user.id, "FILE_EDIT", str(rel), f"backup:{backup.name}")
+        await log_action(q.from_user.id, "FILE_EDIT", str(rel), "github_commit")
     except Exception as exc:
         await q.message.edit_text(f"Xato: <code>{exc}</code>",
                                   reply_markup=_back_kb(), parse_mode="HTML")
@@ -461,20 +447,22 @@ async def msg_file_delete_path(m: Message, state: FSMContext) -> None:
     if not path:
         await m.answer("Xavfli yoki noto'g'ri yo'l.", reply_markup=_cancel_kb())
         return
-    if not path.exists():
+    try:
+        file = await get_project_provider().get_file(path)
+    except FileNotFoundError:
         await m.answer(f"Fayl topilmadi: <code>{m.text}</code>",
                        reply_markup=_cancel_kb(), parse_mode="HTML")
         return
     try:
-        size = path.stat().st_size
-        rel  = path.relative_to(_BASE)
-        await state.update_data(path=str(path))
+        size = file.size
+        rel  = path
+        await state.update_data(path=path)
         await state.set_state(FileDeleteStates.confirming)
         await m.answer(
             f"<b>O'chirish — preview</b>\n\n"
             f"Fayl: <code>{rel}</code>\n"
             f"Hajm: {size} bayt\n\n"
-            "Backup yaratilgandan so'ng o'chiriladi.\n"
+            "GitHub commit tarixi saqlanadi.\n"
             "<b>Bu amal qaytarilmaydi!</b>\n\n"
             "Tasdiqlaysizmi?",
             reply_markup=_confirm_kb(), parse_mode="HTML",
@@ -492,19 +480,18 @@ async def cb_file_delete_confirm(q: CallbackQuery, state: FSMContext) -> None:
     if not await _guard_cb(q):
         return
     data = await state.get_data()
-    path = Path(data["path"])
+    path = data["path"]
     await state.clear()
     await q.answer()
     try:
-        backup = await _backup(path)
-        rel    = path.relative_to(_BASE)
-        await _delete_file(path)
+        await get_project_provider().delete_file(path, f"Delete {path}")
+        rel    = path
         await q.message.edit_text(
             f"Fayl o'chirildi: <code>{rel}</code>\n"
-            f"Backup: <code>{backup.name}</code>",
+            "Oldingi versiya GitHub commit tarixida saqlandi.",
             reply_markup=_back_kb(), parse_mode="HTML",
         )
-        await log_action(q.from_user.id, "FILE_DELETE", str(rel), f"backup:{backup.name}")
+        await log_action(q.from_user.id, "FILE_DELETE", str(rel), "github_commit")
     except Exception as exc:
         await q.message.edit_text(f"Xato: <code>{exc}</code>",
                                   reply_markup=_back_kb(), parse_mode="HTML")
