@@ -93,24 +93,6 @@ async def get_game_by_slug(slug: str) -> dict | None:
     return dict(row) if row else None
 
 
-async def ensure_game_exists(slug: str) -> None:
-    """Auto-register a minimal game catalog entry when a new slug is first seen.
-
-    Called by the score API before saving a score so that any game that submits
-    a score automatically appears in /reyting without manual backend changes.
-    Existing entries are never overwritten.
-    """
-    pool = await get_global_pool()
-    await pool.execute(
-        """
-        INSERT INTO games (slug, name, description, html_file, category, active)
-        VALUES ($1, $1, '', $1 || '.html', 'arcade', TRUE)
-        ON CONFLICT (slug) DO NOTHING
-        """,
-        slug,
-    )
-
-
 async def update_game_image(slug: str, image_url: str) -> None:
     pool = await get_global_pool()
     await pool.execute(

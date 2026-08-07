@@ -28,7 +28,7 @@ from aiogram.types import (
 )
 
 import config as cfg
-from database.global_db import delete_game_by_html_file, ensure_game_exists, is_image_url_shared
+from database.global_db import delete_game_by_html_file, is_image_url_shared
 from database.game_db import delete_scores_by_game_name
 from handlers.developer.callbacks import (
     DEV_FILES,
@@ -340,18 +340,6 @@ async def msg_file_upload(m: Message, state: FSMContext) -> None:
         await m.bot.download(doc, destination=str(dest))
         await log_action(m.from_user.id, "FILE_UPLOAD", filename,
                          f"size={dest.stat().st_size}")
-
-        # FIX #4 — auto-register the game in the catalog so it immediately
-        # appears in /reyting without needing a score submission first.
-        if filename.endswith(".html"):
-            slug = filename[:-5]  # strip ".html"
-            try:
-                await ensure_game_exists(slug)
-                logger.info("Auto-registered game slug=%s after upload", slug)
-            except Exception as reg_exc:
-                logger.warning(
-                    "Could not auto-register game slug=%s: %s", slug, reg_exc
-                )
 
         await m.answer(
             f"✅ <b>{filename}</b> muvaffaqiyatli yuklandi!\n"

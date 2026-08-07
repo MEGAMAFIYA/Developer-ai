@@ -16,7 +16,7 @@ from database.game_db import (
     get_global_leaderboard,
     get_game_pool,
 )
-from database.global_db import ensure_game_exists
+from database.global_db import get_game_by_slug
 from services.diamond_service import award_for_score
 
 logger = logging.getLogger(__name__)
@@ -28,6 +28,54 @@ class ScorePayload(BaseModel):
     score: int
     init_data: str        # raw Telegram WebApp initData string
     chat_id: int = 0      # group chat_id embedded in the WebApp URL by the bot (?cid=)
+
+
+def _normalize_game_slug(raw_game: str) -> str:
+    """Return the canonical catalog lookup value for an incoming game slug."""
+    return raw_game.strip().lower()
+
+
+async def _validate_registered_game(raw_game: str) -> str:
+    """Resolve an incoming slug to an active catalog game.
+
+    The score API never creates catalog records.  A game must be registered
+    through the admin /yangi flow before it can submit scores.
+    """
+    game_slug = _normalize_game_slug(raw_game)
+    game = await get_game_by_slug(game_slug)
+
+    if not game:
+        logger.warning(
+            "SCORE VALIDATION REJECTED: reason=unknown_game raw_game=%r "
+            "normalized_slug=%r",
+            raw_game,
+            game_slug,
+        )
+        raise HTTPException(
+            status_code=404,
+            detail=f"Registered game not found: {game_slug}",
+        )
+
+    if not game["active"]:
+        logger.warning(
+            "SCORE VALIDATION REJECTED: reason=inactive_game raw_game=%r "
+            "normalized_slug=%r game_id=%s",
+            raw_game,
+            game_slug,
+            game.get("id"),
+        )
+        raise HTTPException(
+            status_code=403,
+            detail=f"Game is inactive: {game_slug}",
+        )
+
+    logger.info(
+        "SCORE VALIDATION ACCEPTED: raw_game=%r normalized_slug=%r game_id=%s",
+        raw_game,
+        game_slug,
+        game.get("id"),
+    )
+    return game_slug
 
 
 def _validate_init_data(init_data: str) -> tuple[dict, dict]:
@@ -78,6 +126,8 @@ async def post_score(payload: ScorePayload) -> dict:
     if payload.score < 0:
         raise HTTPException(status_code=400, detail="Score cannot be negative")
 
+    game_slug = await _validate_registered_game(payload.game)
+
     # ── Incoming request diagnostics ─────────────────────────────────────────
     init_data_empty  = not payload.init_data or payload.init_data.strip() == ""
     init_data_length = len(payload.init_data) if payload.init_data else 0
@@ -85,14 +135,14 @@ async def post_score(payload: ScorePayload) -> dict:
     logger.info(
         "SCORE REQUEST: game=%s score=%s chat_id=%s | "
         "init_data_received=%s init_data_empty=%s init_data_length=%d hash_present=%s",
-        payload.game, payload.score, payload.chat_id,
+        game_slug, payload.score, payload.chat_id,
         not init_data_empty, init_data_empty, init_data_length, hash_present,
     )
     if init_data_empty:
         logger.warning(
             "AUTH 401 — empty init_data: game=%s score=%s "
             "reason='Telegram.WebApp.initData was not received (empty string)'",
-            payload.game, payload.score,
+            game_slug, payload.score,
         )
 
     user, chat = _validate_init_data(payload.init_data)
@@ -102,7 +152,7 @@ async def post_score(payload: ScorePayload) -> dict:
         logger.warning(
             "AUTH 401 — user_id missing: game=%s score=%s init_data_length=%d "
             "reason='user field in init_data parsed but contained no id'",
-            payload.game, payload.score, init_data_length,
+            game_slug, payload.score, init_data_length,
         )
         raise HTTPException(status_code=401, detail="User ID not found")
 
@@ -121,17 +171,14 @@ async def post_score(payload: ScorePayload) -> dict:
 
     logger.info(
         "E2E RECV: user=%s (@%s) game=%s score=%s chat=%s",
-        user_id, username, payload.game, payload.score, chat_id,
+        user_id, username, game_slug, payload.score, chat_id,
     )
-
-    # Auto-register the game in the catalog on first score submission.
-    await ensure_game_exists(payload.game)
 
     result = await save_score(
         user_id    = user_id,
         username   = username,
         first_name = first_name,
-        game_name  = payload.game,
+        game_name  = game_slug,
         score      = payload.score,
         chat_id    = chat_id,
         chat_title = chat_title,
@@ -140,12 +187,12 @@ async def post_score(payload: ScorePayload) -> dict:
     # Read-back verification: confirm the score actually persisted in the DB.
     # Only runs for new records (i.e. rows that were actually inserted).
     if result["is_new_record"]:
-        verified = await verify_score_in_db(user_id, payload.game, payload.score)
+        verified = await verify_score_in_db(user_id, game_slug, payload.score)
         if not verified:
             logger.error(
                 "Score save verification FAILED — row missing after INSERT: "
                 "user=%s game=%s score=%s",
-                user_id, payload.game, payload.score,
+                user_id, game_slug, payload.score,
             )
             raise HTTPException(
                 status_code=500,
@@ -157,7 +204,7 @@ async def post_score(payload: ScorePayload) -> dict:
         user_id       = user_id,
         username      = username,
         first_name    = first_name,
-        game_name     = payload.game,
+        game_name     = game_slug,
         score         = payload.score,
         is_new_record = result["is_new_record"],
         rank          = result["rank"],
@@ -165,7 +212,7 @@ async def post_score(payload: ScorePayload) -> dict:
 
     logger.info(
         "Score processed: user=%s game=%s score=%s new_record=%s rank=%s diamonds=%s",
-        user_id, payload.game, payload.score,
+        user_id, game_slug, payload.score,
         result["is_new_record"], result["rank"], diamonds_earned,
     )
 
@@ -197,14 +244,14 @@ async def pipeline_test(game: str = "snake", score: int = 9999) -> dict:
 
     steps: dict = {}
 
-    await ensure_game_exists(game)
-    steps["1_game_registered"] = True
+    game_slug = await _validate_registered_game(game)
+    steps["1_game_validated"] = True
 
     pool = await get_game_pool()
     async with pool.acquire() as conn:
         await conn.execute(
             "DELETE FROM scores WHERE user_id=$1 AND game_name=$2",
-            TEST_USER_ID, game,
+            TEST_USER_ID, game_slug,
         )
 
         row = await conn.fetchrow(
@@ -214,7 +261,7 @@ async def pipeline_test(game: str = "snake", score: int = 9999) -> dict:
             VALUES ($1, $2, $3, $4, $5, 0, 'PipelineTest')
             RETURNING *
             """,
-            TEST_USER_ID, TEST_USERNAME, TEST_FIRST_NAME, game, score,
+            TEST_USER_ID, TEST_USERNAME, TEST_FIRST_NAME, game_slug, score,
         )
         steps["2_inserted"] = {"id": row["id"], "score": row["score"]}
 
@@ -235,7 +282,7 @@ async def pipeline_test(game: str = "snake", score: int = 9999) -> dict:
                    AND s.game_name=$1
             ORDER BY best_score DESC, s.id ASC LIMIT 5
             """,
-            game,
+            game_slug,
         )
         steps["4_leaderboard_top5"] = [
             {"name": r["first_name"] or r["username"], "score": r["best_score"]}
@@ -246,5 +293,5 @@ async def pipeline_test(game: str = "snake", score: int = 9999) -> dict:
         steps["5_cleanup_ok"] = True
 
     steps["pipeline_ok"] = steps.get("3_read_back_ok", False)
-    logger.info("Pipeline test for game='%s': %s", game, steps)
+    logger.info("Pipeline test for game='%s': %s", game_slug, steps)
     return steps
