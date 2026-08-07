@@ -86,6 +86,7 @@ def _make_server() -> uvicorn.Server:
 async def main() -> None:
     loop = asyncio.get_running_loop()
     shutdown_event = asyncio.Event()
+    bot_disabled = os.getenv("DISABLE_BOT", "").strip().lower() == "true"
 
     def _handle_signal() -> None:
         if not shutdown_event.is_set():
@@ -101,20 +102,26 @@ async def main() -> None:
     logger.info("Databases ready.")
 
     # ── Build services ────────────────────────────────────────────────────────
-    bot    = _make_bot()
-    dp     = Dispatcher(storage=MemoryStorage())
-    dp.include_router(main_router)
-    await register_commands(bot)
+    bot = None
+    bot_task = None
+    if bot_disabled:
+        logger.info("[STARTUP] Telegram bot disabled on this environment.")
+    else:
+        bot = _make_bot()
+        dp = Dispatcher(storage=MemoryStorage())
+        dp.include_router(main_router)
+        await register_commands(bot)
 
     server = _make_server()
     logger.info("Starting FastAPI on %s:%s...", config.HOST, config.PORT)
 
     # ── Concurrent tasks ──────────────────────────────────────────────────────
-    bot_task    = asyncio.create_task(
-        dp.start_polling(bot, allowed_updates=["message", "callback_query"]),
-        name="bot-polling",
-    )
     server_task = asyncio.create_task(server.serve(), name="uvicorn-server")
+    if not bot_disabled:
+        bot_task = asyncio.create_task(
+            dp.start_polling(bot, allowed_updates=["message", "callback_query"]),
+            name="bot-polling",
+        )
 
     async def _shutdown_watcher() -> None:
         """Wait for shutdown signal then stop both services in order."""
@@ -122,19 +129,24 @@ async def main() -> None:
         logger.info("Stopping uvicorn...")
         server.should_exit = True
 
-        logger.info("Stopping bot polling...")
-        bot_task.cancel()
-        try:
-            await bot_task
-        except asyncio.CancelledError:
-            pass
-        finally:
-            await bot.session.close()
-            logger.info("Bot session closed.")
+        if bot_task is not None and bot is not None:
+            logger.info("Stopping bot polling...")
+            bot_task.cancel()
+            try:
+                await bot_task
+            except asyncio.CancelledError:
+                pass
+            finally:
+                await bot.session.close()
+                logger.info("Bot session closed.")
 
     try:
-        logger.info("Starting bot polling...")
-        await asyncio.gather(server_task, bot_task, _shutdown_watcher())
+        if not bot_disabled:
+            logger.info("Starting bot polling...")
+        tasks = [server_task, _shutdown_watcher()]
+        if bot_task is not None:
+            tasks.insert(1, bot_task)
+        await asyncio.gather(*tasks)
     except asyncio.CancelledError:
         pass
     except Exception:
