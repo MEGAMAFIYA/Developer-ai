@@ -77,6 +77,14 @@ async def _get_existing_sha(
     """
     url = _api_url(path)
     params = {"ref": config.GITHUB_BRANCH} if config.GITHUB_BRANCH else None
+    logger.info(
+        "[GITHUB API] URL=%s owner=%s repo=%s branch=%s path=%s",
+        url,
+        config.GITHUB_OWNER,
+        config.GITHUB_REPO,
+        config.GITHUB_BRANCH,
+        path,
+    )
     async with session.get(url, headers=_headers(), params=params) as response:
         body = await response.text(encoding="utf-8", errors="replace")
         logger.info("[GITHUB API] HTTP status GET %s: %s", path, response.status)
@@ -132,6 +140,14 @@ async def _upload_file(
         payload["branch"] = config.GITHUB_BRANCH
 
     url = _api_url(repository_path)
+    logger.info(
+        "[GITHUB API] URL=%s owner=%s repo=%s branch=%s path=%s",
+        url,
+        config.GITHUB_OWNER,
+        config.GITHUB_REPO,
+        config.GITHUB_BRANCH,
+        repository_path,
+    )
     async with session.put(url, headers=_headers(), json=payload) as response:
         body = await response.text(encoding="utf-8", errors="replace")
         logger.info("[GITHUB API] HTTP status PUT %s: %s", repository_path, response.status)
