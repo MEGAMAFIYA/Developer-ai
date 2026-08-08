@@ -20,12 +20,22 @@ WEBAPP_DIR = Path(__file__).parent.parent / "webapp"
 
 
 def _build_keyboard(game: dict, chat_id: int = 0) -> InlineKeyboardMarkup:
-    base = f"{config.WEBAPP_URL.rstrip('/')}/games/{game['slug']}"
-    url = f"{base}?cid={chat_id}" if chat_id else base
+    # Direct Mini App link registered via BotFather.
+    # The start_param contains the game slug and chat ID.
+    start_param = (
+        f"{game['slug']}__{chat_id}"
+        if chat_id
+        else game['slug']
+    )
+
+    url = (
+        f"https://t.me/{config.BOT_USERNAME}/play"
+        f"?startapp={start_param}"
+    )
 
     btn = InlineKeyboardButton(
         text="🎮 O'ynash",
-        web_app=WebAppInfo(url=url)
+        url=url
     )
 
     return InlineKeyboardMarkup(
@@ -43,11 +53,7 @@ def _build_caption(game: dict) -> str:
 async def send_game_card(message: Message, game: dict) -> None:
     """Send one game as a Telegram photo (or text fallback) with Play button."""
 
-    chat_id = (
-        message.chat.id
-        if message.chat.type in ("group", "supergroup")
-        else 0
-    )
+    chat_id = message.chat.id
 
     keyboard = _build_keyboard(game, chat_id=chat_id)
     caption = _build_caption(game)

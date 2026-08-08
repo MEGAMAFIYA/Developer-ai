@@ -35,6 +35,24 @@ GAMES_DIR.mkdir(parents=True, exist_ok=True)
 if WEBAPP_DIR.exists():
     app.mount("/webapp", StaticFiles(directory=str(WEBAPP_DIR), html=True), name="webapp")
 
+
+@app.get("/")
+async def serve_landing():
+    """Landing page for the BotFather-registered Mini App root URL."""
+    landing_file = WEBAPP_DIR / "index.html"
+
+    if landing_file.exists():
+        return FileResponse(
+            str(landing_file),
+            media_type="text/html"
+        )
+
+    return HTMLResponse(
+        "<h1>Mini o'yinlar</h1>",
+        status_code=200
+    )
+
+
 # ---------------------------------------------------------------------------
 # Game route  GET /games/{slug}  → serves webapp/games/{slug}.html
 # ---------------------------------------------------------------------------

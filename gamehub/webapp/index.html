@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Mini o'yinlar</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  html, body {
+    margin:0; padding:0; width:100%; height:100%;
+    background:#123; color:#fff8e0; font-family:'Segoe UI', Tahoma, Arial, sans-serif;
+    display:flex; align-items:center; justify-content:center; text-align:center;
+  }
+  .msg { padding:20px; font-size:16px; opacity:0.85; }
+</style>
+</head>
+<body>
+<div class="msg" id="msg">Yuklanmoqda...</div>
+<script>
+'use strict';
+
+const tg = (window.Telegram && window.Telegram.WebApp)
+  ? window.Telegram.WebApp
+  : null;
+
+if (tg) {
+  try {
+    tg.ready();
+    tg.expand();
+  } catch(e) {}
+}
+
+const msgEl = document.getElementById('msg');
+
+const startParam =
+  tg && tg.initDataUnsafe
+    ? (tg.initDataUnsafe.start_param || '')
+    : '';
+
+function redirectToGame(slug, chatId) {
+  const url =
+    '/games/' +
+    encodeURIComponent(slug) +
+    (chatId
+      ? ('?cid=' + encodeURIComponent(chatId))
+      : '');
+
+  window.location.replace(url);
+}
+
+if (startParam) {
+  const idx = startParam.lastIndexOf('__');
+
+  if (idx > -1) {
+    const slug = startParam.slice(0, idx);
+    const chatId = startParam.slice(idx + 2);
+
+    redirectToGame(slug, chatId);
+  } else {
+    redirectToGame(startParam, '');
+  }
+} else {
+  msgEl.textContent =
+    "O'ynash uchun botdagi 'O'ynash' tugmasidan foydalaning.";
+}
+</script>
+</body>
+</html>
