@@ -1,0 +1,113 @@
+BACKWARD COMPATIBILITY:
+
+Mavjud:
+- GitHub Manager
+- Commitlar
+- Holat
+- Yangilash
+- Orqaga
+- /yangi
+- /tuzatish
+- o‘yin qo‘shish
+- o‘yin tahrirlash
+
+ishlashida regressiya bo‘lmasin.
+
+CALLBACK/FSM:
+Mavjud callback nomlari va FSM state’larni imkon qadar
+o‘zgartirma.
+Yangi confirmation tugmalari uchun yangi callback kerak bo‘lsa,
+mavjud naming convention’ga mos yangi callback yarat.
+
+ACTION LOG:
+Agar GitHub Manager’da Action Log ishlatilayotgan bo‘lsa,
+yangi sync/delete operatsiyalarini mavjud Action Log mexanizmi
+orqali yoz.
+Yangi alohida logging tizimi yaratma.
+
+SECURITY:
+Faqat Developer/Admin foydalanuvchisi ishlata olsin.
+Oddiy foydalanuvchi bu funksiyani chaqira olmasin.
+
+TEST:
+
+Kod yozishdan oldin va keyin quyidagilarni tekshir.
+
+CASE 1:
+GitHub = 3
+Server = 3
+Bir xil o‘yinlar.
+
+Natija:
+Hech narsa o‘chmasin.
+
+CASE 2:
+GitHub = 3
+Server = 4
+Serverdagi 1 ta o‘yin GitHub’da yo‘q.
+
+Natija:
+Confirmation’da 1 ta o‘yin ko‘rinsin.
+Tasdiqlagandan keyin faqat shu o‘yin tozalansin.
+
+CASE 3:
+GitHub = 3
+Server = 10
+Serverda 7 ta o‘yin GitHub’da yo‘q.
+
+Natija:
+7 ta o‘yin ro‘yxatga chiqsin.
+Tasdiqlagandan keyin faqat shu 7 ta slug tozalansin.
+
+CASE 4:
+GitHub’da bor o‘yin serverda ham bor.
+
+Natija:
+Unga umuman tegilmasin.
+
+CASE 5:
+GitHub’da bor o‘yin serverda yo‘q.
+
+Natija:
+GitHub’dan o‘chirilmasin.
+Serverga ham avtomatik yuklanmasin.
+
+CASE 6:
+O‘yin nomlari/sluglari turlicha ko‘rinishda bo‘lsa,
+mavjud project slug normalization ishlatilsin.
+
+CASE 7:
+Database’da eski game record mavjud, lekin HTML fayl yo‘q.
+
+Bu holatda faqat o‘chirish ro‘yxatiga tushgan slug uchun
+tegishli orphan record tozalansin.
+Boshqa game record’lar tegilmasin.
+
+FINAL:
+O‘zgarishlardan keyin:
+- syntax check
+- import check
+- mavjud GitHub Manager testlari
+- yangi sync logic testlari
+- callback/FSM regression tekshiruvi
+- git diff --check
+
+bajarilsin.
+
+Yakuniy hisobotda:
+1. Qaysi fayllar o‘zgargani
+2. Qaysi callback/handler qo‘shilgani
+3. Server ↔ GitHub qanday solishtirilishi
+4. Qaysi server ma’lumotlari o‘chirilishi
+5. Nimalarga tegilmagani
+6. Test natijalari
+
+aniq ko‘rsatilsin.
+
+ENG MUHIM TALAB:
+Avval mavjud kodni to‘liq tekshir.
+Agar bu funksiya allaqachon mavjud bo‘lsa, yangi parallel funksiya yaratma.
+Mavjud funksiyani xavfsiz kengaytir.
+
+HECH QANDAY KERAKSIZ REFACTOR QILMA.
+FAQAT SHU VAZIFA UCHUN KERAK BO‘LGAN ENG KICHIK O‘ZGARISHNI KIRIT.

@@ -144,6 +144,16 @@ async def delete_game_by_html_file(html_file: str) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+async def delete_game_by_slug(slug: str) -> list[dict]:
+    """Hard-delete every game record for the given canonical slug."""
+    pool = await get_global_pool()
+    rows = await pool.fetch(
+        "DELETE FROM games WHERE slug = $1 RETURNING *",
+        slug,
+    )
+    return [dict(r) for r in rows]
+
+
 async def is_image_url_shared(image_url: str) -> bool:
     """Return True if at least one game record still references this image_url.
 
