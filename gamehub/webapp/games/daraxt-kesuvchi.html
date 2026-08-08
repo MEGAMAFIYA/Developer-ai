@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Daraxt Kesuvchi</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
 <style>
   /* ===================== BASE / RESET ===================== */
   * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; user-select:none; }
@@ -1087,6 +1088,39 @@ function showGameOver(){
   document.getElementById('goCoins').textContent = "+" + sessionCoins + " tanga";
   showOnly('gameover');
   hud.classList.remove('active');
+  submitScore(score);
+}
+
+async function submitScore(score){
+  try {
+    const tg = window.Telegram.WebApp;
+    const initData = tg.initData;
+    const chatId = new URLSearchParams(window.location.search).get("cid") || "0";
+    const game = "daraxt-kesuvchi";
+    const chat_id = Number(chatId);
+
+    console.log("SCORE SUBMIT", {
+      game,
+      score,
+      init_data_received: Boolean(initData),
+      init_data_length: initData ? initData.length : 0,
+      chat_id
+    });
+
+    await fetch('/api/scores', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        game,
+        score: Number(score),
+        init_data: initData,
+        chat_id
+      })
+    });
+  } catch (e) {
+    // Never crash the game if Telegram or the network is unavailable.
+    console.warn("SCORE SUBMIT FAILED", e);
+  }
 }
 
 /* --- Menu buttons --- */

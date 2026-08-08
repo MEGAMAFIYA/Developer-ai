@@ -1,0 +1,84 @@
+Find the exact cause of the current HTTP 422 errors.
+
+DO NOT change database code.
+DO NOT change api/routes/scores.py.
+DO NOT change leaderboard code.
+DO NOT change Mini App routing.
+DO NOT change game_service.py.
+
+Inspect the CURRENT:
+gamehub/webapp/games/daraxt-kesuvchi.html
+
+Find the exact JavaScript code that sends POST requests to:
+ /api/scores
+
+Compare its JSON body with the current FastAPI ScorePayload:
+
+{
+    game: str,
+    score: int,
+    init_data: str,
+    chat_id: int
+}
+
+The current Render logs show:
+
+GET /?tgWebAppStartParam=daraxt-kesuvchi__-1004408830613 -> 200
+GET /games/daraxt-kesuvchi?cid=-1004408830613 -> 200
+POST /api/scores -> 422
+
+This means Mini App routing is working, but the score request body is failing Pydantic validation.
+
+IMPORTANT:
+Before editing anything, show the EXACT current fetch() request body used by daraxt-kesuvchi.html.
+
+Then identify which required field is missing/wrong.
+
+The game must send:
+
+game = "daraxt-kesuvchi"
+score = the player's actual score
+init_data = Telegram.WebApp.initData
+chat_id = the cid value from the current game URL
+
+Use Telegram WebApp initData correctly:
+
+const tg = window.Telegram.WebApp;
+const initData = tg.initData;
+
+Do NOT use initDataUnsafe as the value for init_data.
+initData must be the raw Telegram.WebApp.initData string because the server validates its HMAC signature.
+
+Read chat_id from the URL query parameter:
+
+const chatId = new URLSearchParams(window.location.search).get("cid") || "0";
+
+Then the POST body must be equivalent to:
+
+{
+    game: "daraxt-kesuvchi",
+    score: Number(score),
+    init_data: tg.initData,
+    chat_id: Number(chatId)
+}
+
+Keep the game's existing scoring logic unchanged.
+Only fix the score submission/API integration.
+
+Also add temporary console logging immediately before fetch:
+
+console.log("SCORE SUBMIT", {
+    game,
+    score,
+    init_data_received: Boolean(init_data),
+    init_data_length: init_data ? init_data.length : 0,
+    chat_id
+});
+
+After the change:
+1. Syntax-check the HTML JavaScript.
+2. Confirm the request body contains all four fields.
+3. Do not modify backend/database/leaderboard files.
+4. Save the corrected HTML.
+
+Do NOT claim it is fixed until you have verified the exact request body.
