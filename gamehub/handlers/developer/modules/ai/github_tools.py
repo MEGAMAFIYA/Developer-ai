@@ -1,357 +1,159 @@
-"""AI Developer Phase 4 — GitHub Tools.
-
-Features
-────────
-🌐 GitHub Clone   — clone a repo into gamehub/clones/ (preview → confirm → run)
-📤 GitHub Commit  — git add -A + commit with message (preview → confirm → run)
-🚀 GitHub Push    — push current branch (preview → confirm → run)
-📥 GitHub Pull    — pull current branch (preview → confirm → run)
-
-All operations show a preview screen before executing.
-Uses asyncio subprocess so the bot loop is never blocked.
-Git binary must be available in PATH (standard in Replit).
-"""
+"""AI Developer GitHub Manager using the GitHub provider only."""
 
 from __future__ import annotations
 
-import asyncio
 import logging
-from pathlib import Path
 
 from aiogram import Router
 from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import (
-    CallbackQuery,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-    Message,
-)
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 import config as cfg
-from handlers.developer.modules.ai.callbacks import (
-    AI_CANCEL, AI_MENU,
-    AI_GH_MANAGER,
-    AI_GH_CLONE, AI_GH_COMMIT, AI_GH_PUSH, AI_GH_PULL,
-    AI_GH_OK,
-)
-from handlers.developer.modules.ai.menu import ai_menu_keyboard, AI_MENU_TEXT
 from handlers.developer.modules.ai.action_log import log_action
+from handlers.developer.modules.ai.callbacks import (
+    AI_CANCEL, AI_MENU, AI_GH_MANAGER, AI_GH_CLONE, AI_GH_COMMIT,
+    AI_GH_PUSH, AI_GH_PULL, AI_GH_OK,
+)
+from services.project_provider import get_project_provider
 
 logger = logging.getLogger(__name__)
 router = Router(name="dev:ai:github_tools")
 
-_BASE      = Path(__file__).resolve().parents[4]   # gamehub/
-_CLONE_DIR = _BASE / "clones"
-_GIT_ROOT  = _BASE.parent                          # workspace/ (project root)
-_TG_MAX    = 4096
-
-
-# ── FSM States ────────────────────────────────────────────────────────────────
 
 class GHStates(StatesGroup):
-    """Single state group for all GitHub operations.
-
-    'operation' key in FSM data carries: clone | commit | push | pull
-    'input'     key carries: clone URL or commit message
-    """
-    waiting_input = State()   # clone: URL, commit: message
-    confirming    = State()   # push & pull also use this directly
+    waiting_input = State()
+    confirming = State()
 
 
-# ── Guard ─────────────────────────────────────────────────────────────────────
-
-def _is_admin(uid: int) -> bool:
+def _admin(uid: int) -> bool:
     return uid == cfg.config.ADMIN_ID
 
-async def _guard_cb(q: CallbackQuery) -> bool:
-    if _is_admin(q.from_user.id):
+
+async def _guard(q: CallbackQuery | Message) -> bool:
+    if _admin(q.from_user.id):
         return True
-    await q.answer("Ruxsat yo'q.", show_alert=True)
+    if isinstance(q, CallbackQuery):
+        await q.answer("Ruxsat yo'q.", show_alert=True)
+    else:
+        await q.answer("Ruxsat yo'q.")
     return False
 
-async def _guard_msg(m: Message) -> bool:
-    if _is_admin(m.from_user.id):
-        return True
-    await m.answer("Ruxsat yo'q.")
-    return False
 
-
-# ── Keyboards ─────────────────────────────────────────────────────────────────
-
-def _cancel_kb() -> InlineKeyboardMarkup:
+def _cancel() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text="Bekor qilish", callback_data=AI_CANCEL),
     ]])
 
-def _confirm_kb() -> InlineKeyboardMarkup:
+
+def _confirm() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text="Tasdiqlash", callback_data=AI_GH_OK),
         InlineKeyboardButton(text="Bekor qilish", callback_data=AI_CANCEL),
     ]])
 
-def _back_kb() -> InlineKeyboardMarkup:
+
+def _back() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text="AI Menyuga qaytish", callback_data=AI_MENU),
     ]])
 
-def _gh_menu_kb() -> InlineKeyboardMarkup:
+
+def _menu() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="🌐 Clone",   callback_data=AI_GH_CLONE),
-            InlineKeyboardButton(text="📤 Commit",  callback_data=AI_GH_COMMIT),
+            InlineKeyboardButton(text="🌐 Repository", callback_data=AI_GH_CLONE),
+            InlineKeyboardButton(text="📤 Commit", callback_data=AI_GH_COMMIT),
         ],
         [
-            InlineKeyboardButton(text="🚀 Push",    callback_data=AI_GH_PUSH),
-            InlineKeyboardButton(text="📥 Pull",    callback_data=AI_GH_PULL),
+            InlineKeyboardButton(text="🚀 Push", callback_data=AI_GH_PUSH),
+            InlineKeyboardButton(text="📥 Pull", callback_data=AI_GH_PULL),
         ],
-        [InlineKeyboardButton(text="⬅️ AI Menyu",   callback_data=AI_MENU)],
+        [InlineKeyboardButton(text="⬅️ AI Menyu", callback_data=AI_MENU)],
     ])
 
 
-# ── GitHub Manager sub-menu entry point ───────────────────────────────────────
-
 @router.callback_query(lambda c: c.data == AI_GH_MANAGER)
 async def cb_gh_manager_menu(q: CallbackQuery, state: FSMContext) -> None:
-    if not await _guard_cb(q):
+    if not await _guard(q):
         return
     await state.clear()
     await q.answer()
     await q.message.edit_text(
         "🐙 <b>GitHub Manager</b>\n\n"
-        "Loyiha repo bilan ishlash.\n\n"
-        "• Clone — repo klonlash (gamehub/clones/ ga)\n"
-        "• Commit — barcha o'zgarishlarni commit qilish\n"
-        "• Push — origin ga yuborish\n"
-        "• Pull — so'nggi o'zgarishlarni olish\n\n"
-        "Barcha amallar tasdiqlash bilan bajariladi.",
-        reply_markup=_gh_menu_kb(),
-        parse_mode="HTML",
+        "GitHub repository yagona loyiha manbasi.\n"
+        "Repository — konfiguratsiyani ko'rish, Commit — provider orqali commit qilish.\n"
+        "Push/Pull local Git emas, GitHub API holatini yangilash/cache refresh sifatida ishlaydi.",
+        reply_markup=_menu(), parse_mode="HTML",
     )
 
-
-# ── Git helpers ───────────────────────────────────────────────────────────────
-
-async def _git(*args: str, cwd: Path | None = None) -> tuple[int, str, str]:
-    """Run a git command; returns (returncode, stdout, stderr)."""
-    proc = await asyncio.create_subprocess_exec(
-        "git", *args,
-        cwd=str(cwd or _GIT_ROOT),
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    out, err = await proc.communicate()
-    return proc.returncode, out.decode(errors="replace"), err.decode(errors="replace")
-
-
-async def _git_current_branch() -> str:
-    rc, out, _ = await _git("branch", "--show-current")
-    return out.strip() if rc == 0 else "unknown"
-
-
-async def _git_status() -> str:
-    rc, out, err = await _git("status", "--short")
-    if rc != 0:
-        return err.strip() or "git status xatosi"
-    return out.strip() or "Hech qanday o'zgarish yo'q (working tree clean)"
-
-
-async def _git_log_short(n: int = 5) -> str:
-    rc, out, _ = await _git("log", f"--oneline", f"-{n}")
-    return out.strip() if rc == 0 else "log mavjud emas"
-
-
-# ════════════════════════════════════════════════════════════════════════════
-# 🌐 GitHub Clone
-# ════════════════════════════════════════════════════════════════════════════
 
 @router.callback_query(lambda c: c.data == AI_GH_CLONE)
 async def cb_gh_clone_start(q: CallbackQuery, state: FSMContext) -> None:
-    if not await _guard_cb(q):
+    if not await _guard(q):
         return
-    await state.update_data(operation="clone")
-    await state.set_state(GHStates.waiting_input)
     await q.answer()
-    await q.message.edit_text(
-        "<b>GitHub Clone</b>\n\n"
-        "Repo URL yozing:\n\n"
-        "<code>https://github.com/owner/repo.git</code>\n\n"
-        "Klonlash gamehub/clones/ papkasiga amalga oshiriladi.",
-        reply_markup=_cancel_kb(), parse_mode="HTML",
-    )
+    await state.update_data(operation="clone")
+    await state.set_state(GHStates.confirming)
+    label = await get_project_provider().repository_label()
+    await q.message.edit_text(f"<b>Repository</b>\n\nJoriy repo: <code>{label}</code>\n\nYuklab olish/clone Render diskiga bajarilmaydi.", reply_markup=_confirm(), parse_mode="HTML")
+
+
+@router.callback_query(lambda c: c.data == AI_GH_COMMIT)
+async def cb_gh_commit_start(q: CallbackQuery, state: FSMContext) -> None:
+    if not await _guard(q):
+        return
+    await q.answer()
+    await state.update_data(operation="commit")
+    await state.set_state(GHStates.waiting_input)
+    await q.message.edit_text("GitHub commit xabarini yozing. Fayl o'zgarishlari alohida File Tools orqali commit qilinadi.", reply_markup=_cancel(), parse_mode="HTML")
 
 
 @router.message(GHStates.waiting_input)
 async def msg_gh_waiting_input(m: Message, state: FSMContext) -> None:
-    if not await _guard_msg(m):
+    if not await _guard(m):
         return
     data = await state.get_data()
-    op   = data.get("operation", "")
-    inp  = m.text or ""
-
-    if op == "clone":
-        url      = inp.strip()
-        repo_name = url.rstrip("/").split("/")[-1].removesuffix(".git")
-        dest      = _CLONE_DIR / repo_name
-        await state.update_data(input=url)
-        await state.set_state(GHStates.confirming)
-        exists_label = "HA (qayta klon)" if dest.exists() else "YO'Q"
-        await m.answer(
-            f"<b>Clone — preview</b>\n\n"
-            f"URL: <code>{url}</code>\n"
-            f"Papka: <code>clones/{repo_name}</code>\n"
-            f"Mavjud: {exists_label}\n\n"
-            "Tasdiqlaysizmi?",
-            reply_markup=_confirm_kb(), parse_mode="HTML",
-        )
-
-    elif op == "commit":
-        msg_text  = inp.strip()
-        status    = await _git_status()
-        branch    = await _git_current_branch()
-        await state.update_data(input=msg_text)
-        await state.set_state(GHStates.confirming)
-        await m.answer(
-            f"<b>Commit — preview</b>\n\n"
-            f"Branch: <code>{branch}</code>\n"
-            f"Xabar: <code>{msg_text}</code>\n\n"
-            f"O'zgarishlar:\n<pre>{status[:600]}</pre>\n\n"
-            "Tasdiqlaysizmi?",
-            reply_markup=_confirm_kb(), parse_mode="HTML",
-        )
+    await state.update_data(input=(m.text or "").strip())
+    await state.set_state(GHStates.confirming)
+    await m.answer(f"<b>Commit preview</b>\n\nXabar: <code>{(m.text or '').strip()}</code>\n\nTasdiqlaysizmi?", reply_markup=_confirm(), parse_mode="HTML")
 
 
-# ════════════════════════════════════════════════════════════════════════════
-# 📤 GitHub Commit
-# ════════════════════════════════════════════════════════════════════════════
-
-@router.callback_query(lambda c: c.data == AI_GH_COMMIT)
-async def cb_gh_commit_start(q: CallbackQuery, state: FSMContext) -> None:
-    if not await _guard_cb(q):
+@router.callback_query(lambda c: c.data in (AI_GH_PUSH, AI_GH_PULL))
+async def cb_gh_sync_start(q: CallbackQuery, state: FSMContext) -> None:
+    if not await _guard(q):
         return
-    await state.update_data(operation="commit")
-    await state.set_state(GHStates.waiting_input)
-    await q.answer()
-    status = await _git_status()
-    await q.message.edit_text(
-        "<b>GitHub Commit</b>\n\n"
-        f"Joriy holat:\n<pre>{status[:500]}</pre>\n\n"
-        "Commit xabarini yozing:",
-        reply_markup=_cancel_kb(), parse_mode="HTML",
-    )
-
-
-# ════════════════════════════════════════════════════════════════════════════
-# 🚀 GitHub Push
-# ════════════════════════════════════════════════════════════════════════════
-
-@router.callback_query(lambda c: c.data == AI_GH_PUSH)
-async def cb_gh_push_start(q: CallbackQuery, state: FSMContext) -> None:
-    if not await _guard_cb(q):
-        return
-    await state.update_data(operation="push")
+    op = "push" if q.data == AI_GH_PUSH else "pull"
+    await state.update_data(operation=op)
     await state.set_state(GHStates.confirming)
     await q.answer()
-    branch  = await _git_current_branch()
-    recent  = await _git_log_short(3)
-    await q.message.edit_text(
-        f"<b>GitHub Push — preview</b>\n\n"
-        f"Branch: <code>{branch}</code>\n\n"
-        f"So'nggi commitlar:\n<pre>{recent[:500]}</pre>\n\n"
-        "Tasdiqlaysizmi?",
-        reply_markup=_confirm_kb(), parse_mode="HTML",
-    )
+    label = await get_project_provider().repository_label()
+    await q.message.edit_text(f"<b>GitHub {op.upper()} preview</b>\n\n<code>{label}</code>\n\nRender/local Git ishlatilmaydi. Tasdiqlaysizmi?", reply_markup=_confirm(), parse_mode="HTML")
 
 
-# ════════════════════════════════════════════════════════════════════════════
-# 📥 GitHub Pull
-# ════════════════════════════════════════════════════════════════════════════
-
-@router.callback_query(lambda c: c.data == AI_GH_PULL)
-async def cb_gh_pull_start(q: CallbackQuery, state: FSMContext) -> None:
-    if not await _guard_cb(q):
-        return
-    await state.update_data(operation="pull")
-    await state.set_state(GHStates.confirming)
-    await q.answer()
-    branch = await _git_current_branch()
-    await q.message.edit_text(
-        f"<b>GitHub Pull — preview</b>\n\n"
-        f"Branch: <code>{branch}</code>\n"
-        f"Manba: origin/{branch}\n\n"
-        "Mahalliy o'zgarishlar mavjud bo'lsa, konflikt yuzaga kelishi mumkin.\n\n"
-        "Tasdiqlaysizmi?",
-        reply_markup=_confirm_kb(), parse_mode="HTML",
-    )
-
-
-# ════════════════════════════════════════════════════════════════════════════
-# ✅ Confirm dispatcher
-# ════════════════════════════════════════════════════════════════════════════
-
-@router.callback_query(
-    lambda c: c.data == AI_GH_OK,
-    StateFilter(GHStates.confirming),
-)
+@router.callback_query(lambda c: c.data == AI_GH_OK, StateFilter(GHStates.confirming))
 async def cb_gh_confirm(q: CallbackQuery, state: FSMContext) -> None:
-    if not await _guard_cb(q):
+    if not await _guard(q):
         return
     data = await state.get_data()
-    op   = data.get("operation", "")
-    inp  = data.get("input", "")
+    op = data.get("operation", "")
+    inp = data.get("input", "")
     await state.clear()
     await q.answer()
-
-    sent = await q.message.edit_text(
-        f"Bajarilmoqda: <b>{op}</b> ...",
-        parse_mode="HTML",
-    )
-
     try:
-        if op == "clone":
-            url  = inp
-            name = url.rstrip("/").split("/")[-1].removesuffix(".git")
-            dest = _CLONE_DIR / name
-            _CLONE_DIR.mkdir(parents=True, exist_ok=True)
-            if dest.exists():
-                import shutil
-                await asyncio.to_thread(shutil.rmtree, str(dest))
-            rc, out, err = await _git("clone", url, str(dest), cwd=_CLONE_DIR)
-            result = out or err
-
+        provider = get_project_provider()
+        if op in {"push", "pull"}:
+            entries = await provider.refresh()
+            result = f"GitHub cache yangilandi: {len(entries)} ta entry"
+        elif op == "clone":
+            result = f"Repository already configured: {await provider.repository_label()}"
         elif op == "commit":
-            # Configure git user if not set
-            await _git("config", "user.email", "bot@gamehub.local")
-            await _git("config", "user.name", "GameHub Bot")
-            rc_add, _, err_add = await _git("add", "-A")
-            if rc_add != 0:
-                rc, result = rc_add, err_add
-            else:
-                rc, out, err = await _git("commit", "-m", inp)
-                result = out or err
-
-        elif op == "push":
-            branch       = await _git_current_branch()
-            rc, out, err = await _git("push", "origin", branch)
-            result       = out or err
-
-        elif op == "pull":
-            rc, out, err = await _git("pull")
-            result       = out or err
-
+            result = "GitHub Contents API commitlari File Tools amallarida yaratiladi."
         else:
-            rc, result = 1, "Noma'lum amal"
-
-        status_icon = "Bajarildi" if rc == 0 else "Xato"
-        await sent.edit_text(
-            f"<b>{op.upper()} — {status_icon}</b>\n\n"
-            f"<pre>{result[:1500]}</pre>",
-            reply_markup=_back_kb(), parse_mode="HTML",
-        )
-        await log_action(q.from_user.id, f"GH_{op.upper()}", inp[:100],
-                         "ok" if rc == 0 else f"rc={rc}")
+            result = "Noma'lum amal"
+        await q.message.edit_text(f"<b>{op.upper()} — tayyor</b>\n\n<pre>{result[:1500]}</pre>", reply_markup=_back(), parse_mode="HTML")
+        await log_action(q.from_user.id, f"GH_{op.upper()}", inp[:100], "ok")
     except Exception as exc:
-        await sent.edit_text(f"Xato: <code>{exc}</code>",
-                             reply_markup=_back_kb(), parse_mode="HTML")
-        await log_action(q.from_user.id, f"GH_{op.upper()}", inp[:100], f"exc:{exc}")
+        await q.message.edit_text(f"Xato: <code>{exc}</code>", reply_markup=_back(), parse_mode="HTML")
+        await log_action(q.from_user.id, f"GH_{op.upper()}", inp[:100], f"error:{exc}")

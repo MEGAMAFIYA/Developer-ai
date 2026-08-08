@@ -26,15 +26,15 @@ Architecture
 from __future__ import annotations
 
 import logging
+import io
+import posixpath
 import re
-from pathlib import Path
 
 from aiogram import Router, F
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import (
     CallbackQuery,
-    FSInputFile,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     Message,
@@ -70,13 +70,13 @@ from handlers.developer.modules.ai.states import (
 )
 from handlers.developer.modules.ai import services
 from handlers.developer.modules.ai.action_log import log_action
+from services.project_provider import ProjectProviderError, get_project_provider
 
 logger = logging.getLogger(__name__)
 router = Router(name="dev:ai:phase5")
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
-_BASE      = Path(__file__).resolve().parents[3]   # gamehub/
-_GAMES_DIR = _BASE / "webapp" / "games"
+_GAMES_DIR = "webapp/games"
 _TG_MAX    = 4096
 
 # Dynamic callback prefixes (matched with startswith in filters)
@@ -135,16 +135,41 @@ def _esc(s: str) -> str:
     return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
-def _load_game_code(html_file: str) -> str | None:
-    path = _GAMES_DIR / html_file
-    if not path.exists():
+async def _load_game_code(html_file: str) -> str | None:
+    try:
+        file = await get_project_provider().get_file(f"{_GAMES_DIR}/{html_file}")
+    except (FileNotFoundError, ProjectProviderError):
         return None
-    return path.read_text(encoding="utf-8", errors="replace")[:12000]
+    return file.content[:12000]
+
+
+async def _save_game_file(
+    html_file: str,
+    content: str | bytes,
+    commit_message: str,
+) -> int:
+    raw = content.encode("utf-8") if isinstance(content, str) else content
+    await get_project_provider().put_file(
+        f"{_GAMES_DIR}/{html_file}", raw, commit_message,
+    )
+    return len(raw)
+
+
+async def _asset_files() -> list[tuple[str, int]]:
+    prefix = f"{_GAMES_DIR}/"
+    entries = await get_project_provider().list_files(_GAMES_DIR)
+    return sorted(
+        (entry.path.removeprefix(prefix), entry.size)
+        for entry in entries
+        if entry.kind == "file"
+        and "/" not in entry.path.removeprefix(prefix)
+        and posixpath.splitext(entry.path)[1].lower() in _ASSET_EXTS
+    )
 
 
 def _safe_filename(name: str, default_ext: str = ".html") -> str:
     """Strip path components; ensure a safe extension."""
-    name = Path(name).name  # strip any directory component
+    name = posixpath.basename(name.replace("\\", "/"))
     if "." not in name:
         name += default_ext
     return name
@@ -283,17 +308,17 @@ async def msg_code_save_filename(m: Message, state: FSMContext) -> None:
     data = await state.get_data()
     code = data.get("code", "")
     await state.clear()
-    _GAMES_DIR.mkdir(parents=True, exist_ok=True)
-    dest = _GAMES_DIR / filename
     try:
-        dest.write_text(code, encoding="utf-8")
+        size = await _save_game_file(
+            filename, code, f"AI code save: {filename}",
+        )
         await log_action(
             m.from_user.id, "CODE_SAVE", filename,
-            f"size={_fmt_size(dest.stat().st_size)}",
+            f"size={_fmt_size(size)}",
         )
         await m.answer(
             f"✅ <b>{filename}</b> saqlandi!\n"
-            f"O'lcham: {_fmt_size(dest.stat().st_size)}\n"
+            f"O'lcham: {_fmt_size(size)}\n"
             f"Joylashuv: <code>webapp/games/{filename}</code>",
             reply_markup=ai_back_keyboard(),
             parse_mode="HTML",
@@ -391,10 +416,10 @@ async def msg_builder_filename(m: Message, state: FSMContext) -> None:
     game_code   = data.get("game_code", "")
     description = data.get("description", "")
     await state.clear()
-    _GAMES_DIR.mkdir(parents=True, exist_ok=True)
-    dest = _GAMES_DIR / filename
     try:
-        dest.write_text(game_code, encoding="utf-8")
+        size = await _save_game_file(
+            filename, game_code, f"AI game builder: {filename}",
+        )
         slug = re.sub(r"[^a-z0-9_]", "_", filename.replace(".html", "").lower())
         await add_game(
             slug=slug,
@@ -406,11 +431,11 @@ async def msg_builder_filename(m: Message, state: FSMContext) -> None:
         )
         await log_action(
             m.from_user.id, "GAME_BUILD", filename,
-            f"size={_fmt_size(dest.stat().st_size)}",
+            f"size={_fmt_size(size)}",
         )
         await m.answer(
             f"✅ <b>{filename}</b> saqlandi!\n\n"
-            f"O'lcham: {_fmt_size(dest.stat().st_size)}\n"
+            f"O'lcham: {_fmt_size(size)}\n"
             f"Slug: <code>{slug}</code>\n\n"
             "⚠️ O'yin hozir <b>nofaol</b>. "
             "Faollashtirish: Developer → O'yinlar → toggle.",
@@ -461,7 +486,7 @@ async def cb_gameplay_select(q: CallbackQuery, state: FSMContext) -> None:
     if not game:
         await q.answer("O'yin topilmadi.", show_alert=True)
         return
-    code = _load_game_code(game["html_file"])
+    code = await _load_game_code(game["html_file"])
     if code is None:
         await q.answer(f"Fayl topilmadi: {game['html_file']}", show_alert=True)
         return
@@ -527,15 +552,16 @@ async def cb_gameplay_save(q: CallbackQuery, state: FSMContext) -> None:
         await state.clear()
         return
     await state.clear()
-    dest = _GAMES_DIR / html_file
     try:
-        dest.write_text(new_code, encoding="utf-8")
-        await log_action(q.from_user.id, "GAMEPLAY_SAVE", html_file, f"size={_fmt_size(dest.stat().st_size)}")
+        size = await _save_game_file(
+            html_file, new_code, f"AI gameplay save: {html_file}",
+        )
+        await log_action(q.from_user.id, "GAMEPLAY_SAVE", html_file, f"size={_fmt_size(size)}")
         await q.answer("✅ Saqlandi!")
         await q.message.edit_text(
             f"✅ <b>{game_name}</b> muvaffaqiyatli yangilandi!\n"
             f"Fayl: <code>webapp/games/{html_file}</code>\n"
-            f"O'lcham: {_fmt_size(dest.stat().st_size)}",
+            f"O'lcham: {_fmt_size(size)}",
             reply_markup=ai_back_keyboard(),
             parse_mode="HTML",
         )
@@ -581,7 +607,7 @@ async def cb_design_select(q: CallbackQuery, state: FSMContext) -> None:
     if not game:
         await q.answer("O'yin topilmadi.", show_alert=True)
         return
-    code = _load_game_code(game["html_file"])
+    code = await _load_game_code(game["html_file"])
     if code is None:
         await q.answer(f"Fayl topilmadi: {game['html_file']}", show_alert=True)
         return
@@ -649,15 +675,16 @@ async def cb_design_save(q: CallbackQuery, state: FSMContext) -> None:
         await state.clear()
         return
     await state.clear()
-    dest = _GAMES_DIR / html_file
     try:
-        dest.write_text(new_code, encoding="utf-8")
-        await log_action(q.from_user.id, "DESIGN_SAVE", html_file, f"size={_fmt_size(dest.stat().st_size)}")
+        size = await _save_game_file(
+            html_file, new_code, f"AI design save: {html_file}",
+        )
+        await log_action(q.from_user.id, "DESIGN_SAVE", html_file, f"size={_fmt_size(size)}")
         await q.answer("✅ Saqlandi!")
         await q.message.edit_text(
             f"✅ <b>{game_name}</b> dizayni muvaffaqiyatli yangilandi!\n"
             f"Fayl: <code>webapp/games/{html_file}</code>\n"
-            f"O'lcham: {_fmt_size(dest.stat().st_size)}",
+            f"O'lcham: {_fmt_size(size)}",
             reply_markup=ai_back_keyboard(),
             parse_mode="HTML",
         )
@@ -767,17 +794,17 @@ async def msg_asset_filename(m: Message, state: FSMContext) -> None:
     match = re.search(r"```(?:svg|xml)?\s*\n?(.*?)\n?```", svg_code, re.DOTALL | re.IGNORECASE)
     clean = match.group(1).strip() if match else svg_code.strip()
 
-    _GAMES_DIR.mkdir(parents=True, exist_ok=True)
-    dest = _GAMES_DIR / filename
     try:
-        dest.write_text(clean, encoding="utf-8")
+        size = await _save_game_file(
+            filename, clean, f"AI asset save: {filename}",
+        )
         await log_action(
             m.from_user.id, "ASSET_SAVE", filename,
-            f"size={_fmt_size(dest.stat().st_size)}",
+            f"size={_fmt_size(size)}",
         )
         await m.answer(
             f"✅ <b>{filename}</b> saqlandi!\n"
-            f"O'lcham: {_fmt_size(dest.stat().st_size)}\n"
+            f"O'lcham: {_fmt_size(size)}\n"
             f"Joylashuv: <code>webapp/games/{filename}</code>",
             reply_markup=ai_back_keyboard(),
             parse_mode="HTML",
@@ -800,13 +827,8 @@ async def cb_image_discard(q: CallbackQuery, state: FSMContext) -> None:
 # 6. AI Assets Manager  (AI_ASSETS)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _list_assets() -> list[str]:
-    if not _GAMES_DIR.exists():
-        return []
-    return sorted(
-        f.name for f in _GAMES_DIR.iterdir()
-        if f.is_file() and f.suffix.lower() in _ASSET_EXTS
-    )
+async def _list_assets() -> list[str]:
+    return [name for name, _size in await _asset_files()]
 
 
 def _assets_kb(assets: list[str]) -> InlineKeyboardMarkup:
@@ -832,7 +854,7 @@ async def cb_ai_assets(q: CallbackQuery) -> None:
     if not await _guard(q):
         return
     await q.answer()
-    assets = _list_assets()
+    assets = await _list_assets()
     text = (
         f"📦 <b>AI Assets Manager</b> ({len(assets)} fayl)\n\n"
         f"<code>webapp/games/</code>\n"
@@ -848,8 +870,9 @@ async def cb_asset_del_confirm(q: CallbackQuery, state: FSMContext) -> None:
     if not await _guard(q):
         return
     filename = q.data[len(_ASSETS_DEL):]
-    path = _GAMES_DIR / filename
-    if not path.exists():
+    try:
+        file = await get_project_provider().get_file(f"{_GAMES_DIR}/{filename}")
+    except (FileNotFoundError, ProjectProviderError):
         await q.answer("Fayl topilmadi.", show_alert=True)
         return
     await q.answer()
@@ -857,7 +880,7 @@ async def cb_asset_del_confirm(q: CallbackQuery, state: FSMContext) -> None:
     await state.update_data(filename=filename)
     await q.message.edit_text(
         f"🗑 <b>O'chirishni tasdiqlang</b>\n\n"
-        f"Fayl: <code>{filename}</code> ({_fmt_size(path.stat().st_size)})\n\n"
+        f"Fayl: <code>{filename}</code> ({_fmt_size(file.size)})\n\n"
         "⚠️ Bu amalni qaytarib bo'lmaydi!",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
             InlineKeyboardButton(text="🗑 Ha, o'chir", callback_data=AI_ASSETS_DEL_OK),
@@ -877,16 +900,18 @@ async def cb_asset_del_ok(q: CallbackQuery, state: FSMContext) -> None:
     data     = await state.get_data()
     filename = data.get("filename", "")
     await state.clear()
-    path = _GAMES_DIR / filename
     try:
-        size = path.stat().st_size if path.exists() else 0
-        path.unlink(missing_ok=True)
+        file = await get_project_provider().get_file(f"{_GAMES_DIR}/{filename}")
+        await get_project_provider().delete_file(
+            file.path, f"AI asset delete: {filename}", sha=file.sha,
+        )
+        size = file.size
         await log_action(q.from_user.id, "ASSET_DELETE", filename, f"size={size}")
         await q.answer(f"✅ {filename} o'chirildi")
     except Exception as exc:
         await q.answer(f"❌ Xato: {exc}", show_alert=True)
         return
-    assets = _list_assets()
+    assets = await _list_assets()
     await q.message.edit_text(
         f"📦 <b>AI Assets Manager</b> ({len(assets)} fayl)\n<code>webapp/games/</code>",
         reply_markup=_assets_kb(assets),
@@ -901,7 +926,7 @@ async def cb_asset_del_ok(q: CallbackQuery, state: FSMContext) -> None:
 async def cb_asset_del_no(q: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
     await q.answer("Bekor")
-    assets = _list_assets()
+    assets = await _list_assets()
     await q.message.edit_text(
         f"📦 <b>AI Assets Manager</b> ({len(assets)} fayl)",
         reply_markup=_assets_kb(assets),
@@ -933,24 +958,28 @@ async def msg_asset_upload(m: Message, state: FSMContext) -> None:
     await state.clear()
     doc      = m.document
     filename = doc.file_name or "asset"
-    ext      = Path(filename).suffix.lower()
+    filename = posixpath.basename(filename.replace("\\", "/"))
+    ext      = posixpath.splitext(filename)[1].lower()
     if ext not in _ASSET_EXTS:
         await m.answer(
             f"⛔ Ruxsat etilgan formatlar: {' '.join(sorted(_ASSET_EXTS))}",
             reply_markup=ai_back_keyboard(),
         )
         return
-    _GAMES_DIR.mkdir(parents=True, exist_ok=True)
-    dest = _GAMES_DIR / filename
     try:
-        await m.bot.download(doc, destination=str(dest))
+        buffer = io.BytesIO()
+        await m.bot.download(doc, destination=buffer)
+        raw = buffer.getvalue()
+        size = await _save_game_file(
+            filename, raw, f"AI asset upload: {filename}",
+        )
         await log_action(
             m.from_user.id, "ASSET_UPLOAD", filename,
-            f"size={_fmt_size(dest.stat().st_size)}",
+            f"size={_fmt_size(size)}",
         )
         await m.answer(
             f"✅ <b>{filename}</b> muvaffaqiyatli yuklandi!\n"
-            f"O'lcham: {_fmt_size(dest.stat().st_size)}",
+            f"O'lcham: {_fmt_size(size)}",
             reply_markup=ai_back_keyboard(),
             parse_mode="HTML",
         )
@@ -1113,7 +1142,7 @@ async def cb_test_file_select(q: CallbackQuery) -> None:
     if not game:
         await q.answer("O'yin topilmadi.", show_alert=True)
         return
-    code = _load_game_code(game["html_file"])
+    code = await _load_game_code(game["html_file"])
     if code is None:
         await q.answer("Fayl topilmadi.", show_alert=True)
         return

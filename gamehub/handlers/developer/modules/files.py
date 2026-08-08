@@ -72,13 +72,15 @@ async def _guard(q: CallbackQuery) -> bool:
 
 # ── Keyboards ─────────────────────────────────────────────────────────────────
 
-def _files_keyboard(files: list[str]) -> InlineKeyboardMarkup:
+def _files_keyboard(files: list[dict]) -> InlineKeyboardMarkup:
     rows = []
-    for name in files:
+    for file in files:
+        name = file["path"]
+        label = file["name"]
         rows.append([
-            InlineKeyboardButton(text=f"📄 {name}",        callback_data=f"{_VIEW_PFX}{name}"),
-            InlineKeyboardButton(text="📥",                callback_data=f"{_DL_PFX}{name}"),
-            InlineKeyboardButton(text="🗑",                callback_data=f"{_DEL_PFX}{name}"),
+            InlineKeyboardButton(text=f"📄 {label}", callback_data=f"{_VIEW_PFX}{name}"),
+            InlineKeyboardButton(text="📥", callback_data=f"{_DL_PFX}{name}"),
+            InlineKeyboardButton(text="🗑", callback_data=f"{_DEL_PFX}{name}"),
         ])
     rows.append([
         InlineKeyboardButton(text="📤 Fayl yuklash", callback_data="dev:files:upload"),

@@ -127,6 +127,53 @@ class GitHubProjectProvider:
         settings = await self._settings()
         return f"{settings['owner']}/{settings['repo']}@{settings['branch']}"
 
+    async def recent_commits(self, limit: int = 10) -> list[dict]:
+        """Return recent commits from the configured branch."""
+        session, settings = await self._session()
+        try:
+            status, body = await self._request(
+                session,
+                "GET",
+                self._url(settings, "commits"),
+                params={"sha": settings["branch"], "per_page": str(max(1, min(limit, 50)))},
+            )
+        finally:
+            await session.close()
+        if status != 200:
+            raise ProjectProviderError(f"GitHub commits HTTP {status}: {body[:400]}")
+        try:
+            payload = json.loads(body)
+            return payload if isinstance(payload, list) else []
+        except (ValueError, TypeError) as exc:
+            raise ProjectProviderError(f"GitHub commits javobi noto'g'ri: {exc}") from exc
+
+    async def repository_status(self) -> dict:
+        """Return branch and repository metadata without inspecting local disk."""
+        session, settings = await self._session()
+        try:
+            status, body = await self._request(
+                session,
+                "GET",
+                self._url(settings, ""),
+            )
+        finally:
+            await session.close()
+        if status != 200:
+            raise ProjectProviderError(f"GitHub repository HTTP {status}: {body[:400]}")
+        try:
+            payload = json.loads(body)
+        except (ValueError, TypeError) as exc:
+            raise ProjectProviderError(f"GitHub repository javobi noto'g'ri: {exc}") from exc
+        return {
+            "owner": settings["owner"],
+            "repo": settings["repo"],
+            "branch": settings["branch"],
+            "default_branch": payload.get("default_branch", settings["branch"]),
+            "html_url": payload.get("html_url", ""),
+            "open_issues": payload.get("open_issues_count", 0),
+            "updated_at": payload.get("updated_at", ""),
+        }
+
     async def clear_cache(self) -> None:
         self._tree_cache = None
         self._file_cache.clear()

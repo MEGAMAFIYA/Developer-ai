@@ -242,7 +242,7 @@ async def cb_file_create_confirm(q: CallbackQuery, state: FSMContext) -> None:
     if not await _guard_cb(q):
         return
     data    = await state.get_data()
-    path    = Path(data["path"])
+    path    = data["path"]
     content = data["content"]
     await state.clear()
     await q.answer()
