@@ -47,6 +47,29 @@ async def save_image(bot: Bot, file_id: str, slug: str, ext: str) -> Path:
     return dest
 
 
+def save_html_bytes(slug: str, content: bytes) -> Path:
+    """Persist HTML bytes in the runtime WebApp directory.
+
+    This is a runtime-serving copy only. Developer/AI project-source reads and
+    writes go through the GitHub project provider.
+    """
+    ensure_dirs()
+    dest = GAMES_DIR / f"{slug}.html"
+    dest.write_bytes(content)
+    logger.info("Runtime HTML saved: %s", dest)
+    return dest
+
+
+def save_image_bytes(slug: str, ext: str, content: bytes) -> Path:
+    """Persist image bytes in the runtime asset directory."""
+    ensure_dirs()
+    ext = ext if ext.startswith(".") else f".{ext}"
+    dest = ASSETS_DIR / f"{slug}{ext}"
+    dest.write_bytes(content)
+    logger.info("Runtime image saved: %s", dest)
+    return dest
+
+
 def ext_from_mime(mime: str | None, fallback: str = ".jpg") -> str:
     """Return a file extension for the given MIME type."""
     return _MIME_EXT.get(mime or "", fallback)

@@ -11,6 +11,7 @@ Steps
 7. Preview card → inline buttons: ✅ Saqlash | ✏️ Tahrirlash | ❌ Bekor
 """
 
+import io
 import logging
 from pathlib import Path
 
@@ -29,7 +30,12 @@ from aiogram.types import (
 
 from config import config
 from database.global_db import add_game, get_game_by_slug
-from services.upload_service import save_html, save_image, ext_from_mime, image_db_url
+from services.upload_service import (
+    ext_from_mime,
+    image_db_url,
+    save_html_bytes,
+    save_image_bytes,
+)
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -100,6 +106,14 @@ async def _send_preview(message: Message, data: dict, bot: Bot) -> None:
         )
     else:
         await message.answer(caption, reply_markup=keyboard, parse_mode="HTML")
+
+
+async def _download_telegram_bytes(bot: Bot, file_id: str) -> bytes:
+    """Download a Telegram file once, retaining the upload in memory."""
+    buffer = io.BytesIO()
+    file_info = await bot.get_file(file_id)
+    await bot.download_file(file_info.file_path, destination=buffer)
+    return buffer.getvalue()
 
 
 # ── /yangi entry ─────────────────────────────────────────────────────────────
@@ -316,11 +330,12 @@ async def cb_save(callback: CallbackQuery, state: FSMContext, bot: Bot) -> None:
     image_ext = data["image_ext"]
 
     try:
-        # 1. Download and persist the HTML file
-        await save_html(bot, data["html_file_id"], slug)
-
-        # 2. Download and persist the thumbnail image
-        await save_image(bot, data["image_file_id"], slug, image_ext)
+        # 1. Download both Telegram uploads once. The local copies below are
+        # runtime WebApp assets; GitHub receives the same in-memory bytes.
+        html_bytes = await _download_telegram_bytes(bot, data["html_file_id"])
+        image_bytes = await _download_telegram_bytes(bot, data["image_file_id"])
+        save_html_bytes(slug, html_bytes)
+        save_image_bytes(slug, image_ext, image_bytes)
 
         # 3. Insert into Global DB
         img_url  = image_db_url(slug, image_ext)
@@ -342,10 +357,12 @@ async def cb_save(callback: CallbackQuery, state: FSMContext, bot: Bot) -> None:
             logger.info("[GITHUB] AUTO_GITHUB_PUSH=False — push o'tkazib yuborildi")
         if config.AUTO_GITHUB_PUSH:
             from services.github_service import push_game_files
-            from services.upload_service import GAMES_DIR, ASSETS_DIR
-            _html_path  = GAMES_DIR  / f"{slug}.html"
-            _image_path = ASSETS_DIR / f"{slug}{image_ext}"
-            gh_ok, gh_msg = await push_game_files(slug, _html_path, _image_path)
+            gh_ok, gh_msg = await push_game_files(
+                slug,
+                html_bytes,
+                image_bytes,
+                image_ext,
+            )
             if gh_ok:
                 logger.info("GitHub push OK: slug=%s | %s", slug, gh_msg)
                 gh_status_line = f"\n🐙 GitHub: ✅ push qilindi"
