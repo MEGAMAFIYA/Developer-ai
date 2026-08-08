@@ -3,8 +3,7 @@
 import logging
 from pathlib import Path
 
-from fastapi import FastAPI, Request
-from fastapi.exceptions import RequestValidationError
+from fastapi import FastAPI
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,19 +13,6 @@ from api.routes import scores as scores_router
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Mini O'yinlar", version="2.0.0", docs_url=None, redoc_url=None)
-
-
-@app.exception_handler(RequestValidationError)
-async def diagnostic_validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
-    body = await request.body()
-    body_text = body.decode("utf-8", errors="replace")
-    logger.error(
-        "422 VALIDATION ERROR\nerrors = %s\nbody = %s",
-        exc.errors(),
-        body_text,
-    )
-    return JSONResponse(status_code=422, content={"detail": exc.errors()})
-
 
 app.add_middleware(
     CORSMiddleware,

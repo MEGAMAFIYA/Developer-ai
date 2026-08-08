@@ -43,3 +43,32 @@ async def push_game_files(
     except Exception as exc:
         logger.exception("[GITHUB API] Unexpected error: %s", exc)
         return False, f"GitHub API kutilmagan xatosi: {exc}"
+
+
+async def push_game_html(
+    slug: str,
+    html_content: bytes,
+) -> tuple[bool, str]:
+    """Update one existing game's HTML through the shared project provider."""
+    commit_message = f"Update game: {slug}"
+    path = f"webapp/games/{slug}.html"
+    try:
+        provider = get_project_provider()
+        try:
+            current_content, _ = await provider.get_file_bytes(path)
+        except FileNotFoundError:
+            current_content = None
+
+        if current_content == html_content:
+            logger.info("[GITHUB API] HTML unchanged: slug=%s", slug)
+            return True, f"{commit_message} | o'zgarish yo'q"
+
+        await provider.put_file(path, html_content, commit_message)
+        logger.info("[GITHUB API] HTML update OK: slug=%s", slug)
+        return True, commit_message
+    except ProjectProviderError as exc:
+        logger.error("[GITHUB API] HTML update failed: %s", exc)
+        return False, str(exc)
+    except Exception as exc:
+        logger.exception("[GITHUB API] Unexpected HTML update error: %s", exc)
+        return False, f"GitHub API kutilmagan xatosi: {exc}"

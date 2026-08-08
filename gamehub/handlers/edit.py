@@ -494,9 +494,31 @@ async def cb_save(callback: CallbackQuery, state: FSMContext, bot: Bot) -> None:
 
     try:
         # 1. Replace HTML on disk if a new file was uploaded
+        gh_status_line = ""
         if data.get("edit_html_file_id"):
-            await save_html(bot, data["edit_html_file_id"], slug)
+            html_path = await save_html(bot, data["edit_html_file_id"], slug)
             logger.info("Replaced HTML for slug=%s", slug)
+
+            # Match /yangi: keep the runtime save, then persist the same HTML
+            # through the shared GitHub project provider when enabled.
+            if config.AUTO_GITHUB_PUSH:
+                from services.github_service import push_game_html
+
+                gh_ok, gh_msg = await push_game_html(slug, html_path.read_bytes())
+                if gh_ok:
+                    logger.info("GitHub HTML update OK: slug=%s | %s", slug, gh_msg)
+                    gh_status_line = "\n🐙 GitHub: ✅ HTML push qilindi"
+                else:
+                    logger.error("GitHub HTML update FAILED: slug=%s | %s", slug, gh_msg)
+                    gh_status_line = "\n🐙 GitHub: ⚠️ HTML push amalga oshmadi (o'yin saqlandi)"
+                    await callback.message.answer(
+                        f"⚠️ <b>GitHub HTML push xatosi</b>\n\n"
+                        f"O'yin muvaffaqiyatli saqlandi, lekin HTML GitHub'ga push qilinmadi.\n\n"
+                        f"<code>{gh_msg[:300]}</code>",
+                        parse_mode="HTML",
+                    )
+            else:
+                logger.info("[GITHUB] AUTO_GITHUB_PUSH=False — HTML push o'tkazib yuborildi")
 
         # 2. Replace image on disk if a new image was uploaded
         if data.get("edit_image_file_id") and data.get("edit_image_ext"):
@@ -533,7 +555,8 @@ async def cb_save(callback: CallbackQuery, state: FSMContext, bot: Bot) -> None:
             f"🏷 Teglar: {game.get('tags') or '—'}\n"
             f"📄 HTML: <code>{game['html_file']}</code>\n"
             f"👁 Ko'rinish: {active_str}\n\n"
-            f"Ko'rish: /oyinlar {game['slug']}",
+            f"Ko'rish: /oyinlar {game['slug']}"
+            f"{gh_status_line}",
             parse_mode="HTML",
         )
 

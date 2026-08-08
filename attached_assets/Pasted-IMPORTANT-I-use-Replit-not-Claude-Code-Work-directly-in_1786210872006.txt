@@ -1,0 +1,168 @@
+IMPORTANT: I use Replit, not Claude Code. Work directly in the current Replit project.
+
+TASK:
+Fix the existing /tuzatish (edit game) workflow so that when an existing game's HTML is replaced, the new HTML is also committed and pushed to the same GitHub repository used by the project.
+
+CURRENT BUG:
+- /yangi orqali yangi game qo'shilganda the game appears in GitHub correctly.
+- /tuzatish orqali existing game's HTML is replaced successfully on the running Render instance.
+- However, the edited HTML is NOT being committed/pushed to GitHub.
+- Therefore, after Render redeploy/restart, the old HTML from GitHub comes back and overwrites the edited version.
+- Render deployment itself is not the root problem. The problem is that /tuzatish does not persist the edited HTML to GitHub.
+
+GOAL:
+Make /tuzatish persist the edited game HTML to GitHub exactly like /yangi does.
+
+STRICT RULES:
+1. Do NOT modify the score API.
+2. Do NOT modify leaderboard/database logic.
+3. Do NOT modify /yangi behavior.
+4. Do NOT modify game HTML files directly except through the existing /tuzatish workflow.
+5. Do NOT modify Mini App routing.
+6. Do NOT modify BotFather launch links.
+7. Do NOT modify callbacks or FSM unless absolutely required for the existing /tuzatish flow.
+8. Do NOT redesign the GitHub module.
+9. Reuse the EXISTING GitHub service/helper already used by /yangi.
+10. Preserve backward compatibility.
+11. Make the smallest possible change.
+
+FIRST: INSPECT BEFORE EDITING
+Trace the complete flows:
+
+A) /yangi
+- Find the handler for /yangi.
+- Find where the generated/uploaded HTML is saved.
+- Find where GitHub commit/add/push happens.
+- Identify the exact existing GitHub helper/service/function used.
+
+B) /tuzatish
+- Find the handler for /tuzatish.
+- Find the exact code that receives/replaces the HTML.
+- Find where it saves:
+  gamehub/webapp/games/<slug>.html
+- Check whether GitHub commit/push is missing.
+- Check whether it uses a different path or filename.
+- Check whether GitHub push is attempted but silently skipped.
+- Check whether the GitHub service receives the correct repository path and branch.
+
+IMPORTANT:
+Do NOT assume the problem.
+Show the exact difference between the /yangi GitHub persistence flow and the /tuzatish flow before changing code.
+
+EXPECTED BEHAVIOR AFTER FIX:
+
+When admin uses:
+
+Developer → game → /tuzatish
+
+and replaces:
+
+gamehub/webapp/games/<slug>.html
+
+the system must:
+
+1. Save the new HTML locally using the existing upload/save mechanism.
+2. Use the existing GitHub integration.
+3. Commit the changed HTML file to the configured repository.
+4. Push the commit to the repository's currently configured branch.
+5. Keep the exact same path:
+   gamehub/webapp/games/<slug>.html
+6. Do not create a duplicate file.
+7. Do not modify unrelated files.
+8. Keep the existing success/error messages and user flow unless a tiny change is necessary.
+9. If GitHub is not configured or push fails, do NOT falsely report success. Log the real error and preserve the existing local-save behavior.
+10. If the file has no actual Git diff, do not create unnecessary commits.
+
+VERY IMPORTANT:
+Do not create a second GitHub implementation.
+
+Reuse the same GitHub commit/push helper/service that /yangi already uses.
+
+Also inspect whether /tuzatish currently calls something like:
+- upload_service
+- save_html
+- replace_html
+- update_game
+- github_service
+- commit
+- push
+or similar.
+
+If /yangi has a reusable helper, call that helper from /tuzatish rather than duplicating its code.
+
+GITHUB PATH CHECK:
+The GitHub path must correspond exactly to the deployed project path:
+
+gamehub/webapp/games/<slug>.html
+
+For example:
+
+gamehub/webapp/games/daraxt-kesuvchi.html
+
+or:
+
+gamehub/webapp/games/qanot-parvozi.html
+
+Do not accidentally push:
+- /games/<slug>.html
+- gamehub/games/<slug>.html
+- another generated copy
+- a temporary upload path
+
+VERIFICATION REQUIRED:
+
+After editing:
+
+1. Run syntax/import checks for every modified Python file.
+2. Trace /yangi and verify its behavior is unchanged.
+3. Trace /tuzatish and verify:
+   local HTML save
+   → GitHub commit
+   → GitHub push
+4. Verify the exact GitHub repository path and branch.
+5. If possible in Replit, perform a safe test using an existing game and confirm:
+   - local file changes
+   - git status shows the correct HTML file
+   - commit contains only the intended HTML file
+   - push succeeds
+6. Do NOT modify the actual game logic while testing.
+7. Do NOT change score/leaderboard/database code.
+8. Do NOT change /yangi.
+
+IMPORTANT ABOUT RENDER:
+Do not "fix" this by changing Render settings.
+
+The correct architecture is:
+
+/tuzatish
+    ↓
+save gamehub/webapp/games/<slug>.html
+    ↓
+existing GitHub service
+    ↓
+git add exact HTML file
+    ↓
+commit
+    ↓
+push
+    ↓
+Render redeploy pulls the new GitHub version
+
+The final result must make the GitHub repository the persistent source of truth for edited game HTML.
+
+FINAL REPORT:
+After the fix, report:
+
+- Root cause
+- Exact files changed
+- Exact existing GitHub helper reused
+- Exact HTML path committed
+- Branch pushed to
+- Whether /yangi was untouched
+- Whether score/database/leaderboard code was untouched
+- Verification results
+- Any remaining limitation
+
+DO NOT make unrelated improvements.
+DO NOT refactor unrelated code.
+DO NOT modify other Developer Mode modules.
