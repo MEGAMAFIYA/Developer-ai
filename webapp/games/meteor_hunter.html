@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
 <title>Meteor Hunter</title>
 <style>
   * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; user-select:none; }
@@ -156,7 +157,6 @@
       <div class="row"><span>Eng yaxshi natija:</span><b id="finalBest">0</b></div>
     </div>
     <div class="newBest hidden" id="newBestLabel">🏆 YANGI REKORD!</div>
-    <button class="btn" id="submitScoreBtn">🏆 Natijani yuborish</button>
     <div id="submitStatus" class="submitStatus"></div>
     <button class="btn magenta" id="restartBtn">↻ Qayta o'ynash</button>
     <button class="btn ghost" id="menuBtn">🏠 Bosh menyu</button>
@@ -419,77 +419,72 @@ function getChatIdFromUrl(){
   return 0;
 }
 
-const submitScoreBtn = document.getElementById('submitScoreBtn');
 const submitStatus = document.getElementById('submitStatus');
 let scoreSubmitted = false;
+let scoreSubmitting = false;
 
 function resetScoreSubmitUI(){
   scoreSubmitted = false;
-  if(submitScoreBtn){
-    submitScoreBtn.disabled = false;
-    submitScoreBtn.textContent = "🏆 Natijani yuborish";
-  }
+  scoreSubmitting = false;
   if(submitStatus) submitStatus.textContent = '';
 }
 
-if(submitScoreBtn){
-  submitScoreBtn.addEventListener('click', async ()=>{
-    if(scoreSubmitted) return;
+async function submitScore(){
+  if(scoreSubmitted || scoreSubmitting) return;
 
-    const initData = tg?.initData || '';
-    if(!tg || !initData || !initData.trim()){
-      if(submitStatus) submitStatus.textContent = "Telegram ma'lumotlari olinmadi. O'yinni Telegram Mini App ichidan oching.";
+  const initData = tg?.initData || '';
+  if(!tg || !initData || !initData.trim()){
+    if(submitStatus) submitStatus.textContent = "Telegram ma'lumotlari olinmadi. O'yinni Telegram Mini App ichidan oching.";
+    return;
+  }
+
+  const finalScore = Number(score);
+  const chatId = getChatIdFromUrl();
+
+  scoreSubmitting = true;
+  if(submitStatus) submitStatus.textContent = "⏳ Natija yuborilmoqda...";
+
+  console.log('SCORE SUBMIT', {
+    game: GAME_SLUG,
+    score: finalScore,
+    init_data_received: Boolean(initData),
+    init_data_length: initData.length,
+    chat_id: chatId
+  });
+
+  try{
+    const response = await fetch('/api/scores', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        game: GAME_SLUG,
+        score: finalScore,
+        init_data: initData,
+        chat_id: chatId
+      })
+    });
+
+    if(!response.ok){
+      if(submitStatus){
+        if(response.status === 401){
+          submitStatus.textContent = "❌ Telegram ma'lumotlari tasdiqlanmadi";
+        } else if(response.status === 422){
+          submitStatus.textContent = "❌ Natija ma'lumotlari noto'g'ri";
+        } else {
+          submitStatus.textContent = "❌ Natijani yuborib bo'lmadi";
+        }
+      }
+      scoreSubmitting = false;
       return;
     }
 
-    const finalScore = Number(score);
-    const chatId = getChatIdFromUrl();
-
     scoreSubmitted = true;
-    submitScoreBtn.disabled = true;
-    submitScoreBtn.textContent = "⏳ Yuborilmoqda...";
-    if(submitStatus) submitStatus.textContent = '';
-
-    console.log('SCORE SUBMIT', {
-      game: GAME_SLUG,
-      score: finalScore,
-      init_data_received: Boolean(initData),
-      init_data_length: initData.length,
-      chat_id: chatId
-    });
-
-    try{
-      const response = await fetch('/api/scores', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          game: GAME_SLUG,
-          score: finalScore,
-          init_data: initData,
-          chat_id: chatId
-        })
-      });
-
-      if(!response.ok){
-        if(response.status === 401){
-          submitScoreBtn.textContent = "❌ Telegram ma'lumotlari tasdiqlanmadi";
-        } else if(response.status === 422){
-          submitScoreBtn.textContent = "❌ Natija ma'lumotlari noto'g'ri";
-        } else {
-          submitScoreBtn.textContent = "❌ Natijani yuborib bo'lmadi";
-        }
-        scoreSubmitted = false;
-        submitScoreBtn.disabled = false;
-        return;
-      }
-
-      submitScoreBtn.textContent = "✅ Natija yuborildi";
-    } catch(err){
-      submitScoreBtn.textContent = "❌ Natijani yuborib bo'lmadi";
-      scoreSubmitted = false;
-      submitScoreBtn.disabled = false;
-    }
-  });
+    scoreSubmitting = false;
+    if(submitStatus) submitStatus.textContent = "✅ Natija yuborildi";
+  } catch(err){
+    if(submitStatus) submitStatus.textContent = "❌ Natijani yuborib bo'lmadi";
+    scoreSubmitting = false;
+  }
 }
 
 function startGame(){
@@ -521,6 +516,7 @@ function endGame(){
   newBestLabel.classList.toggle('hidden', !isNew);
   resetScoreSubmitUI();
   gameOverOverlay.classList.remove('hidden');
+  submitScore();
 }
 
 function updateLivesHUD(){ hudLives.textContent = '♥'.repeat(Math.max(0,lives)) + '♡'.repeat(Math.max(0,3-lives)); }
