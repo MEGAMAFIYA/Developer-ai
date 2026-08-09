@@ -29,6 +29,17 @@ router = Router(name="dev:github")
 _TG_MAX = 4096
 _GAMES_DIR = "webapp/games"
 _GAME_SLUG_RE = re.compile(r"^[a-z0-9_-]+$")
+_SYSTEM_GAME_STEMS = frozenset({
+    "404",
+    "500",
+    "favicon",
+    "health",
+    "index",
+    "manifest",
+    "robots",
+    "service-worker",
+    "sw",
+})
 
 
 def _is_admin(uid: int) -> bool:
@@ -81,7 +92,11 @@ def _github_game_slugs(entries) -> set[str]:
         if "/" in filename or not filename.lower().endswith(".html"):
             continue
         slug = filename[:-5]
-        if _GAME_SLUG_RE.fullmatch(slug):
+        if (
+            _GAME_SLUG_RE.fullmatch(slug)
+            and slug.lower() not in _SYSTEM_GAME_STEMS
+            and not slug.startswith(("_", "."))
+        ):
             slugs.add(slug)
     return slugs
 
