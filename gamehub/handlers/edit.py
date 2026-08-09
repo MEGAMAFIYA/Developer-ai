@@ -12,8 +12,6 @@ Steps (each shows current value + ✅ O'tkazish / ❌ Bekor qilish buttons):
 """
 
 import logging
-from pathlib import Path
-
 from aiogram import Router, Bot, F
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
@@ -29,14 +27,12 @@ from aiogram.types import (
 from config import config
 from database.global_db import get_all_games, get_game_by_slug, update_game
 from services.upload_service import (
-    save_html, save_image, ext_from_mime, image_db_url, WEBAPP_DIR,
+    save_html, save_image, image_db_url,
+    image_ext_from_filename_or_mime, WEBAPP_DIR,
 )
 
 logger = logging.getLogger(__name__)
 router = Router()
-
-ALLOWED_IMAGE_MIME = {"image/jpeg", "image/png", "image/gif", "image/webp"}
-
 
 # ── FSM States ────────────────────────────────────────────────────────────────
 
@@ -205,6 +201,16 @@ async def _ask_confirm(target: Message, state: FSMContext) -> None:
 
     # Prefer new image file_id → then existing local file → text fallback
     new_fid = data.get("edit_image_file_id")
+    if new_fid and data.get("edit_image_kind") == "animation":
+        await target.answer_animation(
+            animation=new_fid, caption=caption, reply_markup=kb, parse_mode="HTML",
+        )
+        return
+    if new_fid and data.get("edit_image_kind") == "gif_document":
+        await target.answer_document(
+            document=new_fid, caption=caption, reply_markup=kb, parse_mode="HTML",
+        )
+        return
     if new_fid:
         await target.answer_photo(
             photo=new_fid, caption=caption, reply_markup=kb, parse_mode="HTML",
@@ -216,10 +222,16 @@ async def _ask_confirm(target: Message, state: FSMContext) -> None:
         fp = WEBAPP_DIR / orig_url.removeprefix("/webapp/")
         if fp.exists():
             try:
-                await target.answer_photo(
-                    photo=FSInputFile(str(fp)),
-                    caption=caption, reply_markup=kb, parse_mode="HTML",
-                )
+                if fp.suffix.lower() == ".gif":
+                    await target.answer_document(
+                        document=FSInputFile(str(fp)),
+                        caption=caption, reply_markup=kb, parse_mode="HTML",
+                    )
+                else:
+                    await target.answer_photo(
+                        photo=FSInputFile(str(fp)),
+                        caption=caption, reply_markup=kb, parse_mode="HTML",
+                    )
                 return
             except Exception as exc:
                 logger.warning("Preview photo failed: %s", exc)
@@ -297,6 +309,7 @@ async def cb_select_game(callback: CallbackQuery, state: FSMContext) -> None:
         "edit_image_url":     game.get("image_url", ""),
         "edit_image_file_id": None,
         "edit_image_ext":     None,
+        "edit_image_kind":    None,
         "edit_html_file":     game.get("html_file", f"{game['slug']}.html"),
         "edit_html_file_id":  None,
         "edit_category":      game.get("category", "arcade"),
@@ -345,24 +358,29 @@ async def step_description(message: Message, state: FSMContext) -> None:
 async def step_image(message: Message, state: FSMContext) -> None:
     file_id: str | None = None
     ext = ".jpg"
+    image_kind = "photo"
 
     if message.photo:
         file_id = message.photo[-1].file_id
 
+    elif message.animation:
+        animation = message.animation
+        # Telegram's Animation metadata can omit MIME/name. The downloaded
+        # bytes are validated as GIF before they are persisted.
+        ext = ".gif"
+        file_id = animation.file_id
+        image_kind = "animation"
+
     elif message.document:
         doc  = message.document
-        mime = doc.mime_type or ""
-        if mime not in ALLOWED_IMAGE_MIME:
+        ext = image_ext_from_filename_or_mime(doc.file_name, doc.mime_type)
+        if ext is None:
             await message.answer(
                 "⚠️ Faqat rasm fayllari qabul qilinadi (JPEG, PNG, GIF, WEBP)."
             )
             return
         file_id = doc.file_id
-        suffix  = Path(doc.file_name or "").suffix.lower()
-        ext = suffix if suffix in {".jpg", ".jpeg", ".png", ".gif", ".webp"} \
-            else ext_from_mime(mime)
-        if ext == ".jpeg":
-            ext = ".jpg"
+        image_kind = "gif_document" if ext == ".gif" else "document"
 
     else:
         await message.answer(
@@ -371,7 +389,11 @@ async def step_image(message: Message, state: FSMContext) -> None:
         )
         return
 
-    await state.update_data(edit_image_file_id=file_id, edit_image_ext=ext)
+    await state.update_data(
+        edit_image_file_id=file_id,
+        edit_image_ext=ext,
+        edit_image_kind=image_kind,
+    )
     await _ask_html(message, state)
 
 

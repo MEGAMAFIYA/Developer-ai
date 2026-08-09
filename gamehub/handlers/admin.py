@@ -13,7 +13,6 @@ Steps
 
 import io
 import logging
-from pathlib import Path
 
 from aiogram import Router, Bot, F
 from aiogram.filters import Command
@@ -31,7 +30,7 @@ from aiogram.types import (
 from config import config
 from database.global_db import add_game, get_game_by_slug
 from services.upload_service import (
-    ext_from_mime,
+    image_ext_from_filename_or_mime,
     image_db_url,
     save_html_bytes,
     save_image_bytes,
@@ -39,10 +38,6 @@ from services.upload_service import (
 
 logger = logging.getLogger(__name__)
 router = Router()
-
-# ── Allowed image MIME types ─────────────────────────────────────────────────
-ALLOWED_IMAGE_MIME = {"image/jpeg", "image/png", "image/gif", "image/webp"}
-
 
 # ── FSM States ───────────────────────────────────────────────────────────────
 
@@ -97,7 +92,21 @@ async def _send_preview(message: Message, data: dict, bot: Bot) -> None:
     keyboard = _confirm_keyboard()
     image_id = data.get("image_file_id", "")
 
-    if image_id:
+    if image_id and data.get("image_kind") == "animation":
+        await message.answer_animation(
+            animation=image_id,
+            caption=caption,
+            reply_markup=keyboard,
+            parse_mode="HTML",
+        )
+    elif image_id and data.get("image_kind") == "gif_document":
+        await message.answer_document(
+            document=image_id,
+            caption=caption,
+            reply_markup=keyboard,
+            parse_mode="HTML",
+        )
+    elif image_id:
         await message.answer_photo(
             photo=image_id,
             caption=caption,
@@ -268,7 +277,7 @@ async def step_html(message: Message, state: FSMContext) -> None:
     await message.answer(
         f"✅ HTML fayl qabul qilindi: <code>{filename}</code>\n\n"
         "6️⃣ O'yin uchun <b>thumbnail rasm</b> yuboring:\n"
-        "<i>Rasmni Telegram <b>foto</b> sifatida yoki rasm fayli (document) sifatida yuboring.</i>",
+        "<i>Rasmni Telegram <b>foto</b>, GIF animation yoki rasm fayli (document) sifatida yuboring.</i>",
         parse_mode="HTML",
     )
 
@@ -279,28 +288,32 @@ async def step_html(message: Message, state: FSMContext) -> None:
 async def step_image(message: Message, state: FSMContext) -> None:
     file_id: str | None = None
     ext: str = ".jpg"
+    image_kind = "photo"
 
     if message.photo:
         # Compressed photo sent via Telegram camera/gallery
         file_id = message.photo[-1].file_id
         ext = ".jpg"
 
+    elif message.animation:
+        animation = message.animation
+        # Telegram's Animation metadata can omit MIME/name. The downloaded
+        # bytes are validated as GIF before they are persisted.
+        ext = ".gif"
+        file_id = animation.file_id
+        image_kind = "animation"
+
     elif message.document:
         doc = message.document
-        mime = doc.mime_type or ""
-        if mime not in ALLOWED_IMAGE_MIME:
+        ext = image_ext_from_filename_or_mime(doc.file_name, doc.mime_type)
+        if ext is None:
             await message.answer(
                 "⚠️ Faqat rasm fayllari qabul qilinadi (JPEG, PNG, GIF, WEBP).",
                 parse_mode="HTML",
             )
             return
         file_id = doc.file_id
-        # Try to get extension from original filename first
-        orig = doc.file_name or ""
-        suffix = Path(orig).suffix.lower()
-        ext = suffix if suffix in {".jpg", ".jpeg", ".png", ".gif", ".webp"} else ext_from_mime(mime)
-        if ext == ".jpeg":
-            ext = ".jpg"
+        image_kind = "gif_document" if ext == ".gif" else "document"
 
     else:
         await message.answer(
@@ -309,7 +322,11 @@ async def step_image(message: Message, state: FSMContext) -> None:
         )
         return
 
-    await state.update_data(image_file_id=file_id, image_ext=ext)
+    await state.update_data(
+        image_file_id=file_id,
+        image_ext=ext,
+        image_kind=image_kind,
+    )
     await state.set_state(AddGameFSM.waiting_confirm)
 
     data = await state.get_data()

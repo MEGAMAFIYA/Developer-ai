@@ -1,6 +1,7 @@
 """File download helpers — fetches Telegram files and writes them to disk."""
 
 import logging
+import io
 from pathlib import Path
 
 from aiogram import Bot
@@ -19,6 +20,43 @@ _MIME_EXT: dict[str, str] = {
     "image/gif":  ".gif",
     "image/webp": ".webp",
 }
+ALLOWED_IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
+ALLOWED_IMAGE_MIME = frozenset(_MIME_EXT)
+
+
+def image_ext_from_filename_or_mime(
+    filename: str | None,
+    mime: str | None,
+    *,
+    fallback: str = ".jpg",
+) -> str | None:
+    """Resolve a safe image extension, rejecting non-image metadata."""
+    normalized_mime = (mime or "").lower().split(";", 1)[0].strip()
+    suffix = Path(filename or "").suffix.lower()
+    if normalized_mime not in ALLOWED_IMAGE_MIME:
+        return None
+    ext = (
+        ".gif"
+        if normalized_mime == "image/gif"
+        else suffix if suffix in ALLOWED_IMAGE_EXTS else _MIME_EXT[normalized_mime]
+    )
+    return ".jpg" if ext == ".jpeg" else ext
+
+
+def is_valid_image_bytes(content: bytes, ext: str) -> bool:
+    """Validate the downloaded bytes without transcoding the uploaded asset."""
+    normalized_ext = ext if ext.startswith(".") else f".{ext}"
+    if normalized_ext == ".jpeg":
+        normalized_ext = ".jpg"
+    if normalized_ext == ".gif":
+        return content.startswith((b"GIF87a", b"GIF89a"))
+    if normalized_ext == ".png":
+        return content.startswith(b"\x89PNG\r\n\x1a\n")
+    if normalized_ext == ".jpg":
+        return content.startswith(b"\xff\xd8\xff")
+    if normalized_ext == ".webp":
+        return len(content) >= 12 and content[:4] == b"RIFF" and content[8:12] == b"WEBP"
+    return False
 
 
 def ensure_dirs() -> None:
@@ -42,7 +80,12 @@ async def save_image(bot: Bot, file_id: str, slug: str, ext: str) -> Path:
     ext = ext if ext.startswith(".") else f".{ext}"
     dest = ASSETS_DIR / f"{slug}{ext}"
     file_info = await bot.get_file(file_id)
-    await bot.download_file(file_info.file_path, destination=str(dest))
+    buffer = io.BytesIO()
+    await bot.download_file(file_info.file_path, destination=buffer)
+    content = buffer.getvalue()
+    if not is_valid_image_bytes(content, ext):
+        raise ValueError("Yuklangan fayl haqiqiy rasm formatiga mos emas.")
+    dest.write_bytes(content)
     logger.info("Image saved: %s", dest)
     return dest
 
@@ -64,6 +107,8 @@ def save_image_bytes(slug: str, ext: str, content: bytes) -> Path:
     """Persist image bytes in the runtime asset directory."""
     ensure_dirs()
     ext = ext if ext.startswith(".") else f".{ext}"
+    if not is_valid_image_bytes(content, ext):
+        raise ValueError("Yuklangan fayl haqiqiy rasm formatiga mos emas.")
     dest = ASSETS_DIR / f"{slug}{ext}"
     dest.write_bytes(content)
     logger.info("Runtime image saved: %s", dest)
