@@ -1,7 +1,7 @@
 """Combine all handlers into one aiogram router."""
 
 from aiogram import Router
-from handlers import start, admin, edit, rating, games
+from handlers import start, admin, edit, rating, games, inline
 from handlers.developer import router as developer_router
 
 main_router = Router()
@@ -10,4 +10,5 @@ main_router.include_router(admin.router)
 main_router.include_router(edit.router)
 main_router.include_router(rating.router)
 main_router.include_router(games.router)
+main_router.include_router(inline.router)
 main_router.include_router(developer_router)
