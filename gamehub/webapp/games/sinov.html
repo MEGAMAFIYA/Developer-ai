@@ -1,0 +1,1354 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Daraxt Kesuvchi</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  /* ===================== BASE / RESET ===================== */
+  * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; user-select:none; }
+  html, body {
+    width:100%; height:100%; overflow:hidden; background:#123;
+    font-family:'Segoe UI', Tahoma, Arial, sans-serif; touch-action:none;
+  }
+  #game { position:fixed; top:0; left:0; width:100%; height:100%; display:block; }
+
+  /* ===================== UI OVERLAY ===================== */
+  #uiRoot { position:fixed; top:0; left:0; width:100%; height:100%; pointer-events:none; }
+  .screen {
+    position:absolute; top:0; left:0; width:100%; height:100%;
+    display:none; align-items:center; justify-content:center; flex-direction:column;
+    background:rgba(10,20,30,0.55); pointer-events:auto; text-align:center; padding:20px;
+  }
+  .screen.active { display:flex; }
+  .panel {
+    background:linear-gradient(160deg,#fff8e7,#ffe9b3);
+    border:5px solid #7a4a1e; border-radius:24px;
+    padding:clamp(16px,4vw,34px) clamp(20px,6vw,50px);
+    box-shadow:0 12px 0 #5a3413, 0 18px 30px rgba(0,0,0,0.45);
+    max-width:92vw; max-height:88vh; overflow-y:auto;
+  }
+  .title {
+    font-size:clamp(28px,7vw,52px); color:#6b3d12; font-weight:900;
+    text-shadow:2px 2px 0 #fff2cf, 4px 4px 0 rgba(0,0,0,0.25);
+    margin-bottom:8px; letter-spacing:1px;
+  }
+  .subtitle { color:#8a5a22; font-size:clamp(13px,3vw,17px); margin-bottom:18px; font-weight:600;}
+  .btn {
+    display:inline-block; margin:8px 6px; padding:14px 30px;
+    font-size:clamp(15px,3.4vw,20px); font-weight:800; color:#fff; border:none;
+    border-radius:16px; cursor:pointer; letter-spacing:0.5px;
+    background:linear-gradient(180deg,#6bd06b,#2e8b2e);
+    box-shadow:0 6px 0 #1f5f1f, 0 10px 16px rgba(0,0,0,0.3);
+    transition:transform 0.08s ease;
+  }
+  .btn:active { transform:translateY(6px); box-shadow:0 0 0 #1f5f1f; }
+  .btn.secondary { background:linear-gradient(180deg,#6ba8ff,#2f6fd6); box-shadow:0 6px 0 #1e4a99, 0 10px 16px rgba(0,0,0,0.3); }
+  .btn.secondary:active { box-shadow:0 0 0 #1e4a99; }
+  .btn.warn { background:linear-gradient(180deg,#ff8a6b,#d6432f); box-shadow:0 6px 0 #992616, 0 10px 16px rgba(0,0,0,0.3); }
+  .btn.warn:active { box-shadow:0 0 0 #992616; }
+  .btn.small { padding:9px 16px; font-size:clamp(12px,2.8vw,15px); margin:4px; }
+
+  .statRow { display:flex; gap:22px; justify-content:center; flex-wrap:wrap; margin:10px 0 18px; }
+  .stat {
+    background:#fff2cf; border:3px solid #c99a4e; border-radius:12px;
+    padding:8px 16px; color:#6b3d12; font-weight:800; font-size:clamp(13px,3vw,16px);
+  }
+
+  #hud {
+    position:absolute; top:0; left:0; width:100%; padding:12px 16px;
+    display:none; justify-content:space-between; align-items:flex-start; pointer-events:none;
+  }
+  #hud.active { display:flex; }
+  .hudBox {
+    background:rgba(40,25,10,0.55); border:2px solid #ffdf9a; border-radius:12px;
+    padding:6px 14px; color:#fff8e0; font-weight:800; font-size:clamp(13px,3vw,17px);
+    text-shadow:1px 1px 2px #000;
+  }
+  #pauseBtn {
+    pointer-events:auto; cursor:pointer; background:rgba(40,25,10,0.65); border:2px solid #ffdf9a;
+    border-radius:12px; color:#fff8e0; font-size:20px; width:42px; height:42px; text-align:center; line-height:38px;
+  }
+
+  /* ---- Shop ---- */
+  .tabRow { display:flex; gap:8px; justify-content:center; margin-bottom:14px; flex-wrap:wrap; }
+  .tabBtn {
+    padding:8px 18px; border-radius:10px; border:2px solid #c99a4e; background:#fff2cf;
+    color:#6b3d12; font-weight:800; cursor:pointer; font-size:clamp(12px,2.8vw,15px);
+  }
+  .tabBtn.active { background:#f5a623; color:#fff; }
+  .shopGrid { display:grid; grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); gap:12px; max-width:520px; }
+  .shopCard {
+    background:#fff2cf; border:3px solid #c99a4e; border-radius:14px; padding:10px;
+    display:flex; flex-direction:column; align-items:center; gap:6px;
+  }
+  .shopCard canvas { background:#dff0ff; border-radius:8px; border:2px solid #b98c48; }
+  .shopCard .name { font-size:12px; font-weight:800; color:#6b3d12; }
+  .shopCard .cost { font-size:11px; color:#a15b0f; font-weight:700; }
+
+  .howtoText { text-align:left; color:#5a3a12; font-size:clamp(13px,3vw,16px); line-height:1.6; max-width:480px; }
+  .howtoText b { color:#a15b0f; }
+
+  #touchZones { position:absolute; top:0; left:0; width:100%; height:100%; display:flex; pointer-events:none; }
+</style>
+</head>
+<body>
+
+<canvas id="game"></canvas>
+
+<!-- HUD shown during gameplay -->
+<div id="hud">
+  <div class="hudBox" id="hudScore">Ochko: 0</div>
+  <div id="pauseBtn">&#10074;&#10074;</div>
+  <div class="hudBox" id="hudCoins">Tanga: 0</div>
+</div>
+
+<div id="uiRoot">
+
+  <!-- MENU -->
+  <div class="screen active" id="menuScreen">
+    <div class="panel">
+      <div class="title">Daraxt Kesuvchi</div>
+      <div class="subtitle">Jangchi bo'lib daraxtni tepib-mushtlab kuchsizlantiring va shoxlardan saqlaning!</div>
+      <div class="statRow">
+        <div class="stat" id="menuBest">Eng yaxshi natija: 0</div>
+        <div class="stat" id="menuCoins">Tanga: 0</div>
+      </div>
+      <div>
+        <button class="btn" id="btnStart">Boshlash</button><br>
+        <button class="btn secondary" id="btnShop">Do'kon</button>
+        <button class="btn secondary" id="btnHowto">Qanday o'ynaladi</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- HOW TO PLAY -->
+  <div class="screen" id="howtoScreen">
+    <div class="panel">
+      <div class="title" style="font-size:clamp(22px,6vw,34px)">Qanday o'ynaladi</div>
+      <div class="howtoText">
+        <p>&bull; Daraxtning <b>chap</b> yoki <b>o'ng</b> tomonida turgan jangchini boshqarasiz.</p>
+        <p>&bull; Kompyuterda <b>&larr; Chap</b> va <b>&rarr; O'ng</b> strelka tugmalarini bosing.</p>
+        <p>&bull; Telefonda ekranning <b>chap</b> yoki <b>o'ng</b> yarmiga teging.</p>
+        <p>&bull; Jangchi daraxtga avtomatik tarzda <b>tepadi</b> yoki <b>musht</b> uradi - zarba turini o'zi tanlab, ketma-ket bir necha marta tepishi yoki mushtlashi mumkin.</p>
+        <p>&bull; Jangchi bo'yi 2 ta bo'lak balandligida. Shox pastki 2 bo'lakda bo'lsa sizga tegadi, lekin 3-bo'lakdagi shox boshingizdan baland bo'lib xavfsiz o'tadi.</p>
+        <p>&bull; Ba'zi bo'laklar <b>toshdan</b> (beton) bo'lib, ustida "x2", "x3" kabi raqam ko'rsatiladi - shuncha marta zarba berib sindirish kerak.</p>
+        <p>&bull; Vaqt tugashidan oldin zarba bering, aks holda o'yin tugaydi. O'yin tezligi asta-sekin oshadi.</p>
+        <p>&bull; To'plangan tangalar bilan <b>Do'kon</b>dan yangi jangchi, belbog' va effektlar sotib oling.</p>
+      </div>
+      <button class="btn secondary" id="btnHowtoBack">Orqaga</button>
+    </div>
+  </div>
+
+  <!-- SHOP -->
+  <div class="screen" id="shopScreen">
+    <div class="panel">
+      <div class="title" style="font-size:clamp(22px,6vw,34px)">Do'kon</div>
+      <div class="stat" id="shopCoins" style="margin-bottom:12px;">Tanga: 0</div>
+      <div class="tabRow">
+        <div class="tabBtn active" data-tab="characters">Jangchilar</div>
+        <div class="tabBtn" data-tab="axes">Belbog'lar</div>
+        <div class="tabBtn" data-tab="effects">Effektlar</div>
+      </div>
+      <div class="shopGrid" id="shopGrid"></div>
+      <button class="btn secondary" id="btnShopBack" style="margin-top:16px;">Orqaga</button>
+    </div>
+  </div>
+
+  <!-- PAUSE -->
+  <div class="screen" id="pauseScreen">
+    <div class="panel">
+      <div class="title" style="font-size:clamp(24px,6vw,36px)">Pauza</div>
+      <button class="btn" id="btnResume">Davom ettirish</button><br>
+      <button class="btn secondary" id="btnPauseRestart">Qayta o'ynash</button>
+      <button class="btn warn" id="btnPauseMenu">Bosh menyu</button>
+    </div>
+  </div>
+
+  <!-- GAME OVER -->
+  <div class="screen" id="gameoverScreen">
+    <div class="panel">
+      <div class="title" style="font-size:clamp(24px,6vw,38px); color:#a11d1d;">O'yin tugadi!</div>
+      <div class="statRow">
+        <div class="stat" id="goScore">Ochko: 0</div>
+        <div class="stat" id="goBest">Eng yaxshi natija: 0</div>
+      </div>
+      <div class="stat" id="goCoins" style="margin-bottom:14px;">+0 tanga</div>
+      <div id="submitStatus" style="min-height:22px;margin:6px 0 4px;color:#6b3d12;font-weight:700;font-size:clamp(12px,2.8vw,15px);"></div>
+      <button class="btn" id="btnRestart">Qayta o'ynash</button><br>
+      <button class="btn secondary" id="btnGoMenu">Bosh menyu</button>
+    </div>
+  </div>
+
+</div>
+
+<script>
+'use strict';
+/* =========================================================================
+   DARAXT KESUVCHI — Single-file HTML5 Canvas game
+   All rendering is done with layered canvas shapes (gradients, curves,
+   composited circles/paths) to build cartoon-style characters & scenery —
+   no external images/fonts/libraries are used.
+   ========================================================================= */
+
+/* ----------------------------- Canvas setup ----------------------------- */
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+let W = 0, H = 0, DPR = 1, SCALE = 1; // SCALE normalizes drawing to a base 800px-tall design
+
+function resize(){
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  W = window.innerWidth;
+  H = window.innerHeight;
+  canvas.width = W * DPR;
+  canvas.height = H * DPR;
+  canvas.style.width = W + 'px';
+  canvas.style.height = H + 'px';
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  SCALE = H / 800; // base design height reference
+  groundY = H * 0.80;
+}
+window.addEventListener('resize', resize);
+
+/* ----------------------------- Storage helpers --------------------------- */
+const store = {
+  get(key, def){ try{ const v = localStorage.getItem(key); return v===null? def : JSON.parse(v);}catch(e){return def;} },
+  set(key, val){ try{ localStorage.setItem(key, JSON.stringify(val)); }catch(e){} }
+};
+
+let bestScore = store.get('dk_best', 0);
+let coins     = store.get('dk_coins', 0);
+let unlocked  = store.get('dk_unlocked', { characters:[0], axes:[0], effects:[0] });
+let selected  = store.get('dk_selected', { character:0, axe:0, effect:0 });
+
+/* =========================================================================
+   TELEGRAM WEBAPP INTEGRATION
+   - Initializes the Telegram WebApp SDK.
+   - Reads chat_id from the ?cid= URL parameter.
+   - Submits the final score exactly once per finished run, via
+     submitScore(), which is only ever called from showGameOver()
+     (i.e. after the run has actually ended — never while state==='playing').
+   ========================================================================= */
+const tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null;
+
+if(tg){
+  try{
+    tg.ready();
+    tg.expand();
+    // Match the app chrome to the game's dark theme where supported.
+    if(tg.setBackgroundColor) tg.setBackgroundColor('#112233');
+    if(tg.setHeaderColor) tg.setHeaderColor('#112233');
+    if(tg.disableVerticalSwipes) tg.disableVerticalSwipes();
+  }catch(e){ /* not fatal — game still works standalone for local testing */ }
+}
+
+function getUrlParam(name){
+  try{ return new URLSearchParams(window.location.search).get(name); }
+  catch(e){ return null; }
+}
+const CHAT_ID_RAW = getUrlParam('cid');
+let CHAT_ID = Number(CHAT_ID_RAW);
+if(!Number.isFinite(CHAT_ID)){ CHAT_ID = 0; }
+
+// Guards against ever submitting more than once for the same finished run,
+// and against submitting mid-game (state must already be 'gameover').
+// Submission is now user-initiated: showGameOver() reveals a "Reytingga
+// yuborish" button instead of firing the request silently, and submitScore()
+// reports success/failure back into the UI so a failed attempt is visible
+// and can be retried.
+let scoreSubmitted = false;
+
+function setSubmitStatus(text, color){
+  const el = document.getElementById('submitStatus');
+  if(el){ el.textContent = text; el.style.color = color || '#6b3d12'; }
+}
+
+async function submitScore(finalScore, finalCoins){
+  if(state !== 'gameover') return;      // never submit while the game is running
+  if(scoreSubmitted) return;            // already submitted this run
+
+  if(!tg || !tg.initData || !CHAT_ID){
+    // No valid Telegram/session context — nothing to send anywhere.
+    setSubmitStatus("Bu faqat Telegram bot ichida ishlaydi", "#a11d1d");
+    return;
+  }
+
+  setSubmitStatus("Yuborilmoqda...");
+
+  try{
+    console.log("SCORE SUBMIT", {
+      game: "daraxt-kesuvchi",
+      score: Number(finalScore),
+      init_data_received: Boolean(tg.initData),
+      init_data_length: tg.initData ? tg.initData.length : 0,
+      chat_id: CHAT_ID
+    });
+    const res = await fetch('/api/scores', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        game: "daraxt-kesuvchi",
+        score: Number(finalScore),
+        init_data: tg.initData,   // backend must verify this against the bot token; sent RAW, unmodified
+        chat_id: CHAT_ID
+      })
+    });
+    if(!res.ok) throw new Error('HTTP ' + res.status);
+    scoreSubmitted = true;       // one successful submission per run — no retries needed
+    setSubmitStatus("Reytingga yuborildi ✓", "#1f5f1f");
+  }catch(e){
+    // Failed — leave scoreSubmitted false so a future run can still submit.
+    setSubmitStatus("Yuborilmadi", "#a11d1d");
+  }
+}
+
+/* ----------------------------- Audio (WebAudio synth) -------------------- */
+let actx = null;
+function ensureAudio(){ if(!actx){ try{ actx = new (window.AudioContext||window.webkitAudioContext)(); }catch(e){} } }
+function tone(freq, dur, type, vol, delay){
+  if(!actx) return;
+  const t0 = actx.currentTime + (delay||0);
+  const osc = actx.createOscillator();
+  const gain = actx.createGain();
+  osc.type = type || 'sine';
+  osc.frequency.setValueAtTime(freq, t0);
+  gain.gain.setValueAtTime(0, t0);
+  gain.gain.linearRampToValueAtTime(vol!==undefined?vol:0.25, t0+0.01);
+  gain.gain.exponentialRampToValueAtTime(0.001, t0+dur);
+  osc.connect(gain); gain.connect(actx.destination);
+  osc.start(t0); osc.stop(t0+dur+0.02);
+}
+function noiseBurst(dur, vol){
+  if(!actx) return;
+  const bufSize = actx.sampleRate * dur;
+  const buf = actx.createBuffer(1, bufSize, actx.sampleRate);
+  const data = buf.getChannelData(0);
+  for(let i=0;i<bufSize;i++) data[i] = (Math.random()*2-1) * (1 - i/bufSize);
+  const src = actx.createBufferSource(); src.buffer = buf;
+  const gain = actx.createGain(); gain.gain.setValueAtTime(vol!==undefined?vol:0.3, actx.currentTime);
+  const filt = actx.createBiquadFilter(); filt.type='highpass'; filt.frequency.value=800;
+  src.connect(filt); filt.connect(gain); gain.connect(actx.destination);
+  src.start();
+}
+function sfxHit(){ tone(180,0.09,'square',0.25); noiseBurst(0.06,0.18); }
+function sfxBreak(){ noiseBurst(0.22,0.3); tone(90,0.2,'sawtooth',0.2,0.02); }
+function sfxCoin(){ tone(880,0.09,'triangle',0.2); tone(1320,0.12,'triangle',0.18,0.06); }
+function sfxGameOver(){ tone(300,0.25,'sawtooth',0.25); tone(220,0.3,'sawtooth',0.22,0.15); tone(140,0.4,'sawtooth',0.2,0.3); }
+
+/* ----------------------------- Shop data ---------------------------------- */
+const CHARACTERS = [
+  { name:"Oddiy",     cost:0,   shirt:'#f4f1e8', shirt2:'#d8d2bf', skin:'#f2c299', hair:'#4a2e14' },
+  { name:"Jangchi",   cost:60,  shirt:'#e9e4d8', shirt2:'#c7bfa8', skin:'#e8b98c', hair:'#1e1e1e' },
+  { name:"Usta",      cost:140, shirt:'#eef2ff', shirt2:'#c9d2ea', skin:'#f4d3ad', hair:'#d9d9d9' },
+];
+const AXES = [
+  { name:"Oq belbog'",   cost:0,   head:'#f2f2f2', head2:'#c9c9c9', glow:'#ffffff' },
+  { name:"Qizil belbog'", cost:50,  head:'#e0473f', head2:'#a12920', glow:'#ffb3ad' },
+  { name:"Qora belbog'",  cost:130, head:'#2b2b2b', head2:'#0f0f0f', glow:'#9a9a9a' },
+];
+const EFFECTS = [
+  { name:"Yo'q",       cost:0,   color:'#ffd35c' },
+  { name:"Uchqun",     cost:70,  color:'#7fd8ff' },
+  { name:"Alanga",     cost:150, color:'#ff7a3f' },
+];
+
+/* ----------------------------- Game state --------------------------------- */
+let state = 'menu'; // menu | playing | paused | gameover
+let score = 0, sessionCoins = 0;
+let groundY = 600;
+
+/* Background elements */
+let clouds=[], birds=[], leaves=[], mountainSeed1=[], mountainSeed2=[];
+function rand(a,b){ return a + Math.random()*(b-a); }
+
+function initBackground(){
+  clouds = []; for(let i=0;i<5;i++) clouds.push({ x:rand(0,W||1200), y:rand(40,H*0.28), s:rand(0.7,1.4), speed:rand(6,14) });
+  birds = []; for(let i=0;i<3;i++) birds.push({ x:rand(0,W||1200), y:rand(H*0.12,H*0.32), speed:rand(30,55), phase:rand(0,10) });
+  leaves = []; for(let i=0;i<18;i++) leaves.push(newLeaf(true));
+  // jagged mountain silhouettes (deterministic random offsets)
+  mountainSeed1 = []; for(let i=0;i<10;i++) mountainSeed1.push(rand(0.5,1));
+  mountainSeed2 = []; for(let i=0;i<10;i++) mountainSeed2.push(rand(0.5,1));
+}
+function newLeaf(randomY){
+  return { x:rand(0,W||1200), y: randomY? rand(-H,H) : -20, r:rand(6,12), speed:rand(20,45),
+           sway:rand(0.5,1.5), phase:rand(0,10), rot:rand(0,6.28), rotSpeed:rand(-1,1),
+           color: ['#7fbf3f','#a6cf3f','#e0b23f','#c9772f'][Math.floor(rand(0,4))] };
+}
+
+/* ----------------------------- Tree & Player ------------------------------- */
+const SEG_COUNT = 6;
+// Player stands 2 segments tall: a branch on segment 0 or 1 can hit him,
+// a branch on segment 2 passes safely over his head.
+const PLAYER_HEIGHT_SEGS = 2;
+let segH = 90;      // segment (log slice) height, scaled
+let segments = [];  // { branch:'none'|'left'|'right', stone:bool, hitsReq, hitsLeft }
+let treeSlide = 0;         // animated slide offset (0..segH)
+let sliding = false, slideT = 0, slideDur = 0.16;
+let fallingLog = null;     // chopped piece animation
+
+let player = { side:'left', swingT:0, swinging:false, dead:false, move:'punch' };
+
+// Automatic karate combo generator: streaks of kicks or punches of random length
+let comboType = 'punch', comboRemaining = 0;
+function nextMoveType(){
+  if(comboRemaining <= 0){
+    comboType = Math.random() < 0.5 ? 'kick' : 'punch';
+    comboRemaining = 1 + Math.floor(Math.random()*4); // 1..4 repeats before switching
+  }
+  comboRemaining--;
+  return comboType;
+}
+
+let shakeMag = 0, shakeT = 0;
+let particles = []; // wood/stone chips & bursts
+
+let timeLeft = 3.2, timeMax = 3.2;
+let difficultyLevel = 0;
+
+function branchProbability(){ return Math.min(0.30 + score*0.012, 0.62); }
+// No stone (concrete) segments until 100 blocks have been broken this game;
+// after that they should stay rare, not frequent.
+function stoneProbability(){
+  if(score < 100) return 0;
+  return Math.min(0.05 + (score-100)*0.0006, 0.16);
+}
+// Coins are awarded per fully-broken block on a slow rising tier:
+// 0 coins for the first 49 blocks, 1 coin per block for 50-99,
+// 2 coins per block for 100-149, then +1 coin every further 50 blocks.
+function coinsPerBlock(brokenCount){
+  return brokenCount < 50 ? 0 : Math.floor(brokenCount/50);
+}
+
+function newSegment(forceSafe, prevBranch){
+  let branch = 'none';
+  let stone = false, hitsReq = 1;
+  if(!forceSafe && Math.random() < stoneProbability()){
+    stone = true;
+    // Required hits: mostly 2-4, occasionally 5, rarely a lone tough x1 block
+    const pool = [1,2,2,3,3,3,4,4,5];
+    hitsReq = pool[Math.floor(Math.random()*pool.length)];
+  } else if(!forceSafe && Math.random() < branchProbability()){
+    let side = Math.random() < 0.5 ? 'left' : 'right';
+    // Guarantee the player always has room to switch sides: never place a
+    // branch directly opposite one on the neighboring segment, since the
+    // player spans two segments tall and that would block both directions.
+    if(prevBranch && prevBranch !== 'none' && prevBranch !== side){
+      side = 'none';
+    }
+    branch = side;
+  }
+  return { branch, stone, hitsReq, hitsLeft: hitsReq };
+}
+
+function initTree(){
+  segments = [];
+  for(let i=0;i<SEG_COUNT;i++){
+    const prevBranch = i>0 ? segments[i-1].branch : 'none';
+    segments.push(newSegment(i<3, prevBranch));
+  }
+  treeSlide = 0; sliding = false; fallingLog = null;
+  player.side = 'left'; player.swinging=false; player.swingT=0; player.dead=false;
+  comboType='punch'; comboRemaining=0;
+}
+
+function resetGame(){
+  score = 0; sessionCoins = 0;
+  timeMax = 3.2; timeLeft = timeMax; difficultyLevel = 0;
+  segH = Math.max(70, 100*SCALE);
+  initTree();
+  particles = [];
+  shakeMag = 0; shakeT = 0;
+  scoreSubmitted = false; // new run — allow exactly one submission once it ends
+}
+
+/* Called once a segment is actually fully broken (not on partial stone hits) */
+function awardBrokenBlock(){
+  score++; // "Ochko" = total blocks broken this game
+  const gain = coinsPerBlock(score);
+  coins += gain; sessionCoins += gain;
+}
+
+/* Attempt a karate strike on a given side ('left'/'right') */
+function chop(direction){
+  if(state !== 'playing' || sliding || player.dead) return;
+  ensureAudio();
+  player.side = direction;
+  player.move = nextMoveType();
+  player.swinging = true; player.swingT = 0;
+
+  // Player is 2 segments tall: a branch on the bottom OR second segment
+  // reaches him; a branch on the 3rd segment is above his head (safe).
+  for(let i=0;i<PLAYER_HEIGHT_SEGS;i++){
+    if(segments[i] && segments[i].branch === direction){
+      triggerGameOver();
+      return;
+    }
+  }
+
+  const bottom = segments[0];
+  const cx = W/2 + (direction==='left' ? -46*SCALE : 46*SCALE);
+  const cy = groundY - segH*0.5;
+
+  if(bottom.stone){
+    bottom.hitsLeft--;
+    spawnStoneChips(cx, cy);
+    sfxHit();
+    shakeMag = 7*SCALE; shakeT = 0.15;
+    if(bottom.hitsLeft > 0){
+      // Segment survives this hit; tree does not advance yet, no score/coin
+      // is given until the block is actually broken.
+      timeMax = Math.max(1.5, 3.2 - score*0.018);
+      timeLeft = Math.min(timeMax, timeLeft + timeMax*0.35);
+      return;
+    }
+    awardBrokenBlock();
+    setTimeout(()=>{ if(state==='playing') sfxBreak(); }, 60);
+  } else {
+    // Regular wood: breaks in a single hit
+    sfxHit();
+    setTimeout(()=>{ if(state==='playing') sfxBreak(); }, 60);
+    spawnWoodChips(cx, cy, direction);
+    awardBrokenBlock();
+  }
+
+  // start falling log piece animation
+  fallingLog = { x: W/2, y: groundY - segH*0.5, vy:-40, vx: (direction==='left'? -70:70), rot:0, rotSpeed: rand(-4,4), life:1, stone: bottom.stone };
+
+  // camera shake
+  shakeMag = Math.max(shakeMag, 10 * SCALE); shakeT = Math.max(shakeT, 0.22);
+
+  // refill timer a bit, increase difficulty
+  timeMax = Math.max(1.5, 3.2 - score*0.018);
+  timeLeft = Math.min(timeMax, timeLeft + timeMax*0.55);
+
+  // begin slide animation; actual array shift happens when it completes
+  sliding = true; slideT = 0;
+}
+
+function spawnWoodChips(x, y, direction){
+  const n = 10;
+  for(let i=0;i<n;i++){
+    particles.push({
+      type:'chip', x, y,
+      vx: rand(-1,1)*140*(direction==='left'?-1:1) + rand(-40,40),
+      vy: rand(-220,-60),
+      rot: rand(0,6.28), rotSpeed: rand(-8,8),
+      size: rand(5,10)*SCALE, life:1, maxLife: rand(0.5,0.9),
+      color: Math.random()<0.5 ? '#c98f4e' : '#a5672c'
+    });
+  }
+}
+function spawnStoneChips(x,y){
+  const n = 8;
+  for(let i=0;i<n;i++){
+    particles.push({
+      type:'chip', x, y,
+      vx: rand(-100,100), vy: rand(-180,-40),
+      rot: rand(0,6.28), rotSpeed: rand(-8,8),
+      size: rand(4,8)*SCALE, life:1, maxLife: rand(0.35,0.6),
+      color: Math.random()<0.5 ? '#9aa0a6' : '#6d7278'
+    });
+  }
+}
+function spawnLeafBurst(x,y,color){
+  for(let i=0;i<14;i++){
+    particles.push({
+      type:'leaf', x, y, vx: rand(-120,120), vy: rand(-180,-40),
+      rot: rand(0,6.28), rotSpeed: rand(-6,6), size: rand(6,11)*SCALE,
+      life:1, maxLife: rand(0.7,1.2), color: color || '#7fbf3f'
+    });
+  }
+}
+
+function triggerGameOver(){
+  if(player.dead) return;
+  player.dead = true;
+  sfxGameOver();
+  shakeMag = 18*SCALE; shakeT = 0.4;
+  spawnLeafBurst(W/2, groundY - segH*0.5, '#e0473f');
+  if(score > bestScore){ bestScore = score; store.set('dk_best', bestScore); }
+  store.set('dk_coins', coins);
+  setTimeout(()=>{ showGameOver(); }, 550);
+}
+
+/* ----------------------------- Update loop --------------------------------- */
+let lastTime = 0;
+function loop(t){
+  const dt = Math.min((t - lastTime)/1000 || 0, 0.05);
+  lastTime = t;
+  update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+
+function update(dt){
+  updateBackground(dt);
+  updateParticles(dt);
+  if(shakeT>0){ shakeT -= dt; if(shakeT<0) shakeT=0; }
+
+  if(state==='playing') updateHud();
+
+  if(player.swinging){
+    player.swingT += dt*7;
+    if(player.swingT >= 1){ player.swingT = 1; player.swinging=false; }
+  }
+
+  if(sliding){
+    slideT += dt;
+    let p = Math.min(slideT/slideDur, 1);
+    const eased = 1 - Math.pow(1-p, 3);
+    treeSlide = eased * segH;
+    if(p>=1){
+      sliding = false; treeSlide = 0;
+      segments.shift();
+      const prevBranch = segments.length ? segments[segments.length-1].branch : 'none';
+      segments.push(newSegment(false, prevBranch));
+    }
+  }
+
+  if(fallingLog){
+    fallingLog.vy += 500*dt;
+    fallingLog.x += fallingLog.vx*dt;
+    fallingLog.y += fallingLog.vy*dt;
+    fallingLog.rot += fallingLog.rotSpeed*dt;
+    fallingLog.life -= dt*0.7;
+    if(fallingLog.life<=0) fallingLog = null;
+  }
+
+  if(state==='playing' && !player.dead){
+    timeLeft -= dt;
+    if(timeLeft<=0){
+      timeLeft = 0;
+      triggerGameOver();
+    }
+  }
+}
+
+function updateBackground(dt){
+  const spd = state==='playing' ? (1 + score*0.01) : 1;
+  clouds.forEach(c=>{ c.x -= c.speed*dt*spd; if(c.x < -120) c.x = W+rand(40,120); });
+  birds.forEach(b=>{ b.x += b.speed*dt*spd; b.phase += dt*8; if(b.x > W+60) b.x = -60; });
+  leaves.forEach(l=>{
+    l.y += l.speed*dt*spd;
+    l.x += Math.sin(l.phase)*20*dt;
+    l.phase += dt*l.sway;
+    l.rot += l.rotSpeed*dt;
+    if(l.y > H+20){ Object.assign(l, newLeaf(false)); }
+  });
+}
+
+function updateParticles(dt){
+  for(let i=particles.length-1;i>=0;i--){
+    const p = particles[i];
+    p.vy += 380*dt;
+    p.x += p.vx*dt; p.y += p.vy*dt;
+    p.rot += p.rotSpeed*dt;
+    p.life -= dt/p.maxLife;
+    if(p.life<=0) particles.splice(i,1);
+  }
+}
+
+/* ----------------------------- Drawing -------------------------------------- */
+function draw(){
+  ctx.save();
+  ctx.clearRect(0,0,W,H);
+
+  // camera shake offset
+  let sx=0, sy=0;
+  if(shakeT>0){
+    const m = shakeMag * (shakeT); // decays as shakeT counts down (approx)
+    sx = rand(-1,1)*m; sy = rand(-1,1)*m;
+  }
+  ctx.translate(sx, sy);
+
+  drawSky();
+  drawMountains();
+  drawClouds();
+  drawBirds();
+  drawGround();
+  drawTree();
+  if(fallingLog) drawFallingLog();
+  drawPlayer();
+  drawLeaves();
+  drawParticles();
+
+  ctx.restore();
+
+  if(state==='playing' || state==='paused') drawTimerBar();
+}
+
+function drawSky(){
+  const g = ctx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0,'#7fd0ff'); g.addColorStop(0.6,'#bfe9ff'); g.addColorStop(1,'#e8f8ff');
+  ctx.fillStyle = g; ctx.fillRect(0,0,W,H);
+
+  // sun
+  const sx = W*0.85, sy = H*0.15, sr = 46*SCALE;
+  const sg = ctx.createRadialGradient(sx,sy,0,sx,sy,sr*2.4);
+  sg.addColorStop(0,'rgba(255,244,190,0.9)'); sg.addColorStop(1,'rgba(255,244,190,0)');
+  ctx.fillStyle = sg; ctx.beginPath(); ctx.arc(sx,sy,sr*2.4,0,6.283); ctx.fill();
+  ctx.fillStyle = '#fff2b0'; ctx.beginPath(); ctx.arc(sx,sy,sr,0,6.283); ctx.fill();
+}
+
+function mountainPath(seedArr, baseY, amp, color){
+  ctx.beginPath();
+  ctx.moveTo(0, H);
+  const n = seedArr.length;
+  for(let i=0;i<=n;i++){
+    const x = (W/n)*i;
+    const s = seedArr[i%n];
+    const y = baseY - amp*s;
+    ctx.lineTo(x,y);
+  }
+  ctx.lineTo(W,H); ctx.closePath();
+  ctx.fillStyle = color; ctx.fill();
+}
+function drawMountains(){
+  mountainPath(mountainSeed1, H*0.62, 90*SCALE, '#9fc9d8');
+  mountainPath(mountainSeed2, H*0.68, 70*SCALE, '#7fb3c4');
+}
+
+function drawCloud(x,y,s){
+  ctx.save(); ctx.translate(x,y); ctx.scale(s,s);
+  ctx.fillStyle = 'rgba(255,255,255,0.95)';
+  ctx.beginPath();
+  ctx.ellipse(0,0,34,18,0,0,6.283);
+  ctx.ellipse(26,-8,22,16,0,0,6.283);
+  ctx.ellipse(-26,-4,20,14,0,0,6.283);
+  ctx.ellipse(10,8,28,14,0,0,6.283);
+  ctx.fill();
+  ctx.fillStyle = 'rgba(160,190,210,0.35)';
+  ctx.beginPath(); ctx.ellipse(4,10,30,10,0,0,6.283); ctx.fill();
+  ctx.restore();
+}
+function drawClouds(){ clouds.forEach(c=>drawCloud(c.x,c.y,c.s)); }
+
+function drawBirds(){
+  ctx.strokeStyle = '#3a3a3a'; ctx.lineWidth = 2.2*SCALE; ctx.lineCap='round';
+  birds.forEach(b=>{
+    const flap = Math.sin(b.phase)*10;
+    ctx.save(); ctx.translate(b.x,b.y);
+    ctx.beginPath();
+    ctx.moveTo(-14,0); ctx.quadraticCurveTo(-6,-8-flap,0,0);
+    ctx.quadraticCurveTo(6,-8-flap,14,0);
+    ctx.stroke();
+    ctx.restore();
+  });
+}
+
+function drawGround(){
+  const g = ctx.createLinearGradient(0,groundY,0,H);
+  g.addColorStop(0,'#8bc34a'); g.addColorStop(1,'#5a9c33');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, groundY, W, H-groundY);
+  // grass tufts
+  ctx.strokeStyle = '#4c8a2a'; ctx.lineWidth = 2*SCALE;
+  for(let i=0;i<W;i+=26*SCALE){
+    ctx.beginPath();
+    ctx.moveTo(i, groundY+6);
+    ctx.quadraticCurveTo(i+5, groundY-4, i+10, groundY+6);
+    ctx.stroke();
+  }
+}
+
+function drawLeaves(){
+  leaves.forEach(l=>{
+    ctx.save(); ctx.translate(l.x,l.y); ctx.rotate(l.rot);
+    ctx.fillStyle = l.color;
+    ctx.beginPath();
+    ctx.moveTo(0,-l.r);
+    ctx.quadraticCurveTo(l.r,0,0,l.r);
+    ctx.quadraticCurveTo(-l.r,0,0,-l.r);
+    ctx.fill();
+    ctx.restore();
+  });
+}
+
+/* --- Tree drawing (bare trunk, no foliage) --- */
+function drawTree(){
+  const cx = W/2;
+  const trunkW = 92*SCALE;
+
+  for(let i=segments.length-1;i>=0;i--){
+    const seg = segments[i];
+    const y = groundY - i*segH + treeSlide;
+    if(y < -segH*1.5) continue;
+    if(seg.stone) drawStoneSlice(cx, y, trunkW, i===0, seg);
+    else drawTrunkSlice(cx, y, trunkW, i===0);
+    if(seg.branch !== 'none'){
+      drawBranch(cx, y - segH*0.5, seg.branch, trunkW);
+    }
+    if(seg.stone){
+      drawHitLabel(cx, y - segH*0.5, seg.hitsLeft);
+    }
+  }
+}
+
+function drawTrunkSlice(cx, y, trunkW, isActive){
+  const top = y - segH, bottom = y;
+  const g = ctx.createLinearGradient(cx-trunkW/2,0,cx+trunkW/2,0);
+  g.addColorStop(0,'#8a5a2e'); g.addColorStop(0.5,'#a8703c'); g.addColorStop(1,'#6e4522');
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.moveTo(cx-trunkW/2, top);
+  ctx.lineTo(cx+trunkW/2, top);
+  ctx.lineTo(cx+trunkW/2, bottom);
+  ctx.lineTo(cx-trunkW/2, bottom);
+  ctx.closePath(); ctx.fill();
+
+  // bark texture lines
+  ctx.strokeStyle = 'rgba(60,35,15,0.35)'; ctx.lineWidth = 2*SCALE;
+  for(let i=0;i<4;i++){
+    const bx = cx - trunkW/2 + (trunkW/5)*(i+1) + Math.sin(i*3+y*0.02)*3;
+    ctx.beginPath();
+    ctx.moveTo(bx, top+4);
+    ctx.quadraticCurveTo(bx+6, y-segH/2, bx-4, bottom-4);
+    ctx.stroke();
+  }
+  // rim highlight for active (cut) segment
+  if(isActive){
+    ctx.strokeStyle = 'rgba(255,240,180,0.7)';
+    ctx.lineWidth = 3*SCALE;
+    ctx.strokeRect(cx-trunkW/2-2, top, trunkW+4, segH);
+  }
+}
+
+function drawStoneSlice(cx, y, trunkW, isActive, seg){
+  const top = y - segH, bottom = y;
+  const g = ctx.createLinearGradient(cx-trunkW/2,0,cx+trunkW/2,0);
+  g.addColorStop(0,'#6b6f73'); g.addColorStop(0.5,'#9a9fa4'); g.addColorStop(1,'#585c60');
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.moveTo(cx-trunkW/2, top); ctx.lineTo(cx+trunkW/2, top);
+  ctx.lineTo(cx+trunkW/2, bottom); ctx.lineTo(cx-trunkW/2, bottom);
+  ctx.closePath(); ctx.fill();
+
+  // rocky speckles
+  ctx.fillStyle = 'rgba(255,255,255,0.12)';
+  for(let i=0;i<6;i++){
+    ctx.beginPath();
+    ctx.arc(cx-trunkW/2+rand(6,trunkW-6), top+rand(6,segH-6), rand(2,5)*SCALE, 0, 6.283);
+    ctx.fill();
+  }
+  // cracks — more appear as it takes damage
+  const damageTaken = seg.hitsReq - seg.hitsLeft;
+  ctx.strokeStyle = 'rgba(30,30,30,0.55)'; ctx.lineWidth = 2*SCALE;
+  for(let i=0;i<damageTaken;i++){
+    const cx0 = cx - trunkW/2 + rand(10,trunkW-10);
+    const cy0 = top + rand(10,segH-10);
+    ctx.beginPath();
+    ctx.moveTo(cx0,cy0);
+    ctx.lineTo(cx0+rand(-14,14), cy0+rand(-10,10));
+    ctx.lineTo(cx0+rand(-18,18), cy0+rand(6,16));
+    ctx.stroke();
+  }
+  if(isActive){
+    ctx.strokeStyle = 'rgba(255,240,180,0.7)';
+    ctx.lineWidth = 3*SCALE;
+    ctx.strokeRect(cx-trunkW/2-2, top, trunkW+4, segH);
+  }
+}
+
+function drawBranch(cx, y, side, trunkW){
+  // Bare wooden branch — no foliage
+  const dir = side==='left' ? -1 : 1;
+  const bx = cx + dir*trunkW/2;
+  const len = 60*SCALE;
+  ctx.save();
+  ctx.strokeStyle = '#7a4e26'; ctx.lineWidth = 14*SCALE; ctx.lineCap='round';
+  ctx.beginPath();
+  ctx.moveTo(bx, y);
+  ctx.quadraticCurveTo(bx+dir*len*0.6, y-14*SCALE, bx+dir*len, y-22*SCALE);
+  ctx.stroke();
+  // smaller twig fork at the tip for detail
+  ctx.lineWidth = 6*SCALE;
+  const tx = bx+dir*len, ty = y-22*SCALE;
+  ctx.beginPath(); ctx.moveTo(tx,ty); ctx.lineTo(tx+dir*14*SCALE, ty-10*SCALE); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(tx,ty); ctx.lineTo(tx+dir*10*SCALE, ty+10*SCALE); ctx.stroke();
+  ctx.restore();
+}
+
+function drawHitLabel(cx, y, hitsLeft){
+  const fontSize = Math.round(22*SCALE);
+  ctx.save();
+  ctx.font = 'bold ' + fontSize + 'px Segoe UI, Arial';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillStyle = 'rgba(20,20,20,0.55)';
+  ctx.beginPath(); ctx.roundRect(cx-fontSize*1.1, y-fontSize*0.7, fontSize*2.2, fontSize*1.4, 8*SCALE); ctx.fill();
+  ctx.fillStyle = '#fff2b0';
+  ctx.strokeStyle = 'rgba(0,0,0,0.6)'; ctx.lineWidth = 3;
+  const label = 'x' + hitsLeft;
+  ctx.strokeText(label, cx, y+1);
+  ctx.fillText(label, cx, y+1);
+  ctx.restore();
+}
+
+function drawFallingLog(){
+  ctx.save();
+  ctx.globalAlpha = Math.max(fallingLog.life,0);
+  ctx.translate(fallingLog.x, fallingLog.y);
+  ctx.rotate(fallingLog.rot);
+  const w = 90*SCALE, h = 34*SCALE;
+  const g = ctx.createLinearGradient(-w/2,0,w/2,0);
+  if(fallingLog.stone){
+    g.addColorStop(0,'#6b6f73'); g.addColorStop(0.5,'#9a9fa4'); g.addColorStop(1,'#585c60');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.roundRect(-w/2,-h/2,w,h,8*SCALE); ctx.fill();
+  } else {
+    g.addColorStop(0,'#8a5a2e'); g.addColorStop(0.5,'#a8703c'); g.addColorStop(1,'#6e4522');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.roundRect(-w/2,-h/2,w,h,8*SCALE); ctx.fill();
+    ctx.fillStyle = '#e8c78f';
+    ctx.beginPath(); ctx.ellipse(-w/2+6,0,h/2-6,h/2-6,0,0,6.283); ctx.fill();
+  }
+  ctx.restore();
+}
+
+/* --- Player drawing: a karate fighter, roughly 2 tree-segments tall ---
+   Strikes are chosen automatically (see nextMoveType) and alternate between
+   kicks and punches in short random streaks. */
+function drawPlayer(){
+  const skin = CHARACTERS[selected.character];
+  const wrap = AXES[selected.axe];      // repurposed: belt / wrap accent color
+  const eff  = EFFECTS[selected.effect];
+  const side = player.side;
+  const dir  = side==='left' ? 1 : -1;  // facing direction toward trunk
+  const px = side==='left' ? W/2 - 150*SCALE : W/2 + 150*SCALE;
+  const py = groundY;
+  const S = SCALE * 1.55; // bigger figure, spans roughly two log segments
+
+  ctx.save();
+  ctx.translate(px, py);
+  ctx.scale(dir*S, S);
+
+  // ground shadow
+  ctx.fillStyle = 'rgba(0,0,0,0.25)';
+  ctx.beginPath(); ctx.ellipse(0, 4, 36, 10, 0, 0, 6.283); ctx.fill();
+
+  const swing = player.swinging ? Math.sin(player.swingT*Math.PI) : 0; // 0->1->0
+  const kicking = player.swinging && player.move === 'kick';
+  const punching = player.swinging && player.move === 'punch';
+  const bodyLean = kicking ? -swing*0.16 : (punching ? swing*0.05 : 0);
+
+  const hipY = -34, shoulderY = -70;
+
+  ctx.save();
+  ctx.rotate(bodyLean);
+
+  // ---- Back leg (support) ----
+  drawLeg(-9, hipY, skin, kicking ? -0.18*swing : 0.05, wrap.head);
+
+  // ---- Torso (gi top, V-neck) ----
+  ctx.save();
+  ctx.translate(0, hipY);
+  const bodyG = ctx.createLinearGradient(-22,0,22,0);
+  bodyG.addColorStop(0, skin.shirt2); bodyG.addColorStop(0.5, skin.shirt); bodyG.addColorStop(1, skin.shirt2);
+  ctx.fillStyle = bodyG;
+  ctx.beginPath();
+  ctx.moveTo(-20,4); ctx.quadraticCurveTo(-24,-24,-13,-36);
+  ctx.quadraticCurveTo(0,-42,13,-36);
+  ctx.quadraticCurveTo(24,-24,20,4);
+  ctx.quadraticCurveTo(0,12,-20,4);
+  ctx.closePath(); ctx.fill();
+  // V-neck collar
+  ctx.strokeStyle = 'rgba(0,0,0,0.18)'; ctx.lineWidth = 2.2;
+  ctx.beginPath(); ctx.moveTo(-8,-34); ctx.lineTo(0,-14); ctx.lineTo(8,-34); ctx.stroke();
+  // belt (accent color) with knot
+  ctx.fillStyle = wrap.head2; ctx.fillRect(-21,2,42,7);
+  ctx.fillStyle = wrap.head;  ctx.fillRect(-5,1,10,9);
+  ctx.restore();
+
+  // ---- Front leg (kick leg) ----
+  const frontLegAngle = kicking ? swing*1.65 : 0.05;
+  drawLeg(9, hipY, skin, frontLegAngle, wrap.head);
+
+  // ---- Back arm (guard, near chest) ----
+  ctx.save();
+  ctx.translate(-13, shoulderY);
+  ctx.rotate(punching ? 0.75 + swing*0.15 : 0.95);
+  ctx.fillStyle = skin.shirt2;
+  ctx.beginPath(); ctx.roundRect(-5,0,10,28,5); ctx.fill();
+  ctx.fillStyle = skin.skin;
+  ctx.beginPath(); ctx.arc(0,30,7,0,6.283); ctx.fill();
+  ctx.restore();
+
+  // ---- Head with headband ----
+  ctx.save();
+  ctx.translate(0, shoulderY-14);
+  ctx.fillStyle = skin.hair;
+  ctx.beginPath(); ctx.arc(0,-2,17,0,6.283); ctx.fill();
+  ctx.fillStyle = skin.skin;
+  ctx.beginPath(); ctx.arc(0,2,15,0,6.283); ctx.fill();
+  // cheeks
+  ctx.fillStyle = 'rgba(255,140,120,0.32)';
+  ctx.beginPath(); ctx.arc(-8,7,3.4,0,6.283); ctx.arc(8,7,3.4,0,6.283); ctx.fill();
+  // focused eyebrow
+  ctx.strokeStyle = skin.hair; ctx.lineWidth = 2.2; ctx.lineCap='round';
+  ctx.beginPath(); ctx.moveTo(2,-3); ctx.lineTo(10,-6); ctx.stroke();
+  // eye
+  ctx.fillStyle='#fff'; ctx.beginPath(); ctx.ellipse(6,0,3.6,4,0,0,6.283); ctx.fill();
+  ctx.fillStyle='#2a1a10'; ctx.beginPath(); ctx.arc(7.2,0.4,2,0,6.283); ctx.fill();
+  // headband across forehead
+  ctx.fillStyle = wrap.head;
+  ctx.beginPath(); ctx.roundRect(-16,-9,32,6,3); ctx.fill();
+  ctx.fillStyle = wrap.head2;
+  ctx.beginPath(); ctx.roundRect(-16,-9,32,2,2); ctx.fill();
+  // trailing headband tails at the back
+  ctx.fillStyle = wrap.head;
+  ctx.beginPath();
+  ctx.moveTo(-15,-6); ctx.quadraticCurveTo(-26,-2,-22,8); ctx.lineTo(-17,4);
+  ctx.quadraticCurveTo(-20,-2,-13,-4); ctx.closePath(); ctx.fill();
+  ctx.restore();
+
+  // ---- Front arm (punch arm) ----
+  ctx.save();
+  ctx.translate(13, shoulderY);
+  const punchAngle = punching ? 0.95 + swing*0.65 : 0.95;
+  ctx.rotate(punchAngle);
+  const armLen = punching ? 26 + swing*14 : 26;
+  ctx.fillStyle = skin.shirt;
+  ctx.beginPath(); ctx.roundRect(-5,0,10,armLen,5); ctx.fill();
+  // fist with wrap accent
+  ctx.fillStyle = skin.skin;
+  ctx.beginPath(); ctx.arc(0,armLen+6,7.5,0,6.283); ctx.fill();
+  ctx.fillStyle = wrap.head;
+  ctx.beginPath(); ctx.arc(0,armLen+2,7.5,3.6,5.9); ctx.fill();
+  // punch impact glow
+  if(punching && player.swingT>0.4 && player.swingT<0.8){
+    ctx.fillStyle = wrap.glow; ctx.globalAlpha = 0.5;
+    ctx.beginPath(); ctx.arc(0,armLen+6,16,0,6.283); ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+  ctx.restore();
+
+  // kick impact glow near the extended foot (same transform order as drawLeg)
+  if(kicking && player.swingT>0.4 && player.swingT<0.8){
+    ctx.save();
+    ctx.translate(9, hipY);
+    ctx.rotate(frontLegAngle);
+    ctx.fillStyle = wrap.glow; ctx.globalAlpha = 0.5;
+    ctx.beginPath(); ctx.arc(0,31,16,0,6.283); ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.restore();
+  }
+
+  ctx.restore(); // bodyLean
+
+  // shop effect: soft glowing aura + a few orbiting sparkles ("chiroyli" idle effect)
+  if(eff.name !== "Yo'q"){
+    const t = Date.now()/1000;
+    const pulse = 0.5 + 0.5*Math.sin(t*3);
+    const gx = 0, gy = shoulderY-40;
+    const rg = ctx.createRadialGradient(gx,gy,0,gx,gy,34+6*pulse);
+    rg.addColorStop(0, eff.color); rg.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.globalAlpha = 0.35 + 0.15*pulse;
+    ctx.fillStyle = rg;
+    ctx.beginPath(); ctx.arc(gx,gy,34+6*pulse,0,6.283); ctx.fill();
+    ctx.globalAlpha = 1;
+    for(let i=0;i<3;i++){
+      const a = t*2 + i*(6.283/3);
+      const ox = Math.cos(a)*30, oy = Math.sin(a)*14;
+      ctx.fillStyle = eff.color;
+      ctx.globalAlpha = 0.8;
+      ctx.beginPath(); ctx.arc(gx+ox, gy+oy, 3.2, 0, 6.283); ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  ctx.restore();
+}
+
+/* Leg helper: rotates around the hip so kicks pivot naturally */
+function drawLeg(offsetX, hipY, skin, angle, wrapColor){
+  ctx.save();
+  ctx.translate(offsetX, hipY);
+  ctx.rotate(angle);
+  // gi pants (cropped, light color)
+  ctx.fillStyle = skin.shirt;
+  ctx.beginPath(); ctx.roundRect(-7,0,14,28,5); ctx.fill();
+  // ankle wrap accent
+  ctx.fillStyle = wrapColor;
+  ctx.fillRect(-8,23,16,5);
+  // bare foot
+  ctx.fillStyle = skin.skin;
+  ctx.beginPath(); ctx.roundRect(-9,27,20,9,4); ctx.fill();
+  ctx.restore();
+}
+
+/* --- Particles --- */
+function drawParticles(){
+  particles.forEach(p=>{
+    ctx.save();
+    ctx.globalAlpha = Math.max(p.life,0);
+    ctx.translate(p.x,p.y); ctx.rotate(p.rot);
+    ctx.fillStyle = p.color;
+    if(p.type==='chip'){
+      ctx.beginPath();
+      ctx.moveTo(-p.size,-p.size*0.5); ctx.lineTo(p.size,-p.size*0.3);
+      ctx.lineTo(p.size*0.6,p.size*0.6); ctx.lineTo(-p.size*0.6,p.size*0.5);
+      ctx.closePath(); ctx.fill();
+    } else {
+      ctx.beginPath();
+      ctx.moveTo(0,-p.size); ctx.quadraticCurveTo(p.size,0,0,p.size);
+      ctx.quadraticCurveTo(-p.size,0,0,-p.size); ctx.fill();
+    }
+    ctx.restore();
+  });
+}
+
+/* --- Timer bar HUD (drawn on canvas, above overlay panels) --- */
+function drawTimerBar(){
+  const barW = Math.min(320, W*0.6), barH = 16;
+  const bx = W/2 - barW/2, by = 66;
+  ctx.save();
+  ctx.fillStyle = 'rgba(30,20,10,0.55)';
+  ctx.beginPath(); ctx.roundRect(bx-3,by-3,barW+6,barH+6,10); ctx.fill();
+  const ratio = Math.max(timeLeft/timeMax,0);
+  const col = ratio>0.5 ? '#6bd06b' : ratio>0.25 ? '#f5c542' : '#e0503f';
+  ctx.fillStyle = col;
+  ctx.beginPath(); ctx.roundRect(bx,by,barW*ratio,barH,8); ctx.fill();
+  ctx.restore();
+}
+
+/* =========================================================================
+   UI / SCREEN MANAGEMENT
+   ========================================================================= */
+const screens = {
+  menu: document.getElementById('menuScreen'),
+  howto: document.getElementById('howtoScreen'),
+  shop: document.getElementById('shopScreen'),
+  pause: document.getElementById('pauseScreen'),
+  gameover: document.getElementById('gameoverScreen'),
+};
+const hud = document.getElementById('hud');
+
+function showOnly(name){
+  Object.values(screens).forEach(s=>s.classList.remove('active'));
+  if(name && screens[name]) screens[name].classList.add('active');
+}
+
+function refreshMenuStats(){
+  document.getElementById('menuBest').textContent = "Eng yaxshi natija: " + bestScore;
+  document.getElementById('menuCoins').textContent = "Tanga: " + coins;
+}
+
+function goMenu(){
+  state = 'menu';
+  hud.classList.remove('active');
+  refreshMenuStats();
+  showOnly('menu');
+}
+
+function startGame(){
+  ensureAudio();
+  resetGame();
+  state = 'playing';
+  hud.classList.add('active');
+  showOnly(null);
+  updateHud();
+}
+
+function updateHud(){
+  document.getElementById('hudScore').textContent = "Ochko: " + score;
+  document.getElementById('hudCoins').textContent = "Tanga: " + coins;
+}
+
+function pauseGame(){
+  if(state!=='playing') return;
+  state = 'paused';
+  showOnly('pause');
+}
+function resumeGame(){
+  state = 'playing';
+  showOnly(null);
+}
+
+function showGameOver(){
+  state = 'gameover';
+  document.getElementById('goScore').textContent = "Ochko: " + score;
+  document.getElementById('goBest').textContent = "Eng yaxshi natija: " + bestScore;
+  document.getElementById('goCoins').textContent = "+" + sessionCoins + " tanga";
+  showOnly('gameover');
+  hud.classList.remove('active');
+
+  // Submit the score automatically now that the run has ended.
+  setSubmitStatus("");
+  if(!tg || !tg.initData || !CHAT_ID){
+    setSubmitStatus("Bu faqat Telegram bot ichida ishlaydi", "#a11d1d");
+  } else {
+    submitScore(score, coins);
+  }
+}
+
+/* --- Menu buttons --- */
+document.getElementById('btnStart').onclick = startGame;
+document.getElementById('btnHowto').onclick = ()=> showOnly('howto');
+document.getElementById('btnHowtoBack').onclick = ()=> showOnly('menu');
+document.getElementById('btnShop').onclick = ()=>{ renderShop(); showOnly('shop'); };
+document.getElementById('btnShopBack').onclick = ()=>{ refreshMenuStats(); showOnly('menu'); };
+
+document.getElementById('pauseBtn').onclick = pauseGame;
+document.getElementById('btnResume').onclick = resumeGame;
+document.getElementById('btnPauseRestart').onclick = startGame;
+document.getElementById('btnPauseMenu').onclick = goMenu;
+
+document.getElementById('btnRestart').onclick = startGame;
+document.getElementById('btnGoMenu').onclick = goMenu;
+
+/* --- Shop rendering --- */
+let currentTab = 'characters';
+document.querySelectorAll('.tabBtn').forEach(btn=>{
+  btn.onclick = ()=>{
+    document.querySelectorAll('.tabBtn').forEach(b=>b.classList.remove('active'));
+    btn.classList.add('active');
+    currentTab = btn.dataset.tab;
+    renderShop();
+  };
+});
+
+function shopData(tab){
+  if(tab==='characters') return { list:CHARACTERS, unlockedList:unlocked.characters, selKey:'character' };
+  if(tab==='axes') return { list:AXES, unlockedList:unlocked.axes, selKey:'axe' };
+  return { list:EFFECTS, unlockedList:unlocked.effects, selKey:'effect' };
+}
+
+function renderShop(){
+  document.getElementById('shopCoins').textContent = "Tanga: " + coins;
+  const grid = document.getElementById('shopGrid');
+  grid.innerHTML = '';
+  const { list, unlockedList, selKey } = shopData(currentTab);
+
+  list.forEach((item, idx)=>{
+    const card = document.createElement('div');
+    card.className = 'shopCard';
+
+    const prevCanvas = document.createElement('canvas');
+    prevCanvas.width = 100; prevCanvas.height = 90;
+    card.appendChild(prevCanvas);
+    drawShopPreview(prevCanvas, currentTab, item);
+
+    const nameEl = document.createElement('div');
+    nameEl.className = 'name'; nameEl.textContent = item.name;
+    card.appendChild(nameEl);
+
+    const isUnlocked = unlockedList.includes(idx);
+    const isSelected = selected[selKey] === idx;
+
+    const actionBtn = document.createElement('button');
+    actionBtn.className = 'btn small ' + (isSelected ? '' : 'secondary');
+    if(!isUnlocked){
+      actionBtn.textContent = "Sotib olish (" + item.cost + ")";
+      actionBtn.className = 'btn small warn';
+      actionBtn.onclick = ()=>{
+        if(coins >= item.cost){
+          coins -= item.cost;
+          unlockedList.push(idx);
+          store.set('dk_unlocked', unlocked);
+          store.set('dk_coins', coins);
+          renderShop();
+        }
+      };
+    } else if(isSelected){
+      actionBtn.textContent = "Tanlangan";
+      actionBtn.disabled = true;
+    } else {
+      actionBtn.textContent = "Tanlash";
+      actionBtn.onclick = ()=>{
+        selected[selKey] = idx;
+        store.set('dk_selected', selected);
+        renderShop();
+      };
+    }
+    card.appendChild(actionBtn);
+    grid.appendChild(card);
+  });
+}
+
+/* Small preview renderer for shop cards (character/belt/effect swatches) */
+function drawShopPreview(cv, tab, item){
+  const c = cv.getContext('2d');
+  c.clearRect(0,0,cv.width,cv.height);
+  if(tab==='characters'){
+    c.save(); c.translate(50,80);
+    c.fillStyle = 'rgba(0,0,0,0.15)'; c.beginPath(); c.ellipse(0,4,24,6,0,0,6.283); c.fill();
+    // legs
+    c.fillStyle = item.shirt;
+    c.beginPath(); c.roundRect(-13,-30,10,26,4); c.fill();
+    c.beginPath(); c.roundRect(3,-30,10,26,4); c.fill();
+    c.fillStyle = item.skin;
+    c.beginPath(); c.roundRect(-14,-6,12,7,3); c.fill();
+    c.beginPath(); c.roundRect(2,-6,12,7,3); c.fill();
+    // gi top
+    c.fillStyle = item.shirt;
+    c.beginPath(); c.moveTo(-15,-28); c.quadraticCurveTo(-18,-50,-9,-58);
+    c.quadraticCurveTo(0,-62,9,-58); c.quadraticCurveTo(18,-50,15,-28);
+    c.quadraticCurveTo(0,-20,-15,-28); c.closePath(); c.fill();
+    c.fillStyle = '#c9a227'; c.fillRect(-15,-32,30,5);
+    // head
+    c.fillStyle = item.hair; c.beginPath(); c.arc(0,-66,13,0,6.283); c.fill();
+    c.fillStyle = item.skin; c.beginPath(); c.arc(0,-63,11,0,6.283); c.fill();
+    c.fillStyle = '#e0473f'; c.beginPath(); c.roundRect(-12,-70,24,5,2); c.fill();
+    c.restore();
+  } else if(tab==='axes'){
+    // belt / wrap accent swatch
+    c.save(); c.translate(50,45);
+    c.fillStyle = 'rgba(0,0,0,0.1)'; c.beginPath(); c.roundRect(-32,-14,64,28,10); c.fill();
+    const ag = c.createLinearGradient(-26,0,26,0);
+    ag.addColorStop(0,item.head2); ag.addColorStop(0.5,item.head); ag.addColorStop(1,item.head2);
+    c.fillStyle = ag;
+    c.beginPath(); c.roundRect(-26,-8,52,16,8); c.fill();
+    c.fillStyle = item.glow; c.globalAlpha=0.6;
+    c.beginPath(); c.roundRect(-26,-8,52,4,4); c.fill();
+    c.globalAlpha=1;
+    c.restore();
+  } else {
+    c.save(); c.translate(50,45);
+    const rg = c.createRadialGradient(0,0,0,0,0,34);
+    rg.addColorStop(0,item.color); rg.addColorStop(1,'rgba(0,0,0,0)');
+    c.fillStyle = rg; c.globalAlpha=0.9;
+    c.beginPath(); c.arc(0,0,34,0,6.283); c.fill();
+    c.globalAlpha=1;
+    for(let i=0;i<5;i++){
+      c.fillStyle = item.color;
+      c.beginPath(); c.arc(rand(-22,22),rand(-22,22),rand(3,6),0,6.283); c.fill();
+    }
+    c.restore();
+  }
+}
+
+/* =========================================================================
+   INPUT HANDLING
+   ========================================================================= */
+window.addEventListener('keydown', (e)=>{
+  if(e.key === 'ArrowLeft'){ handleInput('left'); }
+  else if(e.key === 'ArrowRight'){ handleInput('right'); }
+  else if(e.key === 'Escape' || e.key==='p' || e.key==='P'){
+    if(state==='playing') pauseGame();
+    else if(state==='paused') resumeGame();
+  }
+});
+
+function handleInput(direction){
+  if(state === 'playing') chop(direction);
+}
+
+canvas.addEventListener('pointerdown', (e)=>{
+  if(state !== 'playing') return;
+  const x = e.clientX;
+  handleInput(x < W/2 ? 'left' : 'right');
+});
+canvas.style.touchAction = 'none';
+
+/* =========================================================================
+   BOOTSTRAP
+   ========================================================================= */
+resize();
+initBackground();
+resetGame();
+refreshMenuStats();
+requestAnimationFrame(loop);
+
+</script>
+</body>
+</html>
