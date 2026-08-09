@@ -7,8 +7,6 @@ from aiogram.types import (
     Message,
     InlineKeyboardMarkup,
     InlineKeyboardButton,
-    WebAppInfo,
-    FSInputFile,
 )
 
 from config import config
@@ -35,7 +33,7 @@ def _build_keyboard(game: dict, chat_id: int = 0) -> InlineKeyboardMarkup:
 
     btn = InlineKeyboardButton(
         text="🎮 O'ynash",
-        url=url
+        url=url,
     )
 
     return InlineKeyboardMarkup(
@@ -51,7 +49,7 @@ def _build_caption(game: dict) -> str:
 
 
 async def send_game_card(message: Message, game: dict) -> None:
-    """Send one game as a Telegram photo (or text fallback) with Play button."""
+    """Send one game as a Telegram photo/animation with Play button."""
 
     chat_id = message.chat.id
 
@@ -59,21 +57,36 @@ async def send_game_card(message: Message, game: dict) -> None:
     caption = _build_caption(game)
     image_url: str = game.get("image_url", "")
 
-    # Local image
+    # Local image/animation
     if image_url.startswith("/webapp/"):
         file_path = WEBAPP_DIR / image_url.removeprefix("/webapp/")
+
         if file_path.exists():
             try:
+                suffix = file_path.suffix.lower()
+
+                # GIF → Telegram animation
+                if suffix == ".gif":
+                    await message.answer_animation(
+                        animation=str(file_path),
+                        caption=caption,
+                        reply_markup=keyboard,
+                        parse_mode="HTML",
+                    )
+                    return
+
+                # Normal image → Telegram photo
                 await message.answer_photo(
-                    photo=FSInputFile(str(file_path)),
+                    photo=str(file_path),
                     caption=caption,
                     reply_markup=keyboard,
                     parse_mode="HTML",
                 )
                 return
+
             except Exception as exc:
                 logger.warning(
-                    "Local photo failed (%s), falling back: %s",
+                    "Local media failed (%s), falling back: %s",
                     file_path,
                     exc,
                 )
@@ -81,6 +94,19 @@ async def send_game_card(message: Message, game: dict) -> None:
     # Remote image
     if image_url.startswith("http"):
         try:
+            suffix = Path(image_url.split("?", 1)[0]).suffix.lower()
+
+            # Remote GIF → Telegram animation
+            if suffix == ".gif":
+                await message.answer_animation(
+                    animation=image_url,
+                    caption=caption,
+                    reply_markup=keyboard,
+                    parse_mode="HTML",
+                )
+                return
+
+            # Remote normal image → Telegram photo
             await message.answer_photo(
                 photo=image_url,
                 caption=caption,
@@ -88,8 +114,12 @@ async def send_game_card(message: Message, game: dict) -> None:
                 parse_mode="HTML",
             )
             return
+
         except Exception as exc:
-            logger.warning("Remote photo failed, falling back: %s", exc)
+            logger.warning(
+                "Remote media failed, falling back: %s",
+                exc,
+            )
 
     # Text fallback
     await message.answer(
