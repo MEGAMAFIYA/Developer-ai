@@ -119,7 +119,10 @@ async def main() -> None:
     server_task = asyncio.create_task(server.serve(), name="uvicorn-server")
     if not bot_disabled:
         bot_task = asyncio.create_task(
-            dp.start_polling(bot, allowed_updates=["message", "callback_query"]), "inline_query"]
+            dp.start_polling(
+    bot,
+    allowed_updates=["message", "callback_query", "inline_query"],
+)
             name="bot-polling",
         )
 
