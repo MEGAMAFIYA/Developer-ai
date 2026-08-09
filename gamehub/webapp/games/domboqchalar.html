@@ -161,9 +161,9 @@ let storageReady = false;
 
 async function loadProfile(){
   try{
-    const r = await window.storage.get('profile', false);
-    if(r && r.value){
-      const p = JSON.parse(r.value);
+    const raw = localStorage.getItem('domboqchalar_profile');
+    if(raw){
+      const p = JSON.parse(raw);
       profile = Object.assign(JSON.parse(JSON.stringify(DEFAULT_PROFILE)), p);
       if(!profile.unlocked.includes('panda')) profile.unlocked.push('panda');
     }
@@ -174,8 +174,8 @@ async function loadProfile(){
 let saveTimer=null;
 function saveProfile(){
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(async ()=>{
-    try{ await window.storage.set('profile', JSON.stringify(profile), false); }catch(e){}
+  saveTimer = setTimeout(()=>{
+    try{ localStorage.setItem('domboqchalar_profile', JSON.stringify(profile)); }catch(e){}
   }, 250);
 }
 loadProfile();
