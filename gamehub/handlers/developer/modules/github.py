@@ -27,7 +27,7 @@ from services.project_provider import ProjectProviderError, get_project_provider
 logger = logging.getLogger(__name__)
 router = Router(name="dev:github")
 _TG_MAX = 4096
-_GAMES_DIR = "webapp/games"
+_GAMES_DIR = "gamehub/webapp/games"
 _GAME_SLUG_RE = re.compile(r"^[a-z0-9_-]+$")
 _SYSTEM_GAME_STEMS = frozenset({
     "404",
