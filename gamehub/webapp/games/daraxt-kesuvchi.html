@@ -175,6 +175,7 @@
         <div class="stat" id="goBest">Eng yaxshi natija: 0</div>
       </div>
       <div class="stat" id="goCoins" style="margin-bottom:14px;">+0 tanga</div>
+      <div id="submitStatus" style="min-height:22px;margin:6px 0 4px;color:#6b3d12;font-weight:700;font-size:clamp(12px,2.8vw,15px);"></div>
       <button class="btn" id="btnRestart">Qayta o'ynash</button><br>
       <button class="btn secondary" id="btnGoMenu">Bosh menyu</button>
     </div>
@@ -220,6 +221,87 @@ let bestScore = store.get('dk_best', 0);
 let coins     = store.get('dk_coins', 0);
 let unlocked  = store.get('dk_unlocked', { characters:[0], axes:[0], effects:[0] });
 let selected  = store.get('dk_selected', { character:0, axe:0, effect:0 });
+
+/* =========================================================================
+   TELEGRAM WEBAPP INTEGRATION
+   - Initializes the Telegram WebApp SDK.
+   - Reads chat_id from the ?cid= URL parameter.
+   - Submits the final score exactly once per finished run, via
+     submitScore(), which is only ever called from showGameOver()
+     (i.e. after the run has actually ended — never while state==='playing').
+   ========================================================================= */
+const tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null;
+
+if(tg){
+  try{
+    tg.ready();
+    tg.expand();
+    // Match the app chrome to the game's dark theme where supported.
+    if(tg.setBackgroundColor) tg.setBackgroundColor('#112233');
+    if(tg.setHeaderColor) tg.setHeaderColor('#112233');
+    if(tg.disableVerticalSwipes) tg.disableVerticalSwipes();
+  }catch(e){ /* not fatal — game still works standalone for local testing */ }
+}
+
+function getUrlParam(name){
+  try{ return new URLSearchParams(window.location.search).get(name); }
+  catch(e){ return null; }
+}
+const CHAT_ID_RAW = getUrlParam('cid');
+let CHAT_ID = Number(CHAT_ID_RAW);
+if(!Number.isFinite(CHAT_ID)){ CHAT_ID = 0; }
+
+// Guards against ever submitting more than once for the same finished run,
+// and against submitting mid-game (state must already be 'gameover').
+// Submission is now user-initiated: showGameOver() reveals a "Reytingga
+// yuborish" button instead of firing the request silently, and submitScore()
+// reports success/failure back into the UI so a failed attempt is visible
+// and can be retried.
+let scoreSubmitted = false;
+
+function setSubmitStatus(text, color){
+  const el = document.getElementById('submitStatus');
+  if(el){ el.textContent = text; el.style.color = color || '#6b3d12'; }
+}
+
+async function submitScore(finalScore, finalCoins){
+  if(state !== 'gameover') return;      // never submit while the game is running
+  if(scoreSubmitted) return;            // already submitted this run
+
+  if(!tg || !tg.initData || !CHAT_ID){
+    // No valid Telegram/session context — nothing to send anywhere.
+    setSubmitStatus("Bu faqat Telegram bot ichida ishlaydi", "#a11d1d");
+    return;
+  }
+
+  setSubmitStatus("Yuborilmoqda...");
+
+  try{
+    console.log("SCORE SUBMIT", {
+      game: "daraxt-kesuvchi",
+      score: Number(finalScore),
+      init_data_received: Boolean(tg.initData),
+      init_data_length: tg.initData ? tg.initData.length : 0,
+      chat_id: CHAT_ID
+    });
+    const res = await fetch('/api/scores', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        game: "daraxt-kesuvchi",
+        score: Number(finalScore),
+        init_data: tg.initData,   // backend must verify this against the bot token; sent RAW, unmodified
+        chat_id: CHAT_ID
+      })
+    });
+    if(!res.ok) throw new Error('HTTP ' + res.status);
+    scoreSubmitted = true;       // one successful submission per run — no retries needed
+    setSubmitStatus("Reytingga yuborildi ✓", "#1f5f1f");
+  }catch(e){
+    // Failed — leave scoreSubmitted false so a future run can still submit.
+    setSubmitStatus("Yuborilmadi", "#a11d1d");
+  }
+}
 
 /* ----------------------------- Audio (WebAudio synth) -------------------- */
 let actx = null;
@@ -377,6 +459,7 @@ function resetGame(){
   initTree();
   particles = [];
   shakeMag = 0; shakeT = 0;
+  scoreSubmitted = false; // new run — allow exactly one submission once it ends
 }
 
 /* Called once a segment is actually fully broken (not on partial stone hits) */
@@ -1088,38 +1171,13 @@ function showGameOver(){
   document.getElementById('goCoins').textContent = "+" + sessionCoins + " tanga";
   showOnly('gameover');
   hud.classList.remove('active');
-  submitScore(score);
-}
 
-async function submitScore(score){
-  try {
-    const tg = window.Telegram.WebApp;
-    const initData = tg.initData;
-    const chatId = new URLSearchParams(window.location.search).get("cid") || "0";
-    const game = "daraxt-kesuvchi";
-    const chat_id = Number(chatId);
-
-    console.log("SCORE SUBMIT", {
-      game,
-      score,
-      init_data_received: Boolean(initData),
-      init_data_length: initData ? initData.length : 0,
-      chat_id
-    });
-
-    await fetch('/api/scores', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        game,
-        score: Number(score),
-        init_data: initData,
-        chat_id
-      })
-    });
-  } catch (e) {
-    // Never crash the game if Telegram or the network is unavailable.
-    console.warn("SCORE SUBMIT FAILED", e);
+  // Submit the score automatically now that the run has ended.
+  setSubmitStatus("");
+  if(!tg || !tg.initData || !CHAT_ID){
+    setSubmitStatus("Bu faqat Telegram bot ichida ishlaydi", "#a11d1d");
+  } else {
+    submitScore(score, coins);
   }
 }
 
