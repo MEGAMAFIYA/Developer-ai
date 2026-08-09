@@ -43,7 +43,7 @@ from services.project_provider import ProjectProviderError, get_project_provider
 logger = logging.getLogger(__name__)
 router = Router(name="dev:files")
 
-_GAMES_DIR = "webapp/games"
+_GAMES_DIR = "gamehub/webapp/games"
 _TG_MAX    = 4096
 _VIEW_PFX  = "dev:files:view:"    # dynamic: dev:files:view:<filename>
 _DEL_PFX   = "dev:files:del:"     # dynamic: dev:files:del:<filename>
