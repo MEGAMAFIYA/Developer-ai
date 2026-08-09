@@ -175,7 +175,7 @@
       <div class="row"><span>Eng yaxshi natija:</span><b id="finalBest">0</b></div>
     </div>
     <div class="newBest hidden" id="newBestLabel">🏆 YANGI REKORD!</div>
-    <div id="submitStatus" class="hint"></div>
+    <button class="btn blue" id="submitScoreBtn">📤 Natijani uzatish</button>
     <button class="btn orange" id="restartBtn">↻ Qayta o'ynash</button>
   </div>
 </div>
@@ -267,17 +267,21 @@ const pauseBtn = document.getElementById('pauseBtn');
 const resumeBtn = document.getElementById('resumeBtn');
 const restartBtn = document.getElementById('restartBtn');
 const restartFromPauseBtn = document.getElementById('restartFromPauseBtn');
-const submitStatusEl = document.getElementById('submitStatus');
+const submitScoreBtn = document.getElementById('submitScoreBtn');
 
-async function autoSubmitScore(finalScore){
-  if(submitStatusEl) submitStatusEl.textContent = 'Natija yuborilmoqda...';
+const SUBMIT_LABEL_DEFAULT = submitScoreBtn.textContent;
+submitScoreBtn.addEventListener('click', async () => {
+  if(scoreSubmitted) return;
+  submitScoreBtn.disabled = true;
+  submitScoreBtn.textContent = 'Yuborilmoqda...';
   try{
-    await submitScore(finalScore);
-    if(submitStatusEl) submitStatusEl.textContent = 'Natija yuborildi ✓';
+    await submitScore(finalGameScore);
+    submitScoreBtn.textContent = 'Natija yuborildi ✓';
   }catch(e){
-    if(submitStatusEl) submitStatusEl.textContent = "Natijani yuborib bo'lmadi";
+    submitScoreBtn.disabled = false;
+    submitScoreBtn.textContent = 'Qayta yuborish';
   }
-}
+});
 
 // ============ STORAGE ============
 const STORAGE_KEY = 'qanotParvoziBest';
@@ -426,11 +430,11 @@ function endGame(){
   newBestLabel.classList.toggle('hidden', !isNew);
   gameOverOverlay.classList.remove('hidden');
 
-  // Reset submit state for this new finished run, then submit automatically.
+  // Reset submit state/button for this new finished run.
   finalGameScore = Number(score);
   scoreSubmitted = false;
-  if(submitStatusEl) submitStatusEl.textContent = '';
-  autoSubmitScore(finalGameScore);
+  submitScoreBtn.disabled = false;
+  submitScoreBtn.textContent = SUBMIT_LABEL_DEFAULT;
 }
 
 // ============ SPAWNING ============
