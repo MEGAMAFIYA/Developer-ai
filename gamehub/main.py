@@ -12,8 +12,8 @@ Both SIGTERM (sent by Render/Docker on deploy/scale-down) and SIGINT
 Logging
 ───────
 When RENDER=true (set by render.yaml) only stdout is used — Render
-streams it to its log viewer.  In all other environments a rotating file
-handler is added alongside stdout.
+streams it to its log viewer.  In all other environments a rotating
+file handler is added alongside stdout.
 """
 
 import asyncio
@@ -117,12 +117,17 @@ async def main() -> None:
 
     # ── Concurrent tasks ──────────────────────────────────────────────────────
     server_task = asyncio.create_task(server.serve(), name="uvicorn-server")
+
     if not bot_disabled:
         bot_task = asyncio.create_task(
             dp.start_polling(
-    bot,
-    allowed_updates=["message", "callback_query", "inline_query"],
-)
+                bot,
+                allowed_updates=[
+                    "message",
+                    "callback_query",
+                    "inline_query",
+                ],
+            ),
             name="bot-polling",
         )
 
@@ -156,7 +161,10 @@ async def main() -> None:
         logger.exception("Unexpected error in main gather")
     finally:
         logger.info("Closing database pools...")
-        for name, closer in [("global_db", close_global_pool), ("game_db", close_game_pool)]:
+        for name, closer in [
+            ("global_db", close_global_pool),
+            ("game_db", close_game_pool),
+        ]:
             try:
                 await closer()
                 logger.info("%s pool closed.", name)
