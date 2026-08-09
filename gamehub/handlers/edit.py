@@ -522,9 +522,39 @@ async def cb_save(callback: CallbackQuery, state: FSMContext, bot: Bot) -> None:
 
         # 2. Replace image on disk if a new image was uploaded
         if data.get("edit_image_file_id") and data.get("edit_image_ext"):
-            await save_image(bot, data["edit_image_file_id"], slug, data["edit_image_ext"])
+            image_path = await save_image(
+                bot, data["edit_image_file_id"], slug, data["edit_image_ext"]
+            )
             image_url = image_db_url(slug, data["edit_image_ext"])
             logger.info("Replaced image for slug=%s → %s", slug, image_url)
+
+            # Keep the runtime save above non-fatal to GitHub: the game and its
+            # local asset must still be persisted if the remote update fails.
+            if config.AUTO_GITHUB_PUSH:
+                from services.github_service import push_game_image
+
+                gh_ok, gh_msg = await push_game_image(
+                    slug,
+                    image_path.read_bytes(),
+                    data["edit_image_ext"],
+                )
+                if gh_ok:
+                    logger.info("GitHub image update OK: slug=%s | %s", slug, gh_msg)
+                    gh_status_line += "\n🐙 GitHub: ✅ rasm asset push qilindi"
+                else:
+                    logger.error("GitHub image update FAILED: slug=%s | %s", slug, gh_msg)
+                    gh_status_line += (
+                        "\n🐙 GitHub: ⚠️ rasm push amalga oshmadi (o'yin saqlandi)"
+                    )
+                    await callback.message.answer(
+                        "⚠️ <b>GitHub rasm push xatosi</b>\n\n"
+                        "O'yin va lokal rasm muvaffaqiyatli saqlandi, "
+                        "lekin rasm GitHub'ga push qilinmadi.\n\n"
+                        f"<code>{gh_msg[:300]}</code>",
+                        parse_mode="HTML",
+                    )
+            else:
+                logger.info("[GITHUB] AUTO_GITHUB_PUSH=False — image push o'tkazib yuborildi")
 
         # 3. Update database (ID and slug never change)
         game = await update_game(

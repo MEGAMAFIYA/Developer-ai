@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 
+from services.upload_service import image_db_url
 from services.project_provider import ProjectProviderError, get_project_provider
 
 logger = logging.getLogger(__name__)
@@ -71,4 +72,25 @@ async def push_game_html(
         return False, str(exc)
     except Exception as exc:
         logger.exception("[GITHUB API] Unexpected HTML update error: %s", exc)
+        return False, f"GitHub API kutilmagan xatosi: {exc}"
+
+
+async def push_game_image(
+    slug: str,
+    image_content: bytes,
+    image_ext: str,
+) -> tuple[bool, str]:
+    """Update/create the cover asset at the same path used by the game card."""
+    image_url = image_db_url(slug, image_ext)
+    path = f"webapp{image_url.removeprefix('/webapp')}"
+    commit_message = f"Update game image: {slug}"
+    try:
+        await get_project_provider().put_file(path, image_content, commit_message)
+        logger.info("[GITHUB API] Image update OK: slug=%s path=%s", slug, path)
+        return True, commit_message
+    except ProjectProviderError as exc:
+        logger.error("[GITHUB API] Image update failed: slug=%s path=%s: %s", slug, path, exc)
+        return False, str(exc)
+    except Exception as exc:
+        logger.exception("[GITHUB API] Unexpected image update error: slug=%s", slug)
         return False, f"GitHub API kutilmagan xatosi: {exc}"
