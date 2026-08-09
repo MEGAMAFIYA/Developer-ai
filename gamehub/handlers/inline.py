@@ -56,20 +56,41 @@ async def inline_games(inline_query: InlineQuery) -> None:
             ]
         )
 
-        results.append(
-            InlineQueryResultArticle(
-                id=f"game:{slug}",
-                title=f"🎮 {name}",
-                description=description[:200],
-                input_message_content=InputTextMessageContent(
-                    message_text=(
-                        f"🎮 <b>{name}</b>\n\n"
-                        f"{description}"
-                    ),
-                    parse_mode="HTML",
-                ),
-                reply_markup=keyboard,
+        # ── Game image / thumbnail ────────────────────────────────────────
+        image_url = str(game.get("image_url") or "").strip()
+
+        if image_url.startswith("/"):
+            thumbnail_url = (
+                f"{config.WEBAPP_URL.rstrip('/')}"
+                f"{image_url}"
             )
+        elif image_url.startswith("http://") or image_url.startswith("https://"):
+            thumbnail_url = image_url
+        else:
+            thumbnail_url = ""
+
+        result_kwargs = {
+            "id": f"game:{slug}",
+            "title": f"🎮 {name}",
+            "description": description[:200],
+            "input_message_content": InputTextMessageContent(
+                message_text=(
+                    f"🎮 <b>{name}</b>\n\n"
+                    f"{description}"
+                ),
+                parse_mode="HTML",
+            ),
+            "reply_markup": keyboard,
+        }
+
+        # Rasm mavjud bo'lsa Telegram inline natijasiga thumbnail beradi.
+        if thumbnail_url:
+            result_kwargs["thumbnail_url"] = thumbnail_url
+            result_kwargs["thumbnail_width"] = 320
+            result_kwargs["thumbnail_height"] = 180
+
+        results.append(
+            InlineQueryResultArticle(**result_kwargs)
         )
 
     await inline_query.answer(
