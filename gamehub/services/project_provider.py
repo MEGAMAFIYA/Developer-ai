@@ -94,17 +94,21 @@ class GitHubProjectProvider:
         ), settings
 
     @staticmethod
-    def normalize_path(path: str) -> str:
+    def normalize_path(path: str, *, preserve_repository_root: bool = False) -> str:
         value = (path or "").strip().replace("\\", "/")
-        value = value.removeprefix("gamehub/").lstrip("/")
+        if not preserve_repository_root:
+            value = value.removeprefix("gamehub/").lstrip("/")
         normalized = posixpath.normpath(value)
         if not value or normalized in ("", ".", "..") or normalized.startswith("../"):
             raise ProjectProviderError("Noto'g'ri repository yo'li.")
         return normalized
 
     @staticmethod
-    def _safe_path(path: str) -> str:
-        return GitHubProjectProvider.normalize_path(path)
+    def _safe_path(path: str, *, preserve_repository_root: bool = False) -> str:
+        return GitHubProjectProvider.normalize_path(
+            path,
+            preserve_repository_root=preserve_repository_root,
+        )
 
     @staticmethod
     def _url(settings: dict[str, str], suffix: str) -> str:
@@ -228,8 +232,17 @@ class GitHubProjectProvider:
         prefix = prefix + "/"
         return [entry for entry in entries if entry.path.startswith(prefix)]
 
-    async def get_file(self, path: str, force: bool = False) -> RepositoryFile:
-        normalized = self._safe_path(path)
+    async def get_file(
+        self,
+        path: str,
+        force: bool = False,
+        *,
+        preserve_repository_root: bool = False,
+    ) -> RepositoryFile:
+        normalized = self._safe_path(
+            path,
+            preserve_repository_root=preserve_repository_root,
+        )
         now = time.monotonic()
         cached = self._file_cache.get(normalized)
         if not force and cached and now - cached[0] < _CACHE_TTL:
@@ -268,8 +281,16 @@ class GitHubProjectProvider:
         self._file_cache[normalized] = (now, result)
         return result
 
-    async def get_file_bytes(self, path: str) -> tuple[bytes, str]:
-        file = await self.get_file(path)
+    async def get_file_bytes(
+        self,
+        path: str,
+        *,
+        preserve_repository_root: bool = False,
+    ) -> tuple[bytes, str]:
+        file = await self.get_file(
+            path,
+            preserve_repository_root=preserve_repository_root,
+        )
         return file.content.encode("utf-8"), file.sha
 
     async def put_file(
@@ -279,11 +300,21 @@ class GitHubProjectProvider:
         message: str,
         *,
         sha: str | None = None,
+        preserve_repository_root: bool = False,
     ) -> dict:
-        normalized = self._safe_path(path)
+        normalized = self._safe_path(
+            path,
+            preserve_repository_root=preserve_repository_root,
+        )
         if sha is None:
             try:
-                sha = (await self.get_file(normalized, force=True)).sha
+                sha = (
+                    await self.get_file(
+                        normalized,
+                        force=True,
+                        preserve_repository_root=preserve_repository_root,
+                    )
+                ).sha
             except FileNotFoundError:
                 sha = None
         raw = content.encode("utf-8") if isinstance(content, str) else content

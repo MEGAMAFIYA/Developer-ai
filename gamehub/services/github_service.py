@@ -10,10 +10,33 @@ from __future__ import annotations
 
 import logging
 
-from services.upload_service import image_db_url
 from services.project_provider import ProjectProviderError, get_project_provider
 
 logger = logging.getLogger(__name__)
+
+# Render's Dockerfile copies ``gamehub/`` into the image, and FastAPI serves
+# ``gamehub/webapp``.  Keep these repository paths aligned with that deployed
+# checkout; do not write the similarly-named repository-root ``webapp/`` tree.
+_DEPLOY_WEBAPP_ROOT = "gamehub/webapp"
+
+
+def _game_html_path(slug: str) -> str:
+    return f"{_DEPLOY_WEBAPP_ROOT}/games/{slug}.html"
+
+
+def _game_image_path(slug: str, image_ext: str) -> str:
+    return f"{_DEPLOY_WEBAPP_ROOT}/assets/games/{slug}{image_ext}"
+
+
+async def _put_deploy_file(provider, path: str, content: bytes, message: str) -> None:
+    """Write a file using the exact repository path used by Render."""
+    await provider.put_file(
+        path,
+        content,
+        message,
+        preserve_repository_root=True,
+    )
+
 
 async def push_game_files(
     slug: str,
@@ -26,13 +49,15 @@ async def push_game_files(
     commit_message = f"Add game: {slug}"
     try:
         provider = get_project_provider()
-        await provider.put_file(
-            f"webapp/games/{slug}.html",
+        await _put_deploy_file(
+            provider,
+            _game_html_path(slug),
             html_content,
             commit_message,
         )
-        await provider.put_file(
-            f"webapp/assets/games/{slug}{image_ext}",
+        await _put_deploy_file(
+            provider,
+            _game_image_path(slug, image_ext),
             image_content,
             commit_message,
         )
@@ -52,11 +77,14 @@ async def push_game_html(
 ) -> tuple[bool, str]:
     """Update one existing game's HTML through the shared project provider."""
     commit_message = f"Update game: {slug}"
-    path = f"webapp/games/{slug}.html"
+    path = _game_html_path(slug)
     try:
         provider = get_project_provider()
         try:
-            current_content, _ = await provider.get_file_bytes(path)
+            current_content, _ = await provider.get_file_bytes(
+                path,
+                preserve_repository_root=True,
+            )
         except FileNotFoundError:
             current_content = None
 
@@ -64,7 +92,7 @@ async def push_game_html(
             logger.info("[GITHUB API] HTML unchanged: slug=%s", slug)
             return True, f"{commit_message} | o'zgarish yo'q"
 
-        await provider.put_file(path, html_content, commit_message)
+        await _put_deploy_file(provider, path, html_content, commit_message)
         logger.info("[GITHUB API] HTML update OK: slug=%s", slug)
         return True, commit_message
     except ProjectProviderError as exc:
@@ -81,11 +109,16 @@ async def push_game_image(
     image_ext: str,
 ) -> tuple[bool, str]:
     """Update/create the cover asset at the same path used by the game card."""
-    image_url = image_db_url(slug, image_ext)
-    path = f"webapp{image_url.removeprefix('/webapp')}"
+    image_ext = image_ext if image_ext.startswith(".") else f".{image_ext}"
+    path = _game_image_path(slug, image_ext)
     commit_message = f"Update game image: {slug}"
     try:
-        await get_project_provider().put_file(path, image_content, commit_message)
+        await _put_deploy_file(
+            get_project_provider(),
+            path,
+            image_content,
+            commit_message,
+        )
         logger.info("[GITHUB API] Image update OK: slug=%s path=%s", slug, path)
         return True, commit_message
     except ProjectProviderError as exc:
