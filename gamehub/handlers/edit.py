@@ -547,7 +547,7 @@ async def cb_save(callback: CallbackQuery, state: FSMContext, bot: Bot) -> None:
             image_path = await save_image(
                 bot, data["edit_image_file_id"], slug, data["edit_image_ext"]
             )
-            image_url = image_db_url(slug, data["edit_image_ext"])
+            image_url = image_db_url(slug, image_path.suffix)
             logger.info("Replaced image for slug=%s → %s", slug, image_url)
 
             # Keep the runtime save above non-fatal to GitHub: the game and its
@@ -558,7 +558,7 @@ async def cb_save(callback: CallbackQuery, state: FSMContext, bot: Bot) -> None:
                 gh_ok, gh_msg = await push_game_image(
                     slug,
                     image_path.read_bytes(),
-                    data["edit_image_ext"],
+                    image_path.suffix,
                 )
                 if gh_ok:
                     logger.info("GitHub image update OK: slug=%s | %s", slug, gh_msg)

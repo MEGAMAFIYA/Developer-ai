@@ -1,0 +1,95 @@
+Fix ONLY the GIF image upload/save problem in the existing game editing flow.
+
+IMPORTANT:
+- Do NOT run tests.
+- Do NOT run pytest.
+- Do NOT run lint.
+- Do NOT run syntax checks.
+- Do NOT run the application.
+- Do NOT spend time on verification/testing.
+- We will test manually through Telegram ourselves to avoid test/usage limits.
+- Make the code change only, then stop and report exactly what files and lines/functions were changed.
+
+Problem:
+Admin → /tuzatish → select game → Cover image → upload a GIF → Save.
+
+Current error:
+
+ValueError: Yuklangan fayl haqiqiy rasm formatiga mos emas.
+
+Traceback points to:
+
+handlers/edit.py → cb_save()
+    → services.upload_service.save_image()
+    → is_valid_image_bytes()
+
+Current architecture:
+- edit.py step_image() supports:
+  - Telegram photo
+  - Telegram animation
+  - image document
+- upload_service.py contains:
+  - image_ext_from_filename_or_mime()
+  - is_valid_image_bytes()
+  - save_image()
+  - save_image_bytes()
+
+Goal:
+Make GIF uploads work correctly in /tuzatish without breaking existing JPEG, PNG, WEBP, or normal Telegram photo uploads.
+
+Requirements:
+1. Preserve the existing project architecture.
+2. Preserve existing FSM states, callbacks, commands, database behavior, GitHub behavior, and game card behavior.
+3. Do NOT modify unrelated modules.
+4. Do NOT remove image validation completely.
+5. Do NOT simply bypass is_valid_image_bytes().
+6. Correctly handle GIF uploaded either as:
+   - Telegram Animation
+   - GIF image document
+7. The extension passed to save_image() must correctly correspond to the actual downloaded GIF bytes.
+8. Keep GIF files as GIF. Do not convert/transcode them to another format.
+9. Keep existing JPEG/PNG/WEBP behavior unchanged.
+10. If the Telegram metadata is unreliable, determine the image type from the downloaded bytes safely rather than trusting only filename/MIME metadata.
+11. Make the smallest safe change necessary.
+12. Ensure the final database image_url still points to the actual saved GIF file.
+13. Do not modify game_service.py unless absolutely required by the GIF fix. Prefer not to touch it.
+14. Do not modify /yangi behavior unless the shared upload helper must be adjusted so both /yangi and /tuzatish remain compatible.
+
+Known relevant code:
+
+upload_service.py currently validates GIF with:
+
+    if normalized_ext == ".gif":
+        return content.startswith((b"GIF87a", b"GIF89a"))
+
+and save_image() does:
+
+    content = buffer.getvalue()
+    if not is_valid_image_bytes(content, ext):
+        raise ValueError("Yuklangan fayl haqiqiy rasm formatiga mos emas.")
+    dest.write_bytes(content)
+
+edit.py currently determines GIF as:
+
+    elif message.animation:
+        ext = ".gif"
+        file_id = message.animation.file_id
+        image_kind = "animation"
+
+and for document:
+
+    ext = image_ext_from_filename_or_mime(doc.file_name, doc.mime_type)
+
+The production traceback is:
+
+handlers/edit.py line 547:
+    image_path = await save_image(
+        bot, data["edit_image_file_id"], slug, data["edit_image_ext"]
+    )
+
+services/upload_service.py line 87:
+    raise ValueError("Yuklangan fayl haqiqiy rasm formatiga mos emas.")
+
+Fix the root cause rather than hiding the exception.
+
+Again: DO NOT TEST ANYTHING. Only implement the minimal code fix and tell me what was changed.

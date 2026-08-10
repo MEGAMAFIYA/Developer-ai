@@ -44,19 +44,25 @@ def image_ext_from_filename_or_mime(
 
 
 def is_valid_image_bytes(content: bytes, ext: str) -> bool:
-    """Validate the downloaded bytes without transcoding the uploaded asset."""
+    """Validate image bytes against the detected signature extension."""
+    actual_ext = image_ext_from_bytes(content)
     normalized_ext = ext if ext.startswith(".") else f".{ext}"
     if normalized_ext == ".jpeg":
         normalized_ext = ".jpg"
-    if normalized_ext == ".gif":
-        return content.startswith((b"GIF87a", b"GIF89a"))
-    if normalized_ext == ".png":
-        return content.startswith(b"\x89PNG\r\n\x1a\n")
-    if normalized_ext == ".jpg":
-        return content.startswith(b"\xff\xd8\xff")
-    if normalized_ext == ".webp":
-        return len(content) >= 12 and content[:4] == b"RIFF" and content[8:12] == b"WEBP"
-    return False
+    return actual_ext is not None and actual_ext == normalized_ext
+
+
+def image_ext_from_bytes(content: bytes) -> str | None:
+    """Return the real supported image extension from file-signature bytes."""
+    if content.startswith((b"GIF87a", b"GIF89a")):
+        return ".gif"
+    if content.startswith(b"\x89PNG\r\n\x1a\n"):
+        return ".png"
+    if content.startswith(b"\xff\xd8\xff"):
+        return ".jpg"
+    if len(content) >= 12 and content[:4] == b"RIFF" and content[8:12] == b"WEBP":
+        return ".webp"
+    return None
 
 
 def ensure_dirs() -> None:
@@ -83,8 +89,10 @@ async def save_image(bot: Bot, file_id: str, slug: str, ext: str) -> Path:
     buffer = io.BytesIO()
     await bot.download_file(file_info.file_path, destination=buffer)
     content = buffer.getvalue()
-    if not is_valid_image_bytes(content, ext):
+    actual_ext = image_ext_from_bytes(content)
+    if actual_ext is None or not is_valid_image_bytes(content, actual_ext):
         raise ValueError("Yuklangan fayl haqiqiy rasm formatiga mos emas.")
+    dest = ASSETS_DIR / f"{slug}{actual_ext}"
     dest.write_bytes(content)
     logger.info("Image saved: %s", dest)
     return dest
@@ -106,10 +114,10 @@ def save_html_bytes(slug: str, content: bytes) -> Path:
 def save_image_bytes(slug: str, ext: str, content: bytes) -> Path:
     """Persist image bytes in the runtime asset directory."""
     ensure_dirs()
-    ext = ext if ext.startswith(".") else f".{ext}"
-    if not is_valid_image_bytes(content, ext):
+    actual_ext = image_ext_from_bytes(content)
+    if actual_ext is None or not is_valid_image_bytes(content, actual_ext):
         raise ValueError("Yuklangan fayl haqiqiy rasm formatiga mos emas.")
-    dest = ASSETS_DIR / f"{slug}{ext}"
+    dest = ASSETS_DIR / f"{slug}{actual_ext}"
     dest.write_bytes(content)
     logger.info("Runtime image saved: %s", dest)
     return dest

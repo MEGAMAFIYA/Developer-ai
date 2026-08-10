@@ -352,10 +352,10 @@ async def cb_save(callback: CallbackQuery, state: FSMContext, bot: Bot) -> None:
         html_bytes = await _download_telegram_bytes(bot, data["html_file_id"])
         image_bytes = await _download_telegram_bytes(bot, data["image_file_id"])
         save_html_bytes(slug, html_bytes)
-        save_image_bytes(slug, image_ext, image_bytes)
+        image_path = save_image_bytes(slug, image_ext, image_bytes)
 
         # 3. Insert into Global DB
-        img_url  = image_db_url(slug, image_ext)
+        img_url  = image_db_url(slug, image_path.suffix)
         html_file = f"{slug}.html"
 
         game = await add_game(
@@ -378,7 +378,7 @@ async def cb_save(callback: CallbackQuery, state: FSMContext, bot: Bot) -> None:
                 slug,
                 html_bytes,
                 image_bytes,
-                image_ext,
+                image_path.suffix,
             )
             if gh_ok:
                 logger.info("GitHub push OK: slug=%s | %s", slug, gh_msg)
