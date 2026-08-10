@@ -7,6 +7,7 @@ from aiogram.types import (
     Message,
     InlineKeyboardMarkup,
     InlineKeyboardButton,
+    FSInputFile,
 )
 
 from config import config
@@ -23,7 +24,7 @@ def _build_keyboard(game: dict, chat_id: int = 0) -> InlineKeyboardMarkup:
     start_param = (
         f"{game['slug']}__{chat_id}"
         if chat_id
-        else game['slug']
+        else game["slug"]
     )
 
     url = (
@@ -49,7 +50,7 @@ def _build_caption(game: dict) -> str:
 
 
 async def send_game_card(message: Message, game: dict) -> None:
-    """Send one game as a Telegram photo/animation with Play button."""
+    """Send one game card with local/remote image or GIF."""
 
     chat_id = message.chat.id
 
@@ -57,32 +58,41 @@ async def send_game_card(message: Message, game: dict) -> None:
     caption = _build_caption(game)
     image_url: str = game.get("image_url", "")
 
-    # Local image/animation
+    # ─────────────────────────────────────────────────────────────
+    # Local image / GIF
+    # ─────────────────────────────────────────────────────────────
     if image_url.startswith("/webapp/"):
         file_path = WEBAPP_DIR / image_url.removeprefix("/webapp/")
 
-        if file_path.exists():
+        if file_path.exists() and file_path.is_file():
             try:
                 suffix = file_path.suffix.lower()
+                media = FSInputFile(str(file_path))
 
                 # GIF → Telegram animation
                 if suffix == ".gif":
                     await message.answer_animation(
-                        animation=str(file_path),
+                        animation=media,
                         caption=caption,
                         reply_markup=keyboard,
                         parse_mode="HTML",
                     )
                     return
 
-                # Normal image → Telegram photo
-                await message.answer_photo(
-                    photo=str(file_path),
-                    caption=caption,
-                    reply_markup=keyboard,
-                    parse_mode="HTML",
+                # JPG / PNG / WEBP → Telegram photo
+                if suffix in {".jpg", ".jpeg", ".png", ".webp"}:
+                    await message.answer_photo(
+                        photo=media,
+                        caption=caption,
+                        reply_markup=keyboard,
+                        parse_mode="HTML",
+                    )
+                    return
+
+                logger.warning(
+                    "Unsupported local image extension: %s",
+                    suffix,
                 )
-                return
 
             except Exception as exc:
                 logger.warning(
@@ -90,11 +100,20 @@ async def send_game_card(message: Message, game: dict) -> None:
                     file_path,
                     exc,
                 )
+        else:
+            logger.warning(
+                "Local media file not found: %s",
+                file_path,
+            )
 
-    # Remote image
-    if image_url.startswith("http"):
+    # ─────────────────────────────────────────────────────────────
+    # Remote image / GIF
+    # ─────────────────────────────────────────────────────────────
+    if image_url.startswith("http://") or image_url.startswith("https://"):
         try:
-            suffix = Path(image_url.split("?", 1)[0]).suffix.lower()
+            suffix = Path(
+                image_url.split("?", 1)[0]
+            ).suffix.lower()
 
             # Remote GIF → Telegram animation
             if suffix == ".gif":
@@ -121,7 +140,9 @@ async def send_game_card(message: Message, game: dict) -> None:
                 exc,
             )
 
+    # ─────────────────────────────────────────────────────────────
     # Text fallback
+    # ─────────────────────────────────────────────────────────────
     await message.answer(
         caption,
         reply_markup=keyboard,
