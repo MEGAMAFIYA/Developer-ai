@@ -745,22 +745,11 @@ async def cb_save(
         )
 
         # ─────────────────────────────────────────────────────────
-        # GitHub
-        # ─────────────────────────────────────────────────────────
-
+        # GitHub auto-push
         gh_status_line = ""
 
-        if not config.AUTO_GITHUB_PUSH:
-
-            logger.info(
-                "[GITHUB] AUTO_GITHUB_PUSH=False"
-            )
-
         if config.AUTO_GITHUB_PUSH:
-
-            from services.github_service import (
-                push_game_files,
-            )
+            from services.github_service import push_game_files
 
             gh_ok, gh_msg = await push_game_files(
                 slug,
@@ -770,39 +759,34 @@ async def cb_save(
             )
 
             if gh_ok:
-
                 logger.info(
                     "GitHub push OK: slug=%s | %s",
                     slug,
                     gh_msg,
                 )
-
-                gh_status_line = (
-                    "\n🐙 GitHub: ✅ push qilindi"
-                )
-
+                gh_status_line = "\n🐙 GitHub: ✅ push qilindi"
             else:
-
                 logger.error(
                     "GitHub push FAILED: slug=%s | %s",
                     slug,
                     gh_msg,
                 )
-
                 gh_status_line = (
-                    "\n🐙 GitHub: ⚠️ "
-                    "push amalga oshmadi"
+                    "\n🐙 GitHub: ⚠️ push amalga oshmadi"
                 )
 
                 await callback.message.answer(
                     "⚠️ <b>GitHub push xatosi</b>\n\n"
-                    "O'yin saqlandi, lekin GitHub "
-                    "push qilinmadi.\n\n"
+                    "O'yin saqlandi, lekin GitHub'ga push qilinmadi.\n\n"
                     f"<code>{gh_msg[:300]}</code>",
                     parse_mode="HTML",
                 )
+        else:
+            logger.info(
+                "[GITHUB] AUTO_GITHUB_PUSH=False — push o'tkazib yuborildi"
+            )
 
-        # Remove confirmation buttons
+        # Confirmation tugmalarini olib tashlash
         await callback.message.edit_reply_markup(
             reply_markup=None
         )
@@ -814,4 +798,96 @@ async def cb_save(
         )
 
         await callback.message.answer(
-            "✅ <b>O'yin muvaffaqiyatli qo'shildi
+            "✅ <b>O'yin muvaffaqiyatli qo'shildi!</b>\n\n"
+            f"🆔 Slug: <code>{game['slug']}</code>\n"
+            f"📛 Nomi: <b>{game['name']}</b>\n"
+            f"📝 Ta'rif: {game['description']}\n"
+            f"🗂 Kategoriya: {game['category']}\n"
+            f"📄 HTML: <code>{game['html_file']}</code>\n"
+            f"🎬 Media: {media_label}\n"
+            f"{gh_status_line}\n\n"
+            f"Hoziroq ko'rish: /oyinlar {game['slug']}",
+            parse_mode="HTML",
+        )
+
+        # Foydalanuvchilarga ko'rinadigan game card
+        from services.game_service import send_game_card
+
+        await send_game_card(
+            callback.message,
+            game,
+        )
+
+        logger.info(
+            "Admin saved new game: slug=%s auto_github_push=%s",
+            slug,
+            config.AUTO_GITHUB_PUSH,
+        )
+
+    except Exception:
+        logger.exception(
+            "Failed to save game slug=%s",
+            slug,
+        )
+
+        await callback.message.answer(
+            "❌ Xato yuz berdi. Qayta urinib ko'ring: /yangi"
+        )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Tahrirlash
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.callback_query(
+    F.data == "admin:edit",
+    AddGameFSM.waiting_confirm,
+)
+async def cb_edit(
+    callback: CallbackQuery,
+    state: FSMContext,
+) -> None:
+
+    await callback.answer("✏️ Qayta boshlash...")
+    await state.clear()
+
+    await callback.message.edit_reply_markup(
+        reply_markup=None
+    )
+
+    await callback.message.answer(
+        "🔄 Jarayon qayta boshlandi.\n\n"
+        "1️⃣ O'yinning <b>ko'rinadigan nomi</b>ni kiriting:\n"
+        "<i>Masalan: 🐍 Ilon O'yini</i>\n\n"
+        "/bekor — bekor qilish",
+        parse_mode="HTML",
+    )
+
+    await state.set_state(
+        AddGameFSM.waiting_name
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Bekor qilish
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.callback_query(
+    F.data == "admin:cancel",
+    AddGameFSM.waiting_confirm,
+)
+async def cb_cancel_confirm(
+    callback: CallbackQuery,
+    state: FSMContext,
+) -> None:
+
+    await callback.answer("❌ Bekor qilindi.")
+    await state.clear()
+
+    await callback.message.edit_reply_markup(
+        reply_markup=None
+    )
+
+    await callback.message.answer(
+        "❌ O'yin qo'shish bekor qilindi."
+    )
