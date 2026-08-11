@@ -849,7 +849,6 @@ async def step_image(message: Message, state: FSMContext) -> None:
     await _send_preview(
         message,
         data,
-        message.bot,
     )
 
 
