@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import subprocess
+import tempfile
 from pathlib import Path
 
 from playwright.async_api import async_playwright
@@ -10,140 +10,98 @@ from playwright.async_api import async_playwright
 logger = logging.getLogger(__name__)
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-WEBAPP_DIR = BASE_DIR / "webapp"
-GAMES_DIR = WEBAPP_DIR / "games"
-ASSETS_DIR = WEBAPP_DIR / "assets" / "games"
-
-VIDEO_DIR = WEBAPP_DIR / "generated_videos"
+VIDEO_DIR = BASE_DIR / "webapp" / "generated_videos"
 
 DEFAULT_DURATION = 12
 
 
 def _ensure_dirs() -> None:
-    ASSETS_DIR.mkdir(parents=True, exist_ok=True)
     VIDEO_DIR.mkdir(parents=True, exist_ok=True)
-
-
-def _game_url(slug: str) -> str:
-    return f"http://127.0.0.1:8000/games/{slug}"
 
 
 async def create_game_mp4(
     slug: str,
+    html_bytes: bytes,
     duration: int = DEFAULT_DURATION,
 ) -> Path:
     """
-    Open the HTML game in Chromium, interact with it and record
-    a short gameplay video.
-
-    The produced MP4 is returned as a Path.
+    HTML o'yinni Chromium'da ishga tushiradi,
+    avtomatik o'ynaydi va MP4 video yaratadi.
     """
 
     _ensure_dirs()
 
-    if duration < 3:
-        duration = 3
-
-    if duration > 60:
-        duration = 60
+    duration = max(3, min(duration, 60))
 
     raw_video = VIDEO_DIR / f"{slug}_raw.webm"
-    mp4_path = ASSETS_DIR / f"{slug}.mp4"
+    mp4_path = VIDEO_DIR / f"{slug}.mp4"
 
-    if raw_video.exists():
-        raw_video.unlink()
+    raw_video.unlink(missing_ok=True)
+    mp4_path.unlink(missing_ok=True)
 
-    if mp4_path.exists():
-        mp4_path.unlink()
+    with tempfile.TemporaryDirectory(
+        prefix=f"game_{slug}_"
+    ) as temp_dir:
 
-    url = _game_url(slug)
+        html_file = Path(temp_dir) / f"{slug}.html"
+        html_file.write_bytes(html_bytes)
 
-    logger.info(
-        "[GAME VIDEO] Starting recording: slug=%s url=%s duration=%ss",
-        slug,
-        url,
-        duration,
-    )
-
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(
-            headless=True,
-            executable_path="/usr/bin/chromium",
-            args=[
-                "--no-sandbox",
-                "--disable-setuid-sandbox",
-                "--disable-dev-shm-usage",
-                "--disable-gpu",
-                "--disable-software-rasterizer",
-            ],
+        logger.info(
+            "[GAME VIDEO] Starting: %s (%ss)",
+            slug,
+            duration,
         )
 
-        context = await browser.new_context(
-            viewport={
-                "width": 640,
-                "height": 360,
-            },
-            device_scale_factor=1,
-            record_video_dir=str(VIDEO_DIR),
-            record_video_size={
-                "width": 640,
-                "height": 360,
-            },
-        )
-
-        page = await context.new_page()
-
-        try:
-            await page.goto(
-                url,
-                wait_until="domcontentloaded",
-                timeout=30000,
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(
+                headless=True,
+                executable_path="/usr/bin/chromium",
+                args=[
+                    "--no-sandbox",
+                    "--disable-setuid-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-gpu",
+                    "--autoplay-policy=no-user-gesture-required",
+                ],
             )
 
-            await page.wait_for_timeout(1500)
+            context = await browser.new_context(
+                viewport={
+                    "width": 640,
+                    "height": 360,
+                },
+                device_scale_factor=1,
+                record_video_dir=str(VIDEO_DIR),
+                record_video_size={
+                    "width": 640,
+                    "height": 360,
+                },
+            )
 
-            # Try common start buttons.
-            start_selectors = [
-                "button:has-text('Start')",
-                "button:has-text('START')",
-                "button:has-text('Boshlash')",
-                "button:has-text('O‘ynash')",
-                "button:has-text(\"O'ynash\")",
-                "#start",
-                "#startButton",
-                ".start-button",
-                ".start-btn",
-                "[data-action='start']",
-            ]
+            page = await context.new_page()
 
-            for selector in start_selectors:
-                try:
-                    locator = page.locator(selector).first
+            try:
+                await page.goto(
+                    html_file.as_uri(),
+                    wait_until="domcontentloaded",
+                    timeout=30000,
+                )
 
-                    if await locator.is_visible(timeout=500):
-                        await locator.click()
-                        logger.info(
-                            "[GAME VIDEO] Start button clicked: %s",
-                            selector,
-                        )
-                        break
+                await page.wait_for_timeout(1500)
 
-                except Exception:
-                    continue
+                await _start_game(page)
 
-            # Basic player-like interaction.
-            #
-            # This is intentionally generic. More advanced game-specific
-            # gameplay intelligence will be added later.
-            await _simulate_player(page, duration)
+                await _simulate_player(
+                    page,
+                    duration,
+                )
 
-            await page.wait_for_timeout(500)
+                await page.wait_for_timeout(500)
 
-        finally:
-            await context.close()
-            await browser.close()
+            finally:
+                await context.close()
+                await browser.close()
 
-    # Playwright creates a video file automatically.
     videos = sorted(
         VIDEO_DIR.glob("*.webm"),
         key=lambda p: p.stat().st_mtime,
@@ -152,7 +110,7 @@ async def create_game_mp4(
 
     if not videos:
         raise RuntimeError(
-            "Chromium video recording failed: WEBM file not created."
+            "Video yozilmadi: Chromium WEBM yaratmadi."
         )
 
     recorded_video = videos[0]
@@ -165,10 +123,12 @@ async def create_game_mp4(
         mp4_path,
     )
 
-    try:
-        raw_video.unlink()
-    except OSError:
-        pass
+    raw_video.unlink(missing_ok=True)
+
+    if not mp4_path.exists():
+        raise RuntimeError(
+            "MP4 yaratilmadi."
+        )
 
     logger.info(
         "[GAME VIDEO] MP4 created: %s",
@@ -178,31 +138,87 @@ async def create_game_mp4(
     return mp4_path
 
 
+async def _start_game(page) -> None:
+    """
+    O'yinning odatiy Start/Boshlash tugmalarini topib bosadi.
+    """
+
+    selectors = [
+        "button:has-text('Start')",
+        "button:has-text('START')",
+        "button:has-text('Boshlash')",
+        "button:has-text('O‘ynash')",
+        "button:has-text(\"O'ynash\")",
+        "#start",
+        "#startButton",
+        ".start-button",
+        ".start-btn",
+        "[data-action='start']",
+    ]
+
+    for selector in selectors:
+        try:
+            target = page.locator(selector).first
+
+            if await target.is_visible(timeout=500):
+                await target.click()
+
+                logger.info(
+                    "[GAME VIDEO] Start clicked: %s",
+                    selector,
+                )
+
+                await page.wait_for_timeout(500)
+                return
+
+        except Exception:
+            continue
+
+
 async def _simulate_player(
     page,
     duration: int,
 ) -> None:
     """
-    Perform generic player-like actions.
+    Umumiy AI-o'yinchi harakatlari.
 
-    These actions do not assume a specific game.
+    Turli HTML o'yinlarda ishlashi uchun:
+    - yurish
+    - sakrash
+    - otish
+    - chap/o'ng
+    - click/tap
+    harakatlarini aralashtirib bajaradi.
     """
 
-    end_time = asyncio.get_running_loop().time() + duration
+    end_time = (
+        asyncio.get_running_loop().time()
+        + duration
+    )
 
-    keys = [
-        "ArrowRight",
-        "ArrowRight",
-        "Space",
-        "ArrowLeft",
-        "ArrowRight",
-        "Space",
+    actions = [
+        ("ArrowRight", 0.6),
+        ("ArrowRight", 0.5),
+        ("Space", 0.4),
+        ("ArrowLeft", 0.5),
+        ("ArrowRight", 0.7),
+        ("ArrowUp", 0.4),
+        ("Space", 0.4),
+        ("ArrowRight", 0.6),
+        ("Space", 0.3),
+        ("ArrowLeft", 0.5),
     ]
 
     index = 0
 
-    while asyncio.get_running_loop().time() < end_time:
-        key = keys[index % len(keys)]
+    while (
+        asyncio.get_running_loop().time()
+        < end_time
+    ):
+        key, delay = actions[
+            index % len(actions)
+        ]
+
         index += 1
 
         try:
@@ -210,31 +226,65 @@ async def _simulate_player(
         except Exception:
             pass
 
-        await page.wait_for_timeout(450)
+        await _click_game_area(page)
 
-        # Try common click/tap targets.
-        for selector in (
-            "canvas",
-            "#game",
-            ".game",
-            "#gameCanvas",
-        ):
-            try:
-                target = page.locator(selector).first
+        await page.wait_for_timeout(
+            int(delay * 1000)
+        )
 
-                if await target.is_visible(timeout=100):
-                    box = await target.bounding_box()
 
-                    if box:
-                        x = box["x"] + box["width"] * 0.5
-                        y = box["y"] + box["height"] * 0.5
+async def _click_game_area(page) -> None:
+    """
+    Canvas yoki o'yin maydonining turli joylariga
+    click/tap qiladi.
+    """
 
-                        await page.mouse.click(x, y)
+    selectors = [
+        "canvas",
+        "#game",
+        "#gameCanvas",
+        ".game",
+        ".game-container",
+        "#app",
+    ]
 
-                        break
+    for selector in selectors:
+        try:
+            target = page.locator(
+                selector
+            ).first
 
-            except Exception:
+            if not await target.is_visible(
+                timeout=100
+            ):
                 continue
+
+            box = await target.bounding_box()
+
+            if not box:
+                continue
+
+            points = [
+                (0.25, 0.50),
+                (0.50, 0.50),
+                (0.75, 0.50),
+                (0.50, 0.35),
+                (0.50, 0.65),
+            ]
+
+            for px, py in points:
+                x = box["x"] + box["width"] * px
+                y = box["y"] + box["height"] * py
+
+                try:
+                    await page.mouse.click(x, y)
+                except Exception:
+                    pass
+
+            return
+
+        except Exception:
+            continue
 
 
 async def _convert_to_mp4(
@@ -242,7 +292,7 @@ async def _convert_to_mp4(
     destination: Path,
 ) -> None:
     """
-    Convert Playwright WEBM recording to MP4 using FFmpeg.
+    FFmpeg orqali WEBM → MP4.
     """
 
     command = [
@@ -262,8 +312,7 @@ async def _convert_to_mp4(
     ]
 
     logger.info(
-        "[GAME VIDEO] FFmpeg conversion started: %s",
-        source,
+        "[GAME VIDEO] Converting WEBM → MP4"
     )
 
     process = await asyncio.create_subprocess_exec(
@@ -272,7 +321,7 @@ async def _convert_to_mp4(
         stderr=asyncio.subprocess.PIPE,
     )
 
-    stdout, stderr = await process.communicate()
+    _, stderr = await process.communicate()
 
     if process.returncode != 0:
         error = stderr.decode(
@@ -281,7 +330,7 @@ async def _convert_to_mp4(
         )
 
         logger.error(
-            "[GAME VIDEO] FFmpeg failed: %s",
+            "[GAME VIDEO] FFmpeg error: %s",
             error[-2000:],
         )
 
@@ -291,5 +340,5 @@ async def _convert_to_mp4(
 
     if not destination.exists():
         raise RuntimeError(
-            "FFmpeg finished but MP4 file was not created."
+            "FFmpeg ishladi, ammo MP4 topilmadi."
         )
