@@ -1,0 +1,1061 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Zombi Omon Qolish</title>
+<style>
+  :root{
+    --neon-green:#00ff9d;
+    --neon-red:#ff2e63;
+    --neon-blue:#00d9ff;
+    --neon-yellow:#ffe600;
+    --bg-dark:#05050f;
+    --panel-bg:rgba(12,14,26,0.92);
+    --panel-border:#00ff9d;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent; user-select:none;}
+  html,body{
+    margin:0; padding:0; width:100%; height:100%;
+    background:var(--bg-dark);
+    font-family:'Segoe UI', Tahoma, sans-serif;
+    overflow:hidden;
+    touch-action:none;
+    color:#eafff6;
+  }
+  #app{position:fixed; inset:0; width:100%; height:100%;}
+
+  .screen{
+    position:absolute; inset:0; display:none;
+    flex-direction:column; align-items:center; justify-content:center;
+    width:100%; height:100%;
+  }
+  .screen.active{display:flex;}
+
+  .neon-text{
+    color:var(--neon-green);
+    text-shadow:0 0 6px var(--neon-green), 0 0 18px var(--neon-green), 0 0 34px rgba(0,255,157,0.6);
+    letter-spacing:3px;
+  }
+
+  #screen-menu{
+    background:
+      radial-gradient(circle at 50% 20%, rgba(0,255,157,0.08), transparent 60%),
+      repeating-linear-gradient(0deg, rgba(0,255,157,0.04) 0 1px, transparent 1px 40px),
+      repeating-linear-gradient(90deg, rgba(0,255,157,0.04) 0 1px, transparent 1px 40px),
+      var(--bg-dark);
+  }
+  .title{
+    font-size:clamp(28px,7vw,54px);
+    margin:0 0 8px 0;
+    text-align:center;
+    animation:flicker 3.5s infinite;
+  }
+  @keyframes flicker{
+    0%,19%,21%,23%,80%,100%{opacity:1;}
+    20%,22%{opacity:0.75;}
+  }
+  .subtitle{color:var(--neon-blue); margin-bottom:30px; letter-spacing:2px; font-size:14px; opacity:0.85;}
+  .menu-buttons{display:flex; flex-direction:column; gap:16px; width:min(320px, 80vw);}
+
+  button.neon-btn{
+    background:rgba(0,0,0,0.4);
+    border:2px solid var(--neon-green);
+    color:var(--neon-green);
+    padding:14px 20px;
+    font-size:16px;
+    font-weight:bold;
+    letter-spacing:1px;
+    border-radius:10px;
+    cursor:pointer;
+    text-shadow:0 0 6px var(--neon-green);
+    box-shadow:0 0 10px rgba(0,255,157,0.4), inset 0 0 10px rgba(0,255,157,0.1);
+    transition:transform .12s ease, box-shadow .12s ease;
+  }
+  button.neon-btn:active{transform:scale(0.96); box-shadow:0 0 22px rgba(0,255,157,0.8);}
+  button.neon-btn.red{border-color:var(--neon-red); color:var(--neon-red); text-shadow:0 0 6px var(--neon-red); box-shadow:0 0 10px rgba(255,46,99,0.4);}
+  button.neon-btn.blue{border-color:var(--neon-blue); color:var(--neon-blue); text-shadow:0 0 6px var(--neon-blue); box-shadow:0 0 10px rgba(0,217,255,0.4);}
+  button.neon-btn.yellow{border-color:var(--neon-yellow); color:var(--neon-yellow); text-shadow:0 0 6px var(--neon-yellow); box-shadow:0 0 10px rgba(255,230,0,0.4);}
+
+  #screen-game{padding:0;}
+  #gameCanvas{
+    position:absolute; inset:0;
+    width:100%; height:100%;
+    display:block;
+    background:#070714;
+  }
+
+  #hud{
+    position:absolute; top:0; left:0; right:0;
+    padding:10px 12px;
+    pointer-events:none;
+    display:flex; flex-direction:column; gap:6px;
+    z-index:5;
+  }
+  .hud-top{
+    display:flex; align-items:center; gap:14px; flex-wrap:wrap;
+    font-size:14px;
+  }
+  .hp-bar-container{
+    position:relative; width:150px; height:20px;
+    border:2px solid var(--neon-red);
+    border-radius:6px; overflow:hidden;
+    background:rgba(0,0,0,0.5);
+    box-shadow:0 0 8px rgba(255,46,99,0.5);
+  }
+  .hp-bar{
+    height:100%; width:100%;
+    background:linear-gradient(90deg, var(--neon-red), #ff7d9c);
+    transition:width .2s ease;
+  }
+  .hp-bar-container span{
+    position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+    font-size:11px; font-weight:bold; color:#fff; text-shadow:0 0 3px #000;
+  }
+  .wave-info,.score-info,.coin-info{
+    background:rgba(0,0,0,0.45);
+    border:1px solid var(--neon-blue);
+    border-radius:6px;
+    padding:3px 10px;
+    color:var(--neon-blue);
+    text-shadow:0 0 4px var(--neon-blue);
+  }
+  .coin-info{border-color:var(--neon-yellow); color:var(--neon-yellow); text-shadow:0 0 4px var(--neon-yellow);}
+  .ammo-info{
+    align-self:flex-start;
+    background:rgba(0,0,0,0.45);
+    border:1px solid var(--neon-green);
+    border-radius:6px;
+    padding:3px 10px;
+    color:var(--neon-green);
+    font-size:13px;
+    text-shadow:0 0 4px var(--neon-green);
+  }
+  #reloadIndicator{color:var(--neon-yellow); font-weight:bold;}
+
+  #controls{
+    position:absolute; bottom:0; left:0; right:0;
+    display:flex; align-items:flex-end; justify-content:space-between;
+    padding:18px; z-index:6;
+  }
+  #joystick-zone{width:130px; height:130px; touch-action:none;}
+  #joystick-base{
+    width:120px; height:120px; border-radius:50%;
+    background:rgba(0,255,157,0.08);
+    border:2px solid rgba(0,255,157,0.5);
+    position:relative;
+    box-shadow:0 0 14px rgba(0,255,157,0.3);
+  }
+  #joystick-knob{
+    width:50px; height:50px; border-radius:50%;
+    background:radial-gradient(circle at 35% 35%, #7cffce, var(--neon-green));
+    position:absolute; left:35px; top:35px;
+    box-shadow:0 0 12px var(--neon-green);
+  }
+  #action-buttons{display:flex; align-items:center; gap:12px;}
+  #btn-pause,#btn-shop{
+    width:52px; height:52px; border-radius:50%;
+    background:rgba(0,0,0,0.5);
+    border:2px solid var(--neon-blue);
+    color:var(--neon-blue);
+    font-size:20px;
+    box-shadow:0 0 10px rgba(0,217,255,0.5);
+  }
+  #btn-shop{border-color:var(--neon-yellow); color:var(--neon-yellow); box-shadow:0 0 10px rgba(255,230,0,0.5);}
+  #btn-shoot{
+    width:96px; height:96px; border-radius:50%;
+    background:radial-gradient(circle at 35% 30%, #ff7d9c, var(--neon-red));
+    border:3px solid #fff2f5;
+    color:#fff; font-weight:bold; font-size:13px;
+    box-shadow:0 0 20px rgba(255,46,99,0.7);
+    letter-spacing:1px;
+  }
+  #btn-shoot:active{transform:scale(0.94);}
+
+  .overlay{
+    position:absolute; inset:0; z-index:20;
+    background:rgba(2,2,8,0.82);
+    display:none; align-items:center; justify-content:center;
+    padding:20px;
+  }
+  .overlay.active{display:flex;}
+  .modal{
+    background:var(--panel-bg);
+    border:2px solid var(--panel-border);
+    border-radius:16px;
+    padding:24px 26px;
+    max-width:440px; width:100%;
+    max-height:85vh; overflow-y:auto;
+    box-shadow:0 0 30px rgba(0,255,157,0.35);
+  }
+  .modal h2{
+    margin-top:0; color:var(--neon-green);
+    text-shadow:0 0 6px var(--neon-green);
+    text-align:center; letter-spacing:1px;
+  }
+  .modal p, .modal li{line-height:1.5; font-size:14px; color:#dfffef;}
+  .modal ul{padding-left:20px;}
+  .modal .row{
+    display:flex; justify-content:space-between; align-items:center;
+    gap:10px; margin:12px 0; flex-wrap:wrap;
+  }
+  .modal .modal-buttons{
+    display:flex; flex-direction:column; gap:10px; margin-top:18px;
+  }
+  .stat-line{
+    display:flex; justify-content:space-between;
+    border-bottom:1px dashed rgba(0,255,157,0.3);
+    padding:6px 0; font-size:15px;
+  }
+  .shop-item{
+    border:1px solid var(--neon-blue);
+    border-radius:10px; padding:10px 14px; margin:10px 0;
+  }
+  .shop-item h3{margin:0 0 6px 0; color:var(--neon-blue); font-size:15px;}
+  .shop-item .row{margin:4px 0;}
+  .small-btn{
+    background:rgba(0,0,0,0.4); border:1px solid var(--neon-yellow); color:var(--neon-yellow);
+    padding:8px 14px; border-radius:8px; font-weight:bold; cursor:pointer; font-size:13px;
+  }
+  .small-btn:disabled{opacity:0.35; cursor:not-allowed;}
+  .toggle-row{display:flex; align-items:center; justify-content:space-between; margin:14px 0;}
+  #gameOverTitle{color:var(--neon-red); text-shadow:0 0 8px var(--neon-red);}
+
+  @media (max-width:480px){
+    .hud-top{font-size:12px; gap:8px;}
+    .hp-bar-container{width:110px; height:16px;}
+    #joystick-zone{width:100px; height:100px;}
+    #joystick-base{width:95px; height:95px;}
+    #joystick-knob{width:40px; height:40px; left:27px; top:27px;}
+    #btn-shoot{width:78px; height:78px; font-size:11px;}
+    #btn-pause,#btn-shop{width:44px; height:44px; font-size:16px;}
+  }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <div id="screen-menu" class="screen active">
+    <h1 class="title neon-text">ZOMBI OMON QOLISH</h1>
+    <div class="subtitle">TO'LQINLARGA BARDOSH BERING VA HAYOT QOLING</div>
+    <div class="menu-buttons">
+      <button class="neon-btn" id="btn-start">O'yinni boshlash</button>
+      <button class="neon-btn blue" id="btn-highscore">Eng yaxshi natija</button>
+      <button class="neon-btn yellow" id="btn-howto">Qanday o'ynaladi</button>
+      <button class="neon-btn red" id="btn-settings">Sozlamalar</button>
+    </div>
+  </div>
+
+  <div id="screen-game" class="screen">
+    <canvas id="gameCanvas"></canvas>
+
+    <div id="hud">
+      <div class="hud-top">
+        <div class="hp-bar-container"><div id="hpBar" class="hp-bar"></div><span id="hpText">100/100</span></div>
+        <div class="wave-info">To'lqin: <span id="waveNum">1</span></div>
+        <div class="score-info">Ochko: <span id="scoreNum">0</span></div>
+        <div class="coin-info">🪙 <span id="coinNum">0</span></div>
+      </div>
+      <div class="ammo-info">O'q: <span id="ammoNum">10</span>/<span id="ammoMax">10</span> <span id="reloadIndicator"></span></div>
+    </div>
+
+    <div id="controls">
+      <div id="joystick-zone">
+        <div id="joystick-base"><div id="joystick-knob"></div></div>
+      </div>
+      <div id="action-buttons">
+        <button id="btn-shop" title="Do'kon">🛒</button>
+        <button id="btn-pause" title="Pauza">⏸</button>
+        <button id="btn-shoot">O'Q<br>UZISH</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="overlay-howto" class="overlay">
+    <div class="modal">
+      <h2>QANDAY O'YNALADI</h2>
+      <ul>
+        <li><b>Harakat:</b> Kompyuterda WASD yoki strelka tugmalari, telefonda ekrandagi virtual joystick.</li>
+        <li><b>O'q uzish:</b> Kompyuterda Space tugmasi, telefonda "O'Q UZISH" tugmasi. Zombilarga avtomatik nishon olinadi.</li>
+        <li><b>Qayta o'qlash:</b> O'q tugasa, avtomatik ravishda qayta o'qlanadi — bir oz kuting.</li>
+        <li><b>Tangalar:</b> Zombi o'ldirilganda tanga tushadi. Tangalarni 🛒 do'kon tugmasi orqali qurol kuchiga (zarar va otish tezligi) almashtiring.</li>
+        <li><b>To'lqinlar:</b> Har bir to'lqinda zombilar soni va kuchi oshib boradi. Iloji boricha uzoq omon qoling!</li>
+        <li><b>Pauza:</b> ⏸ tugmasi orqali o'yinni to'xtatib, davom ettirishingiz yoki qayta boshlashingiz mumkin.</li>
+      </ul>
+      <div class="modal-buttons">
+        <button class="neon-btn" onclick="closeOverlay('overlay-howto')">Yopish</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="overlay-settings" class="overlay">
+    <div class="modal">
+      <h2>SOZLAMALAR</h2>
+      <div class="toggle-row">
+        <span>Ovoz effektlari</span>
+        <button class="small-btn" id="btn-toggle-sound">YOQILGAN</button>
+      </div>
+      <div class="toggle-row">
+        <span>Eng yaxshi natijani tozalash</span>
+        <button class="small-btn" id="btn-reset-score">Tozalash</button>
+      </div>
+      <div class="modal-buttons">
+        <button class="neon-btn" onclick="closeOverlay('overlay-settings')">Yopish</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="overlay-highscore" class="overlay">
+    <div class="modal">
+      <h2>ENG YAXSHI NATIJA</h2>
+      <div class="stat-line"><span>Rekord ochko:</span><span id="bestScoreDisplay">0</span></div>
+      <div class="modal-buttons">
+        <button class="neon-btn" onclick="closeOverlay('overlay-highscore')">Yopish</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="overlay-pause" class="overlay">
+    <div class="modal">
+      <h2>PAUZA</h2>
+      <div class="modal-buttons">
+        <button class="neon-btn" id="btn-resume">Davom ettirish</button>
+        <button class="neon-btn yellow" id="btn-restart-from-pause">Qayta boshlash</button>
+        <button class="neon-btn red" id="btn-menu-from-pause">Bosh menyu</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="overlay-shop" class="overlay">
+    <div class="modal">
+      <h2>QUROL DO'KONI</h2>
+      <div class="row"><span>🪙 Tangalar:</span><b id="shopCoinDisplay">0</b></div>
+
+      <div class="shop-item">
+        <h3>💥 Zarar darajasi: <span id="dmgLevelDisplay">1</span></h3>
+        <div class="row">
+          <span>Narxi: <b id="dmgCostDisplay">20</b> tanga</span>
+          <button class="small-btn" id="btn-buy-damage">Sotib olish</button>
+        </div>
+      </div>
+
+      <div class="shop-item">
+        <h3>⚡ Otish tezligi: <span id="rateLevelDisplay">1</span></h3>
+        <div class="row">
+          <span>Narxi: <b id="rateCostDisplay">20</b> tanga</span>
+          <button class="small-btn" id="btn-buy-rate">Sotib olish</button>
+        </div>
+      </div>
+
+      <div class="modal-buttons">
+        <button class="neon-btn" id="btn-close-shop">Davom ettirish</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="overlay-gameover" class="overlay">
+    <div class="modal">
+      <h2 id="gameOverTitle">SIZ MAG'LUB BO'LDINGIZ</h2>
+      <div class="stat-line"><span>Yetgan to'lqin:</span><span id="finalWave">1</span></div>
+      <div class="stat-line"><span>Ochko:</span><span id="finalScore">0</span></div>
+      <div class="stat-line"><span>Rekord:</span><span id="finalBest">0</span></div>
+      <div class="modal-buttons">
+        <button class="neon-btn" id="btn-restart-from-gameover">Qayta boshlash</button>
+        <button class="neon-btn blue" id="btn-menu-from-gameover">Bosh menyu</button>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+'use strict';
+/* =====================================================================
+   ZOMBI OMON QOLISH — asosiy o'yin motori
+   Barcha kod vanilla JavaScript'da, tashqi kutubxonalarsiz yozilgan.
+===================================================================== */
+
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+let W = 0, H = 0;
+
+function resizeCanvas(){
+  W = canvas.width = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+}
+window.addEventListener('resize', resizeCanvas);
+resizeCanvas();
+
+function showScreen(id){
+  document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+}
+function openOverlay(id){ document.getElementById(id).classList.add('active'); }
+function closeOverlay(id){ document.getElementById(id).classList.remove('active'); }
+
+const LS_BEST = 'zombiBestScore';
+const LS_SOUND = 'zombiSoundEnabled';
+let bestScore = parseInt(localStorage.getItem(LS_BEST) || '0', 10);
+let soundEnabled = localStorage.getItem(LS_SOUND) !== 'false';
+
+let audioCtx = null;
+function ensureAudio(){
+  if(!audioCtx){
+    try{ audioCtx = new (window.AudioContext || window.webkitAudioContext)(); }
+    catch(e){ audioCtx = null; }
+  }
+}
+function beep(freq, dur, type='sine', vol=0.2, startDelay=0){
+  if(!soundEnabled || !audioCtx) return;
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.type = type;
+  osc.frequency.value = freq;
+  gain.gain.value = vol;
+  osc.connect(gain); gain.connect(audioCtx.destination);
+  const t0 = audioCtx.currentTime + startDelay;
+  gain.gain.setValueAtTime(vol, t0);
+  gain.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
+  osc.start(t0);
+  osc.stop(t0 + dur + 0.02);
+}
+function sndShoot(){ beep(680, 0.08, 'square', 0.12); }
+function sndHit(){ beep(200, 0.12, 'sawtooth', 0.15); }
+function sndZombieDie(){ beep(110, 0.25, 'triangle', 0.18); }
+function sndReload(){ beep(420, 0.15, 'sine', 0.15); beep(560,0.15,'sine',0.12,0.15); }
+function sndCoin(){ beep(1000, 0.08, 'sine', 0.12); beep(1300,0.08,'sine',0.1,0.06); }
+function sndWave(){ beep(300, 0.2, 'sawtooth', 0.2); beep(500,0.25,'sawtooth',0.18,0.2); }
+function sndGameOver(){ beep(220,0.3,'sawtooth',0.2); beep(160,0.4,'sawtooth',0.2,0.3); beep(100,0.5,'sawtooth',0.2,0.6); }
+function sndPlayerHit(){ beep(90, 0.18, 'sawtooth', 0.2); }
+
+let gameState = 'menu'; // menu | playing | paused | shop | gameover
+let lastFrameTime = 0;
+
+let player, bullets, zombies, particles, floatTexts;
+let score, coins, wave;
+let waveInProgress, zombiesRemainingToSpawn, spawnTimer, spawnInterval;
+let waveBreakTimer = 0;
+let ammo, ammoMax = 10;
+let reloading = false, reloadTimer = 0;
+const RELOAD_TIME = 1.5;
+let lastShotTime = -999;
+
+let upgrades = { damageLevel:1, rateLevel:1 };
+const BASE_DAMAGE = 26, DAMAGE_PER_LEVEL = 9;
+const BASE_COOLDOWN = 0.32, COOLDOWN_REDUCTION = 0.028, MIN_COOLDOWN = 0.09;
+
+const keys = {};
+let shootHeld = false;
+const joystick = { active:false, dx:0, dy:0, touchId:null };
+
+function initGame(){
+  player = { x:W/2, y:H/2, radius:20, speed:230, hp:100, maxHp:100, angle:0, hitFlash:0 };
+  bullets = [];
+  zombies = [];
+  particles = [];
+  floatTexts = [];
+  score = 0; coins = 0; wave = 0;
+  ammo = ammoMax;
+  reloading = false; reloadTimer = 0;
+  upgrades = { damageLevel:1, rateLevel:1 };
+  waveInProgress = false;
+  waveBreakTimer = 0.6;
+  updateHUD();
+}
+
+function startNextWave(){
+  wave++;
+  zombiesRemainingToSpawn = 4 + wave * 2;
+  spawnTimer = 0;
+  spawnInterval = Math.max(0.35, 1.1 - wave * 0.04);
+  waveInProgress = true;
+  sndWave();
+  addFloatText(W/2, H/2 - 60, "TO'LQIN " + wave, '#00ff9d', 1.6, 22);
+}
+
+function spawnZombie(){
+  const side = Math.floor(Math.random()*4);
+  let x,y;
+  if(side===0){ x=-40; y=Math.random()*H; }
+  else if(side===1){ x=W+40; y=Math.random()*H; }
+  else if(side===2){ x=Math.random()*W; y=-40; }
+  else { x=Math.random()*W; y=H+40; }
+
+  const isFast = wave >= 3 && Math.random() < 0.25;
+  const baseHp = 42 + wave * 9;
+  zombies.push({
+    x, y,
+    radius: isFast ? 16 : 20,
+    speed: isFast ? (95 + wave*2.5) : (55 + wave*3),
+    hp: isFast ? baseHp*0.55 : baseHp,
+    maxHp: isFast ? baseHp*0.55 : baseHp,
+    dmg: 6 + wave*0.6,
+    attackCooldown: 0,
+    isFast,
+    hitFlash:0
+  });
+}
+
+function addParticles(x,y,color,count=10){
+  for(let i=0;i<count;i++){
+    const ang = Math.random()*Math.PI*2;
+    const spd = 60 + Math.random()*120;
+    particles.push({
+      x,y, vx:Math.cos(ang)*spd, vy:Math.sin(ang)*spd,
+      life:0.5+Math.random()*0.3, maxLife:0.5+Math.random()*0.3, color, radius:2+Math.random()*3
+    });
+  }
+}
+function addFloatText(x,y,text,color,life=1,size=14){
+  floatTexts.push({x,y,text,color,life,maxLife:life,size});
+}
+
+function updateHUD(){
+  document.getElementById('hpBar').style.width = Math.max(0,(player.hp/player.maxHp*100)) + '%';
+  document.getElementById('hpText').textContent = Math.max(0,Math.round(player.hp)) + '/' + player.maxHp;
+  document.getElementById('waveNum').textContent = wave;
+  document.getElementById('scoreNum').textContent = score;
+  document.getElementById('coinNum').textContent = coins;
+  document.getElementById('ammoNum').textContent = ammo;
+  document.getElementById('ammoMax').textContent = ammoMax;
+  document.getElementById('reloadIndicator').textContent = reloading ? 'QAYTA O\'QLANMOQDA...' : '';
+}
+
+function currentCooldown(){
+  return Math.max(MIN_COOLDOWN, BASE_COOLDOWN - (upgrades.rateLevel-1)*COOLDOWN_REDUCTION);
+}
+function currentDamage(){
+  return BASE_DAMAGE + (upgrades.damageLevel-1)*DAMAGE_PER_LEVEL;
+}
+
+function findNearestZombie(){
+  let nearest = null, nd = Infinity;
+  for(const z of zombies){
+    const dx=z.x-player.x, dy=z.y-player.y;
+    const d = dx*dx+dy*dy;
+    if(d<nd){ nd=d; nearest=z; }
+  }
+  return nearest;
+}
+
+function tryShoot(nowSec){
+  if(reloading) return;
+  if(ammo<=0){ startReload(); return; }
+  if(nowSec - lastShotTime < currentCooldown()) return;
+
+  lastShotTime = nowSec;
+  ammo--;
+
+  const target = findNearestZombie();
+  let ang;
+  if(target){
+    ang = Math.atan2(target.y-player.y, target.x-player.x);
+  } else {
+    ang = player.angle;
+  }
+  player.angle = ang;
+
+  const spd = 620;
+  bullets.push({
+    x: player.x + Math.cos(ang)*player.radius,
+    y: player.y + Math.sin(ang)*player.radius,
+    vx: Math.cos(ang)*spd, vy: Math.sin(ang)*spd,
+    damage: currentDamage(), radius:5, life:1.4
+  });
+  sndShoot();
+  if(ammo<=0) startReload();
+  updateHUD();
+}
+
+function startReload(){
+  if(reloading) return;
+  reloading = true;
+  reloadTimer = 0;
+  sndReload();
+  updateHUD();
+}
+
+function killZombie(z, index){
+  addParticles(z.x, z.y, '#ffe600', 14);
+  const earnedCoins = 1 + Math.floor(Math.random()*3) + Math.floor(wave/3);
+  coins += earnedCoins;
+  score += 10 * wave;
+  addFloatText(z.x, z.y-10, '+'+earnedCoins+' 🪙', '#ffe600', 0.9, 14);
+  sndZombieDie();
+  zombies.splice(index,1);
+  updateHUD();
+}
+
+function damagePlayer(amount){
+  player.hp -= amount;
+  player.hitFlash = 0.25;
+  sndPlayerHit();
+  if(player.hp <= 0){
+    player.hp = 0;
+    endGame();
+  }
+  updateHUD();
+}
+
+function update(dt){
+  if(gameState !== 'playing') return;
+
+  let mvx=0, mvy=0;
+  if(keys['KeyW']||keys['ArrowUp']) mvy -= 1;
+  if(keys['KeyS']||keys['ArrowDown']) mvy += 1;
+  if(keys['KeyA']||keys['ArrowLeft']) mvx -= 1;
+  if(keys['KeyD']||keys['ArrowRight']) mvx += 1;
+  if(joystick.active){ mvx += joystick.dx; mvy += joystick.dy; }
+
+  const len = Math.hypot(mvx,mvy);
+  if(len > 0.05){
+    mvx/=len; mvy/=len;
+    player.x += mvx*player.speed*dt;
+    player.y += mvy*player.speed*dt;
+    player.angle = Math.atan2(mvy,mvx);
+  }
+  player.x = Math.max(player.radius, Math.min(W-player.radius, player.x));
+  player.y = Math.max(player.radius, Math.min(H-player.radius, player.y));
+  if(player.hitFlash>0) player.hitFlash -= dt;
+
+  if(reloading){
+    reloadTimer += dt;
+    if(reloadTimer >= RELOAD_TIME){
+      reloading = false; ammo = ammoMax; updateHUD();
+    }
+  }
+
+  if(shootHeld){
+    tryShoot(performance.now()/1000);
+  }
+
+  if(!waveInProgress){
+    waveBreakTimer -= dt;
+    if(waveBreakTimer <= 0) startNextWave();
+  } else {
+    if(zombiesRemainingToSpawn > 0){
+      spawnTimer -= dt;
+      if(spawnTimer <= 0){
+        spawnZombie();
+        zombiesRemainingToSpawn--;
+        spawnTimer = spawnInterval;
+      }
+    }
+    if(zombiesRemainingToSpawn <= 0 && zombies.length === 0){
+      waveInProgress = false;
+      waveBreakTimer = 2.2;
+      const bonus = 15 + wave*3;
+      coins += bonus;
+      score += 25*wave;
+      addFloatText(W/2, H/2-20, "TO'LQIN TUGADI! +"+bonus+" 🪙", '#00d9ff', 1.8, 20);
+      updateHUD();
+    }
+  }
+
+  for(let i=bullets.length-1;i>=0;i--){
+    const b = bullets[i];
+    b.x += b.vx*dt; b.y += b.vy*dt; b.life -= dt;
+    if(b.life<=0 || b.x<-20||b.x>W+20||b.y<-20||b.y>H+20){ bullets.splice(i,1); continue; }
+    for(let j=zombies.length-1;j>=0;j--){
+      const z = zombies[j];
+      const dx=z.x-b.x, dy=z.y-b.y;
+      if(dx*dx+dy*dy <= (z.radius+b.radius)*(z.radius+b.radius)){
+        z.hp -= b.damage;
+        z.hitFlash = 0.15;
+        addParticles(b.x,b.y,'#00ff9d',4);
+        sndHit();
+        bullets.splice(i,1);
+        if(z.hp<=0) killZombie(z,j);
+        break;
+      }
+    }
+  }
+
+  for(let i=zombies.length-1;i>=0;i--){
+    const z = zombies[i];
+    const dx = player.x - z.x, dy = player.y - z.y;
+    const d = Math.hypot(dx,dy) || 1;
+    z.x += (dx/d)*z.speed*dt;
+    z.y += (dy/d)*z.speed*dt;
+    if(z.hitFlash>0) z.hitFlash -= dt;
+    if(z.attackCooldown>0) z.attackCooldown -= dt;
+
+    if(d < z.radius+player.radius+4 && z.attackCooldown<=0){
+      damagePlayer(z.dmg);
+      z.attackCooldown = 0.8;
+    }
+  }
+
+  for(let i=particles.length-1;i>=0;i--){
+    const p = particles[i];
+    p.x += p.vx*dt; p.y += p.vy*dt;
+    p.vx *= 0.92; p.vy *= 0.92;
+    p.life -= dt;
+    if(p.life<=0) particles.splice(i,1);
+  }
+  for(let i=floatTexts.length-1;i>=0;i--){
+    const f = floatTexts[i];
+    f.y -= 24*dt; f.life -= dt;
+    if(f.life<=0) floatTexts.splice(i,1);
+  }
+}
+
+function drawGrid(){
+  ctx.save();
+  ctx.strokeStyle = 'rgba(0,255,157,0.06)';
+  ctx.lineWidth = 1;
+  const step = 50;
+  for(let x=0;x<W;x+=step){ ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,H); ctx.stroke(); }
+  for(let y=0;y<H;y+=step){ ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke(); }
+  ctx.restore();
+}
+
+function drawPlayer(){
+  ctx.save();
+  ctx.translate(player.x, player.y);
+  const flashAlpha = player.hitFlash>0 ? Math.min(0.6, player.hitFlash*2) : 0;
+  ctx.beginPath();
+  ctx.fillStyle = '#0b3d2c';
+  ctx.arc(0,0,player.radius,0,Math.PI*2);
+  ctx.fill();
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = '#00ff9d';
+  ctx.shadowColor = '#00ff9d';
+  ctx.shadowBlur = 14;
+  ctx.stroke();
+  ctx.shadowBlur = 0;
+  ctx.rotate(player.angle);
+  ctx.strokeStyle = '#00d9ff';
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.moveTo(0,0);
+  ctx.lineTo(player.radius+16, 0);
+  ctx.stroke();
+  ctx.restore();
+
+  if(flashAlpha>0){
+    ctx.save();
+    ctx.globalAlpha = flashAlpha;
+    ctx.beginPath();
+    ctx.fillStyle = '#ffffff';
+    ctx.arc(player.x, player.y, player.radius+6, 0, Math.PI*2);
+    ctx.fill();
+    ctx.restore();
+  }
+}
+
+function drawZombie(z){
+  ctx.save();
+  ctx.translate(z.x,z.y);
+  ctx.beginPath();
+  ctx.fillStyle = z.isFast ? '#3a0d1e' : '#241033';
+  ctx.arc(0,0,z.radius,0,Math.PI*2);
+  ctx.fill();
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = z.isFast ? '#ff8fae' : '#ff2e63';
+  ctx.shadowColor = ctx.strokeStyle;
+  ctx.shadowBlur = 10;
+  ctx.stroke();
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = '#ffe600';
+  ctx.beginPath(); ctx.arc(-z.radius*0.35,-z.radius*0.15,2.5,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(z.radius*0.35,-z.radius*0.15,2.5,0,Math.PI*2); ctx.fill();
+  ctx.restore();
+
+  if(z.hitFlash>0){
+    ctx.save();
+    ctx.globalAlpha = Math.min(0.6, z.hitFlash*3);
+    ctx.beginPath();
+    ctx.fillStyle = '#ffffff';
+    ctx.arc(z.x,z.y,z.radius+4,0,Math.PI*2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  const barW = z.radius*2;
+  ctx.save();
+  ctx.translate(z.x - z.radius, z.y - z.radius - 10);
+  ctx.fillStyle = 'rgba(0,0,0,0.5)';
+  ctx.fillRect(0,0,barW,5);
+  ctx.fillStyle = '#ff2e63';
+  ctx.fillRect(0,0, barW * Math.max(0,z.hp/z.maxHp), 5);
+  ctx.restore();
+}
+
+function drawBullet(b){
+  ctx.save();
+  ctx.beginPath();
+  ctx.fillStyle = '#ffe600';
+  ctx.shadowColor = '#ffe600';
+  ctx.shadowBlur = 8;
+  ctx.arc(b.x,b.y,b.radius,0,Math.PI*2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawParticles(){
+  for(const p of particles){
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, p.life/p.maxLife);
+    ctx.fillStyle = p.color;
+    ctx.beginPath();
+    ctx.arc(p.x,p.y,p.radius,0,Math.PI*2);
+    ctx.fill();
+    ctx.restore();
+  }
+}
+function drawFloatTexts(){
+  for(const f of floatTexts){
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, f.life/f.maxLife);
+    ctx.fillStyle = f.color;
+    ctx.font = 'bold '+f.size+'px Segoe UI';
+    ctx.textAlign = 'center';
+    ctx.shadowColor = f.color;
+    ctx.shadowBlur = 8;
+    ctx.fillText(f.text, f.x, f.y);
+    ctx.restore();
+  }
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  drawGrid();
+  drawParticles();
+  for(const b of bullets) drawBullet(b);
+  for(const z of zombies) drawZombie(z);
+  drawPlayer();
+  drawFloatTexts();
+}
+
+function loop(ts){
+  const now = ts/1000;
+  let dt = now - lastFrameTime;
+  lastFrameTime = now;
+  if(dt > 0.05) dt = 0.05;
+
+  if(gameState === 'playing'){
+    update(dt);
+  }
+  if(gameState === 'playing' || gameState === 'paused' || gameState === 'shop'){
+    draw();
+  }
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+
+function endGame(){
+  gameState = 'gameover';
+  sndGameOver();
+  if(score > bestScore){
+    bestScore = score;
+    localStorage.setItem(LS_BEST, String(bestScore));
+  }
+  document.getElementById('finalWave').textContent = wave;
+  document.getElementById('finalScore').textContent = score;
+  document.getElementById('finalBest').textContent = bestScore;
+  openOverlay('overlay-gameover');
+}
+
+function dmgCost(){ return 20 * upgrades.damageLevel; }
+function rateCost(){ return 25 * upgrades.rateLevel; }
+
+function refreshShopUI(){
+  document.getElementById('shopCoinDisplay').textContent = coins;
+  document.getElementById('dmgLevelDisplay').textContent = upgrades.damageLevel;
+  document.getElementById('rateLevelDisplay').textContent = upgrades.rateLevel;
+  document.getElementById('dmgCostDisplay').textContent = dmgCost();
+  document.getElementById('rateCostDisplay').textContent = rateCost();
+  document.getElementById('btn-buy-damage').disabled = coins < dmgCost();
+  document.getElementById('btn-buy-rate').disabled = coins < rateCost();
+}
+
+document.getElementById('btn-buy-damage').addEventListener('click', ()=>{
+  const cost = dmgCost();
+  if(coins >= cost){
+    coins -= cost;
+    upgrades.damageLevel++;
+    sndCoin();
+    refreshShopUI();
+    updateHUD();
+  }
+});
+document.getElementById('btn-buy-rate').addEventListener('click', ()=>{
+  const cost = rateCost();
+  if(coins >= cost){
+    coins -= cost;
+    upgrades.rateLevel++;
+    sndCoin();
+    refreshShopUI();
+    updateHUD();
+  }
+});
+
+document.getElementById('btn-start').addEventListener('click', ()=>{
+  ensureAudio();
+  initGame();
+  gameState = 'playing';
+  showScreen('screen-game');
+});
+document.getElementById('btn-highscore').addEventListener('click', ()=>{
+  document.getElementById('bestScoreDisplay').textContent = bestScore;
+  openOverlay('overlay-highscore');
+});
+document.getElementById('btn-howto').addEventListener('click', ()=> openOverlay('overlay-howto'));
+document.getElementById('btn-settings').addEventListener('click', ()=>{
+  document.getElementById('btn-toggle-sound').textContent = soundEnabled ? 'YOQILGAN' : "O'CHIRILGAN";
+  openOverlay('overlay-settings');
+});
+document.getElementById('btn-toggle-sound').addEventListener('click', (e)=>{
+  soundEnabled = !soundEnabled;
+  localStorage.setItem(LS_SOUND, String(soundEnabled));
+  e.target.textContent = soundEnabled ? 'YOQILGAN' : "O'CHIRILGAN";
+});
+document.getElementById('btn-reset-score').addEventListener('click', ()=>{
+  bestScore = 0;
+  localStorage.setItem(LS_BEST,'0');
+});
+
+document.getElementById('btn-pause').addEventListener('click', ()=>{
+  if(gameState==='playing'){
+    gameState='paused';
+    openOverlay('overlay-pause');
+  }
+});
+document.getElementById('btn-resume').addEventListener('click', ()=>{
+  gameState='playing';
+  closeOverlay('overlay-pause');
+});
+document.getElementById('btn-restart-from-pause').addEventListener('click', ()=>{
+  closeOverlay('overlay-pause');
+  initGame();
+  gameState='playing';
+});
+document.getElementById('btn-menu-from-pause').addEventListener('click', ()=>{
+  closeOverlay('overlay-pause');
+  gameState='menu';
+  showScreen('screen-menu');
+});
+
+document.getElementById('btn-shop').addEventListener('click', ()=>{
+  if(gameState==='playing'){
+    gameState='shop';
+    refreshShopUI();
+    openOverlay('overlay-shop');
+  }
+});
+document.getElementById('btn-close-shop').addEventListener('click', ()=>{
+  closeOverlay('overlay-shop');
+  gameState='playing';
+});
+
+document.getElementById('btn-restart-from-gameover').addEventListener('click', ()=>{
+  closeOverlay('overlay-gameover');
+  initGame();
+  gameState='playing';
+});
+document.getElementById('btn-menu-from-gameover').addEventListener('click', ()=>{
+  closeOverlay('overlay-gameover');
+  gameState='menu';
+  showScreen('screen-menu');
+});
+
+window.addEventListener('keydown', (e)=>{
+  keys[e.code] = true;
+  if(e.code === 'Space'){
+    shootHeld = true;
+    e.preventDefault();
+  }
+  if(e.code === 'Escape' && gameState==='playing'){
+    gameState='paused';
+    openOverlay('overlay-pause');
+  }
+});
+window.addEventListener('keyup', (e)=>{
+  keys[e.code] = false;
+  if(e.code === 'Space'){ shootHeld = false; }
+});
+
+const shootBtn = document.getElementById('btn-shoot');
+function shootPressStart(e){ e.preventDefault(); shootHeld = true; }
+function shootPressEnd(e){ e.preventDefault(); shootHeld = false; }
+shootBtn.addEventListener('mousedown', shootPressStart);
+shootBtn.addEventListener('mouseup', shootPressEnd);
+shootBtn.addEventListener('mouseleave', shootPressEnd);
+shootBtn.addEventListener('touchstart', shootPressStart, {passive:false});
+shootBtn.addEventListener('touchend', shootPressEnd, {passive:false});
+shootBtn.addEventListener('touchcancel', shootPressEnd, {passive:false});
+
+const joyZone = document.getElementById('joystick-zone');
+const joyBase = document.getElementById('joystick-base');
+const joyKnob = document.getElementById('joystick-knob');
+const JOY_RADIUS = 45;
+
+function getJoyBaseCenter(){
+  const rect = joyBase.getBoundingClientRect();
+  return { x: rect.left + rect.width/2, y: rect.top + rect.height/2 };
+}
+function setJoystickFromPoint(px,py){
+  const c = getJoyBaseCenter();
+  let dx = px - c.x, dy = py - c.y;
+  const dist = Math.hypot(dx,dy);
+  if(dist > JOY_RADIUS){ dx = dx/dist*JOY_RADIUS; dy = dy/dist*JOY_RADIUS; }
+  joyKnob.style.left = (35 + dx) + 'px';
+  joyKnob.style.top = (35 + dy) + 'px';
+  joystick.dx = dx / JOY_RADIUS;
+  joystick.dy = dy / JOY_RADIUS;
+}
+function resetJoystick(){
+  joystick.active = false; joystick.dx = 0; joystick.dy = 0;
+  joyKnob.style.left = '35px'; joyKnob.style.top = '35px';
+}
+
+joyZone.addEventListener('touchstart', (e)=>{
+  e.preventDefault();
+  joystick.active = true;
+  const t = e.changedTouches[0];
+  joystick.touchId = t.identifier;
+  setJoystickFromPoint(t.clientX, t.clientY);
+}, {passive:false});
+joyZone.addEventListener('touchmove', (e)=>{
+  e.preventDefault();
+  for(const t of e.changedTouches){
+    if(t.identifier === joystick.touchId){
+      setJoystickFromPoint(t.clientX, t.clientY);
+    }
+  }
+}, {passive:false});
+joyZone.addEventListener('touchend', (e)=>{
+  e.preventDefault();
+  resetJoystick();
+}, {passive:false});
+joyZone.addEventListener('touchcancel', ()=> resetJoystick());
+
+let mouseJoyActive = false;
+joyZone.addEventListener('mousedown', (e)=>{
+  mouseJoyActive = true;
+  joystick.active = true;
+  setJoystickFromPoint(e.clientX, e.clientY);
+});
+window.addEventListener('mousemove', (e)=>{
+  if(mouseJoyActive) setJoystickFromPoint(e.clientX, e.clientY);
+});
+window.addEventListener('mouseup', ()=>{
+  if(mouseJoyActive){ mouseJoyActive=false; resetJoystick(); }
+});
+
+document.addEventListener('visibilitychange', ()=>{
+  if(document.hidden && gameState==='playing'){
+    gameState='paused';
+    openOverlay('overlay-pause');
+  }
+});
+
+(function bootstrap(){
+  player = { x:0,y:0, radius:20, speed:230, hp:100, maxHp:100, angle:0, hitFlash:0 };
+  bullets=[]; zombies=[]; particles=[]; floatTexts=[];
+  score=0; coins=0; wave=1; ammo=ammoMax;
+})();
+</script>
+</body>
+</html>
