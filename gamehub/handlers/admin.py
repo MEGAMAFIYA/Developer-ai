@@ -973,7 +973,6 @@ async def cb_create_mp4(
         await _send_preview(
             callback.message,
             data,
-            bot,
         )
 
     except Exception as exc:
