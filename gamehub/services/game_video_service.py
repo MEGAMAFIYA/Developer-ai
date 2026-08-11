@@ -5,7 +5,6 @@ import logging
 import tempfile
 import time
 from pathlib import Path
-from typing import Optional
 
 from playwright.async_api import (
     Page,
@@ -16,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 # ============================================================
-# PATHS / SETTINGS
+# SETTINGS
 # ============================================================
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -56,36 +55,12 @@ async def create_game_mp4(
     html_bytes: bytes,
     duration: int = DEFAULT_DURATION,
 ) -> Path:
-    """
-    HTML o'yinni Chromium orqali ishga tushiradi.
-
-    Jarayon:
-
-    1. HTML vaqtinchalik faylga yoziladi.
-    2. Chromium ishga tushadi.
-    3. O'yin sahifasi ochiladi.
-    4. Start/Boshlash tugmasi topiladi va bosiladi.
-    5. Start bosilgandan keyin gameplay boshlanadi.
-    6. AI o'yinchi faol harakat qiladi.
-    7. O'yin maydoni kuzatiladi.
-    8. WEBM yozuv MP4 ga aylantiriladi.
-    9. Tayyor MP4 qaytariladi.
-
-    Muhim:
-    Playwright video yozuvi context yaratilgan
-    paytdan boshlab olinadi. Lekin yakuniy MP4
-    faqat Start bosilgandan keyingi gameplay
-    qismidan olinadi.
-    """
 
     _ensure_dirs()
 
     duration = max(
         MIN_DURATION,
-        min(
-            int(duration),
-            MAX_DURATION,
-        ),
+        min(int(duration), MAX_DURATION),
     )
 
     raw_video = (
@@ -98,7 +73,6 @@ async def create_game_mp4(
         / f"{slug}.mp4"
     )
 
-    # Eski fayllarni o'chirish.
     raw_video.unlink(
         missing_ok=True
     )
@@ -107,8 +81,6 @@ async def create_game_mp4(
         missing_ok=True
     )
 
-    # Eski WEBM fayllar aralashib ketmasligi uchun
-    # vaqt belgisi bilan ishlaymiz.
     created_before = time.time()
 
     with tempfile.TemporaryDirectory(
@@ -163,9 +135,9 @@ async def create_game_mp4(
 
             try:
 
-                # ------------------------------------------------
-                # LOAD HTML
-                # ------------------------------------------------
+                # ====================================================
+                # LOAD GAME
+                # ====================================================
 
                 await page.goto(
                     html_file.as_uri(),
@@ -173,15 +145,13 @@ async def create_game_mp4(
                     timeout=30000,
                 )
 
-                # Sahifa JS/CSS ishga tushishi uchun
-                # qisqa kutish.
                 await page.wait_for_timeout(
                     500
                 )
 
-                # ------------------------------------------------
+                # ====================================================
                 # START GAME
-                # ------------------------------------------------
+                # ====================================================
 
                 started = await _start_game(
                     page
@@ -194,8 +164,6 @@ async def create_game_mp4(
                         "Game started successfully."
                     )
 
-                    # Start click'dan keyin game loop
-                    # ishga tushishi uchun juda qisqa vaqt.
                     await page.wait_for_timeout(
                         250
                     )
@@ -204,40 +172,35 @@ async def create_game_mp4(
 
                     logger.warning(
                         "[GAME VIDEO] "
-                        "Start button not found. "
-                        "Checking whether game is already running."
+                        "Start button not found."
                     )
 
-                    # Auto-start o'yinlar uchun.
                     await page.wait_for_timeout(
                         250
                     )
 
-                # ------------------------------------------------
+                # ====================================================
                 # ACTIVE GAMEPLAY
-                # ------------------------------------------------
+                # ====================================================
 
                 await _simulate_player(
                     page,
                     duration,
                 )
 
-                # Oxirgi frame'larni yozib olish.
                 await page.wait_for_timeout(
                     250
                 )
 
             finally:
 
-                # Context yopilganda Playwright video
-                # faylni yakunlaydi.
                 try:
                     await context.close()
                 finally:
                     await browser.close()
 
     # ============================================================
-    # FIND NEW WEBM
+    # FIND RECORDED WEBM
     # ============================================================
 
     videos = [
@@ -258,7 +221,6 @@ async def create_game_mp4(
 
     recorded_video = videos[0]
 
-    # Biz kutgan raw nomga o'tkazish.
     if recorded_video != raw_video:
 
         raw_video.unlink(
@@ -274,6 +236,31 @@ async def create_game_mp4(
         raw_video,
     )
 
+    # ============================================================
+    # CONVERT TO MP4
+    # ============================================================
+
+    await _convert_to_mp4(
+        raw_video,
+        mp4_path,
+    )
+
+    raw_video.unlink(
+        missing_ok=True
+    )
+
+    if not mp4_path.exists():
+        raise RuntimeError(
+            "MP4 yaratilmadi."
+        )
+
+    logger.info(
+        "[GAME VIDEO] MP4 created: %s",
+        mp4_path,
+    )
+
+    return mp4_path
+
 
 # ============================================================
 # START BUTTON
@@ -282,33 +269,24 @@ async def create_game_mp4(
 async def _start_game(
     page: Page,
 ) -> bool:
-    """
-    O'yinning Start/Boshlash/O'ynash tugmasini topadi.
-
-    True:
-        tugma topildi va bosildi.
-
-    False:
-        tugma topilmadi.
-    """
 
     selectors = [
-        # English
+
         "button:has-text('Start')",
         "button:has-text('START')",
         "button:has-text('Start Game')",
-        "button:has-text('PLAY')",
-        "button:has-text('Play')",
 
-        # Uzbek
+        "button:has-text('Play')",
+        "button:has-text('PLAY')",
+
         "button:has-text('Boshlash')",
         "button:has-text('BOSHLASH')",
         "button:has-text('Boshlash!')",
+
         "button:has-text('O‘ynash')",
         "button:has-text(\"O'ynash\")",
         "button:has-text('OYNASH')",
 
-        # Common IDs
         "#start",
         "#startButton",
         "#start-btn",
@@ -320,7 +298,6 @@ async def _start_game(
         "#play-btn",
         "#playGame",
 
-        # Common classes
         ".start-button",
         ".start-btn",
         ".start-game",
@@ -329,7 +306,6 @@ async def _start_game(
         ".play-btn",
         ".play-game",
 
-        # Data attributes
         "[data-action='start']",
         "[data-action='play']",
         "[data-action='start-game']",
@@ -337,6 +313,70 @@ async def _start_game(
     ]
 
     for selector in selectors:
+
+        try:
+
+            target = (
+                page
+                .locator(selector)
+                .first
+            )
+
+            if await target.count() == 0:
+                continue
+
+            if not await target.is_visible(
+                timeout=250
+            ):
+                continue
+
+            try:
+                await target.scroll_into_view_if_needed(
+                    timeout=500
+                )
+            except Exception:
+                pass
+
+            await target.click(
+                timeout=2000
+            )
+
+            logger.info(
+                "[GAME VIDEO] Start clicked: %s",
+                selector,
+            )
+
+            await page.wait_for_timeout(
+                300
+            )
+
+            return True
+
+        except Exception as exc:
+
+            logger.debug(
+                "[GAME VIDEO] "
+                "Start selector failed %s: %s",
+                selector,
+                exc,
+            )
+
+    # Text fallback
+
+    text_selectors = [
+        "text=Start",
+        "text=START",
+        "text=Start Game",
+        "text=Play",
+        "text=PLAY",
+        "text=Boshlash",
+        "text=BOSHLASH",
+        "text=Boshlash!",
+        "text=O‘ynash",
+        "text=O'ynash",
+    ]
+
+    for selector in text_selectors:
 
         try:
 
@@ -354,49 +394,307 @@ async def _start_game(
             ):
                 continue
 
-            try:
-                await target.scroll_into_view_if_needed(
-                    timeout=500
-                )
-            except Exception:
-                pass
-
             await target.click(
                 timeout=1500
             )
 
             logger.info(
-                "[GAME VIDEO] Start clicked: %s",
+                "[GAME VIDEO] "
+                "Fallback start clicked: %s",
                 selector,
+            )
+
+            await page.wait_for_timeout(
+                300
             )
 
             return True
 
-        except Exception as exc:
-
-            logger.debug(
-                "[GAME VIDEO] "
-                "Start selector failed %s: %s",
-                selector,
-                exc,
-            )
-
+        except Exception:
             continue
 
-    # Text fallback.
-    text_selectors = [
-        "text=Start",
-        "text=START",
-        "text=Start Game",
-        "text=Play",
-        "text=PLAY",
-        "text=Boshlash",
-        "text=BOSHLASH",
-        "text=O‘ynash",
-        "text=O'ynash",
+    logger.warning(
+        "[GAME VIDEO] Start button not found."
+    )
+
+    return False
+
+# ============================================================
+# AI GAMEPLAY
+# ============================================================
+
+async def _simulate_player(
+    page: Page,
+    duration: int,
+) -> None:
+    """
+    Universal faol AI o'yinchi.
+
+    O'yin ichini kuzatishga urinadi:
+    - dushman/xavfni aniqlaydi
+    - dushman bo'lsa hujum qiladi
+    - xavf yaqin bo'lsa qochadi
+    - oddiy holatda faol harakat qiladi
+    - sakrash va hujum tugmalarini sinaydi
+    - mouse/tap orqali ham boshqaradi
+    """
+
+    loop = asyncio.get_running_loop()
+
+    end_time = (
+        loop.time()
+        + duration
+    )
+
+    index = 0
+
+    while loop.time() < end_time:
+
+        # ====================================================
+        # O'YIN HOLATINI TEKSHIRISH
+        # ====================================================
+
+        threat = await _detect_threat(
+            page
+        )
+
+        # ====================================================
+        # XAVF JUDA YAQIN
+        # ====================================================
+
+        if threat == "danger":
+
+            logger.debug(
+                "[GAME VIDEO] Danger detected"
+            )
+
+            # Tez qochish
+            await _press_key(
+                page,
+                "ArrowLeft",
+                180,
+            )
+
+            await _press_key(
+                page,
+                "ArrowRight",
+                220,
+            )
+
+            # Sakrashga urinadi
+            await _press_key(
+                page,
+                "ArrowUp",
+                160,
+            )
+
+            await _press_key(
+                page,
+                "Space",
+                120,
+            )
+
+        # ====================================================
+        # DUSHMAN
+        # ====================================================
+
+        elif threat == "enemy":
+
+            logger.debug(
+                "[GAME VIDEO] Enemy detected"
+            )
+
+            # Ketma-ket o'q otish
+            await _fire(
+                page
+            )
+
+            await page.wait_for_timeout(
+                100
+            )
+
+            await _fire(
+                page
+            )
+
+            # Dushmandan masofa olish
+            await _press_key(
+                page,
+                "ArrowRight",
+                180,
+            )
+
+        # ====================================================
+        # ODDIY GAMEPLAY
+        # ====================================================
+
+        else:
+
+            movement = [
+                ("ArrowRight", 220),
+                ("ArrowRight", 180),
+                ("ArrowLeft", 160),
+                ("ArrowRight", 240),
+                ("ArrowUp", 160),
+                ("ArrowRight", 200),
+                ("Space", 140),
+                ("ArrowLeft", 180),
+                ("ArrowRight", 260),
+                ("ArrowUp", 130),
+            ]
+
+            key, hold_time = (
+                movement[
+                    index
+                    % len(movement)
+                ]
+            )
+
+            await _press_key(
+                page,
+                key,
+                hold_time,
+            )
+
+        index += 1
+
+        # ====================================================
+        # TEZ-TEZ HUJUM
+        # ====================================================
+
+        if index % 2 == 0:
+
+            await _fire(
+                page
+            )
+
+        # ====================================================
+        # MOUSE / TAP
+        # ====================================================
+
+        if index % 2 == 0:
+
+            await _active_game_click(
+                page
+            )
+
+        # Juda uzoq kutmaymiz.
+        await page.wait_for_timeout(
+            80
+        )
+
+
+# ============================================================
+# KEY PRESS
+# ============================================================
+
+async def _press_key(
+    page: Page,
+    key: str,
+    duration_ms: int,
+) -> None:
+    """
+    Tugmani qisqa vaqt bosib turadi.
+    """
+
+    try:
+
+        await page.keyboard.down(
+            key
+        )
+
+        await page.wait_for_timeout(
+            duration_ms
+        )
+
+        await page.keyboard.up(
+            key
+        )
+
+    except Exception:
+
+        try:
+            await page.keyboard.up(
+                key
+            )
+        except Exception:
+            pass
+
+
+# ============================================================
+# FIRE / ATTACK
+# ============================================================
+
+async def _fire(
+    page: Page,
+) -> None:
+    """
+    Universal hujum tizimi.
+
+    Turli o'yinlarda ishlashi uchun:
+    Space, X, Z, Control va mouse
+    orqali hujum qilishga urinadi.
+    """
+
+    fire_keys = [
+        "Space",
+        "KeyX",
+        "KeyZ",
+        "Control",
     ]
 
-    for selector in text_selectors:
+    for key in fire_keys:
+
+        try:
+
+            await page.keyboard.press(
+                key
+            )
+
+        except Exception:
+            pass
+
+        await page.wait_for_timeout(
+            25
+        )
+
+    # Mouse/tap orqali ham sinab ko'ramiz.
+    await _active_game_click(
+        page
+    )
+
+
+# ============================================================
+# ACTIVE GAME CLICK
+# ============================================================
+
+async def _active_game_click(
+    page: Page,
+) -> None:
+    """
+    O'yin maydonini topib,
+    turli nuqtalariga click/tap qiladi.
+
+    Canvas o'yinlari uchun foydali.
+    """
+
+    selectors = [
+
+        "canvas",
+
+        "#game",
+        "#gameCanvas",
+        "#canvas",
+
+        ".game",
+        ".game-container",
+        ".game-area",
+
+        "#game-area",
+        "#app",
+    ]
+
+    for selector in selectors:
 
         try:
 
@@ -410,309 +708,260 @@ async def _start_game(
                 continue
 
             if not await target.is_visible(
-                timeout=150
+                timeout=100
             ):
                 continue
 
-            await target.click(
-                timeout=1000
-            )
+            box = await target.bounding_box()
 
-            logger.info(
-                "[GAME VIDEO] "
-                "Fallback start clicked: %s",
-                selector,
-            )
-
-            return True
-
-        except Exception:
-            continue
-
-    return False
-async def _start_game(page: Page) -> bool:
-    """
-    Start/Boshlash tugmasini topadi va bosadi.
-    """
-
-    selectors = [
-        "button:has-text('Start')",
-        "button:has-text('START')",
-        "button:has-text('Start Game')",
-        "button:has-text('PLAY')",
-        "button:has-text('Play')",
-        "button:has-text('Boshlash')",
-        "button:has-text('Boshlash!')",
-        "button:has-text('O‘ynash')",
-        "button:has-text(\"O'ynash\")",
-        "#start",
-        "#startButton",
-        "#start-btn",
-        "#startGame",
-        "#start-game",
-        "#play",
-        "#playButton",
-        "#play-btn",
-        ".start-button",
-        ".start-btn",
-        ".start-game",
-        ".play-button",
-        ".play-btn",
-        ".play-game",
-        "[data-action='start']",
-        "[data-action='play']",
-        "[data-action='start-game']",
-        "[data-action='play-game']",
-    ]
-
-    for selector in selectors:
-        try:
-            target = page.locator(selector).first
-
-            if await target.count() == 0:
+            if not box:
                 continue
 
-            if not await target.is_visible(timeout=250):
-                continue
+            points = [
 
-            try:
-                await target.scroll_into_view_if_needed(
-                    timeout=500
+                # Markaz
+                (0.50, 0.50),
+
+                # Chap
+                (0.30, 0.50),
+
+                # O'ng
+                (0.70, 0.50),
+
+                # Yuqori
+                (0.50, 0.35),
+
+                # Past
+                (0.50, 0.65),
+            ]
+
+            for px, py in points:
+
+                x = (
+                    box["x"]
+                    + box["width"] * px
                 )
-            except Exception:
-                pass
 
-            await target.click(timeout=2000)
+                y = (
+                    box["y"]
+                    + box["height"] * py
+                )
 
-            logger.info(
-                "[GAME VIDEO] Start clicked: %s",
-                selector,
-            )
+                try:
 
-            await page.wait_for_timeout(300)
+                    await page.mouse.click(
+                        x,
+                        y,
+                    )
 
-            return True
+                except Exception:
+                    pass
 
-        except Exception as exc:
-            logger.debug(
-                "[GAME VIDEO] Start selector failed %s: %s",
-                selector,
-                exc,
-            )
-
-    # Matn orqali qo'shimcha qidirish
-    text_selectors = [
-        "text=Start",
-        "text=START",
-        "text=Start Game",
-        "text=Play",
-        "text=PLAY",
-        "text=Boshlash",
-        "text=Boshlash!",
-        "text=O‘ynash",
-        "text=O'ynash",
-    ]
-
-    for selector in text_selectors:
-        try:
-            target = page.locator(selector).first
-
-            if await target.count() == 0:
-                continue
-
-            if not await target.is_visible(timeout=200):
-                continue
-
-            await target.click(timeout=1500)
-
-            logger.info(
-                "[GAME VIDEO] Fallback start clicked: %s",
-                selector,
-            )
-
-            await page.wait_for_timeout(300)
-
-            return True
+            return
 
         except Exception:
             continue
 
-    logger.warning(
-        "[GAME VIDEO] Start button not found."
-    )
 
-    return False
+# ============================================================
+# SCREEN / GAME STATE ANALYSIS
+# ============================================================
 
-
-async def _simulate_player(
+async def _detect_threat(
     page: Page,
-    duration: int,
-) -> None:
+) -> str:
     """
-    Universal faol AI o'yinchi.
+    O'yin ichidagi dushman/xavfni aniqlashga urinadi.
 
-    AI:
-    - doimiy yuradi
-    - yo'nalishni tez-tez almashtiradi
-    - sakraydi
-    - Space/X/Z orqali hujum qiladi
-    - mouse/tap ishlatadi
-    - xavfdan qochishga urinadi
-    - ekrandagi dushman/obyektlarni aniqlashga urinadi
+    Natija:
+
+        "danger"
+        "enemy"
+        "none"
+
+    Bu universal tizim bo'lgani uchun
+    turli HTML o'yinlarning DOM elementlari,
+    canvas va matnlarini tekshiradi.
     """
 
-    loop = asyncio.get_running_loop()
-    end_time = loop.time() + duration
-
-    index = 0
-
-    while loop.time() < end_time:
-
-        # ─────────────────────────────────────────────
-        # 1. EKRANDAGI O'YIN HOLATINI TEKSHIRISH
-        # ─────────────────────────────────────────────
-
-        threat = await _detect_threat(page)
-
-        if threat == "danger":
-            # Dushman yoki xavf yaqin bo'lsa:
-            # yo'nalishni tez o'zgartirib qochamiz.
-            await _press_key(
-                page,
-                "ArrowLeft",
-                180,
-            )
-
-            await _press_key(
-                page,
-                "ArrowRight",
-                220,
-            )
-
-            await _press_key(
-                page,
-                "ArrowUp",
-                180,
-            )
-
-        elif threat == "enemy":
-            # Dushman ko'rinsa:
-            # tez-tez o'q otishga urinadi.
-            await _fire(page)
-
-            await _press_key(
-                page,
-                "ArrowRight",
-                180,
-            )
-
-            await _fire(page)
-
-        else:
-            # Oddiy gameplay.
-            movement = [
-                ("ArrowRight", 220),
-                ("ArrowRight", 180),
-                ("ArrowLeft", 160),
-                ("ArrowRight", 240),
-                ("ArrowUp", 160),
-                ("ArrowRight", 200),
-                ("Space", 140),
-                ("ArrowLeft", 180),
-            ]
-
-            key, hold_time = movement[
-                index % len(movement)
-            ]
-
-            await _press_key(
-                page,
-                key,
-                hold_time,
-            )
-
-        index += 1
-
-        # Har bir siklda hujumni ham sinab ko'ramiz.
-        if index % 2 == 0:
-            await _fire(page)
-
-        # O'yin maydoniga tap/click.
-        await _active_game_click(page)
-
-        # Juda uzoq kutmaymiz.
-        await page.wait_for_timeout(80)
-
-
-async def _press_key(
-    page: Page,
-    key: str,
-    duration_ms: int,
-) -> None:
-    """
-    Tugmani qisqa vaqt bosib turadi.
-    """
+    # ========================================================
+    # 1. DOM MATNLARINI TEKSHIRISH
+    # ========================================================
 
     try:
-        await page.keyboard.down(key)
 
-        await page.wait_for_timeout(
-            duration_ms
+        text = await page.locator(
+            "body"
+        ).inner_text(
+            timeout=300
         )
 
-        await page.keyboard.up(key)
+        text_lower = (
+            text.lower()
+        )
 
     except Exception:
-        try:
-            await page.keyboard.up(key)
-        except Exception:
-            pass
 
+        text_lower = ""
 
-async def _fire(page: Page) -> None:
-    """
-    Universal hujum/o'q otish.
+    # ========================================================
+    # DUSHMAN / XAVF SO'ZLARI
+    # ========================================================
 
-    Turli o'yinlarda ishlashi uchun
-    bir nechta standart tugmalar sinab ko'riladi.
-    """
-
-    fire_keys = [
-        "Space",
-        "KeyX",
-        "KeyZ",
-        "Control",
+    danger_words = [
+        "enemy",
+        "dushman",
+        "zombie",
+        "zombi",
+        "police",
+        "politsiya",
+        "monster",
+        "maxluq",
+        "danger",
+        "xavf",
+        "attack",
+        "hujum",
+        "chase",
+        "quvish",
+        "obstacle",
+        "to'siq",
+        "tosiq",
+        "game over",
     ]
 
-    for key in fire_keys:
-        try:
-            await page.keyboard.press(key)
-        except Exception:
-            pass
+    enemy_words = [
+        "enemy",
+        "dushman",
+        "zombie",
+        "zombi",
+        "monster",
+        "police",
+        "politsiya",
+    ]
 
-    # Mouse orqali ham hujum/tap.
-    await _active_game_click(page)
+    # ========================================================
+    # XAVFNI ANIQLASH
+    # ========================================================
+
+    for word in danger_words:
+
+        if word in text_lower:
+
+            # Game Over ham xavf sifatida
+            # qaytariladi, lekin AI baribir
+            # harakatni davom ettiradi.
+
+            if (
+                "game over"
+                not in text_lower
+            ):
+
+                return "danger"
+
+    # ========================================================
+    # DUSHMAN ANIQLASH
+    # ========================================================
+
+    for word in enemy_words:
+
+        if word in text_lower:
+
+            return "enemy"
+
+    # ========================================================
+    # DOM CLASS / ID TEKSHIRISH
+    # ========================================================
+
+    try:
+
+        elements = await page.locator(
+            "[class], [id]"
+        ).all()
+
+        checked = 0
+
+        for element in elements:
+
+            if checked >= 100:
+                break
+
+            checked += 1
+
+            try:
+
+                class_name = (
+                    await element.get_attribute(
+                        "class"
+                    )
+                    or ""
+                )
+
+                element_id = (
+                    await element.get_attribute(
+                        "id"
+                    )
+                    or ""
+                )
+
+                value = (
+                    f"{class_name} "
+                    f"{element_id}"
+                ).lower()
+
+                for word in enemy_words:
+
+                    if word in value:
+
+                        return "enemy"
+
+            except Exception:
+                continue
+
+    except Exception:
+        pass
+
+    return "none"
+
+# ============================================================
+# VIDEO CONVERSION
+# ============================================================
+
 async def _convert_to_mp4(
     source: Path,
     destination: Path,
 ) -> None:
     """
     WEBM → MP4.
+
+    FFmpeg yordamida Chromium yozgan
+    WEBM videoni Telegram uchun MP4 ga
+    aylantiradi.
     """
 
     command = [
         "ffmpeg",
         "-y",
+
         "-i",
         str(source),
+
+        # Video codec
         "-c:v",
         "libx264",
+
+        # Tezroq render
         "-preset",
         "veryfast",
+
+        # Telegram va mobil qurilmalar
+        # bilan yaxshi moslik
         "-pix_fmt",
         "yuv420p",
+
+        # MP4 tez ochilishi uchun
         "-movflags",
         "+faststart",
+
         str(destination),
     ]
 
@@ -728,7 +977,12 @@ async def _convert_to_mp4(
 
     _, stderr = await process.communicate()
 
+    # ========================================================
+    # FFMPEG ERROR
+    # ========================================================
+
     if process.returncode != 0:
+
         error = stderr.decode(
             "utf-8",
             errors="replace",
@@ -743,12 +997,20 @@ async def _convert_to_mp4(
             "FFmpeg MP4 conversion failed."
         )
 
+    # ========================================================
+    # FILE CHECK
+    # ========================================================
+
     if not destination.exists():
+
         raise RuntimeError(
             "FFmpeg ishladi, ammo MP4 topilmadi."
         )
 
+    # Juda kichik faylni noto'g'ri video
+    # deb hisoblaymiz.
     if destination.stat().st_size < 1024:
+
         raise RuntimeError(
             "MP4 fayl juda kichik yoki bo'sh."
         )
