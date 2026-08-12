@@ -9,6 +9,8 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
 from api.routes import scores as scores_router
+from api.routes import recording as recording_router
+from api.routes import recorder as recorder_router
 
 logger = logging.getLogger(__name__)
 
@@ -102,6 +104,11 @@ async def serve_game(slug: str):
 # ---------------------------------------------------------------------------
 
 app.include_router(scores_router.router, prefix="/api")
+app.include_router(recording_router.router, prefix="/api")
+
+# GET /record/{slug} — admin-only in-browser game recorder (Mini App page).
+# Not under /api since it's an HTML page, not a JSON endpoint.
+app.include_router(recorder_router.router)
 
 
 # ---------------------------------------------------------------------------
