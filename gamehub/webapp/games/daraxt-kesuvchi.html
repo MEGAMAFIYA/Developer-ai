@@ -91,6 +91,52 @@
   .howtoText b { color:#a15b0f; }
 
   #touchZones { position:absolute; top:0; left:0; width:100%; height:100%; display:flex; pointer-events:none; }
+
+  /* ===================== Admin button & panel (only ever inserted into the DOM for the owner/admins) ===================== */
+  #adminBtn {
+    display:inline-block; margin:10px 6px 0; padding:11px 24px; font-size:clamp(13px,3vw,16px);
+    font-weight:800; color:#fff8e0; border:none; border-radius:14px; cursor:pointer; letter-spacing:0.3px;
+    background:linear-gradient(180deg,#5a6a8a,#2c3650); box-shadow:0 6px 0 #1a2032, 0 10px 16px rgba(0,0,0,0.3);
+  }
+  #adminBtn:active { transform:translateY(4px); box-shadow:0 1px 0 #1a2032; }
+
+  #adminModal {
+    position:fixed; inset:0; z-index:60; display:flex; align-items:center; justify-content:center;
+    background:rgba(20,12,4,0.72); backdrop-filter:blur(3px); padding:16px;
+  }
+  #adminModal.hidden { display:none; }
+  .admin-card {
+    width:100%; max-width:480px; max-height:88vh; overflow-y:auto;
+    background:linear-gradient(160deg,#fff8e7,#ffe9b3); border:5px solid #7a4a1e; border-radius:22px;
+    padding:22px 22px 26px; color:#6b3d12; box-shadow:0 18px 30px rgba(0,0,0,0.45);
+  }
+  .admin-card h2 { margin:0 0 4px; font-size:20px; color:#a15b0f; display:flex; align-items:center; gap:8px; }
+  .admin-sub { font-size:12.5px; color:#8a5a22; margin-bottom:16px; font-weight:600; }
+  .admin-section {
+    background:rgba(255,255,255,0.5); border:2px solid #c99a4e; border-radius:14px;
+    padding:14px; margin-bottom:14px;
+  }
+  .admin-section h3 { margin:0 0 10px; font-size:14.5px; color:#6b3d12; }
+  .admin-row { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+  .file-label {
+    display:inline-block; padding:9px 16px; border-radius:10px; font-size:13px; font-weight:700;
+    background:linear-gradient(180deg,#6ba8ff,#2f6fd6); border:none; cursor:pointer; color:#fff;
+  }
+  .file-label:hover { filter:brightness(1.08); }
+  .admin-preview {
+    width:64px; height:64px; border-radius:10px; object-fit:cover; background:#fff2cf;
+    border:2px solid #c99a4e; display:none;
+  }
+  .admin-preview.show { display:block; }
+  .admin-preview-audio { display:none; width:100%; margin-top:8px; height:32px; }
+  .admin-preview-audio.show { display:block; }
+  .clear-btn {
+    background:none; border:1px solid #d6432f; color:#a1291f; border-radius:8px;
+    padding:6px 10px; font-size:12px; cursor:pointer; font-weight:700;
+  }
+  .clear-btn:hover { background:rgba(214,67,47,0.12); }
+  .admin-actions { display:flex; gap:10px; justify-content:flex-end; margin-top:6px; }
+  .admin-note { font-size:11.5px; color:#8a5a22; margin-top:10px; line-height:1.5; }
 </style>
 </head>
 <body>
@@ -183,6 +229,9 @@
 
 </div>
 
+<!-- Background music element (source set from admin-uploaded asset, or left empty) -->
+<audio id="bgMusic" loop style="display:none;"></audio>
+
 <script>
 'use strict';
 /* =========================================================================
@@ -221,6 +270,81 @@ let bestScore = store.get('dk_best', 0);
 let coins     = store.get('dk_coins', 0);
 let unlocked  = store.get('dk_unlocked', { characters:[0], axes:[0], effects:[0] });
 let selected  = store.get('dk_selected', { character:0, axe:0, effect:0 });
+
+/* =========================================================================
+   ADMIN PANEL — owner + owner-designated admin IDs only.
+   Works the same way as the Politsiyadan Qochish admin panel: on load we
+   check the Telegram user against OWNER_ID and a persisted admin-ID list;
+   only for a match do we ever build any admin DOM, so nobody else can see
+   or unhide it via dev tools. Admin-uploaded assets (background/character
+   image, music) are persisted in localStorage and auto-applied for every
+   player next time the game loads.
+   ========================================================================= */
+const OWNER_ID = 5756096918; // <-- the only Telegram user ID with full owner permissions
+
+/* Persistent administrator list (everyone except the OWNER). Stored as a
+   JSON array of ID strings in localStorage so it survives restarts.
+   The OWNER is never stored in this list — ownership is fixed to OWNER_ID
+   above and cannot be added/removed by anyone through the UI. */
+const ADMIN_LIST_KEY = 'dk_admin_list';
+function getAdminList(){
+  try {
+    const raw = localStorage.getItem(ADMIN_LIST_KEY);
+    const list = raw ? JSON.parse(raw) : [];
+    return Array.isArray(list) ? list.map(String) : [];
+  } catch (e) { return []; }
+}
+function saveAdminList(list){
+  localStorage.setItem(ADMIN_LIST_KEY, JSON.stringify(list));
+}
+function isAdminId(id){
+  const s = String(id);
+  return s === String(OWNER_ID) || getAdminList().includes(s);
+}
+
+/* NOTE on security: this check reads Telegram.WebApp.initDataUnsafe on the
+   client. It is fine for gating a cosmetic admin panel like this one, but
+   it is NOT cryptographically verified — a user with dev tools could in
+   theory spoof window.Telegram before this script runs. Real access-control
+   (money, private data, etc.) must verify initData's hash server-side with
+   your bot token. For this game (swapping images/music) that risk is low,
+   but it's worth knowing. */
+
+/* Admin-customizable assets (persisted in localStorage) */
+const ASSET_KEYS = { bg: 'dk_bg_image', player: 'dk_player_image', music: 'dk_music' };
+let customBgImg = null;      // Image, replaces the procedural sky/mountains/clouds when set
+let customPlayerImg = null;  // Image, replaces the procedural fighter when set
+const bgMusicEl = document.getElementById('bgMusic');
+
+function loadImageAsset(dataUrl, onReady){
+  const img = new Image();
+  img.onload = () => onReady(img);
+  img.src = dataUrl;
+}
+
+/* Load whatever the admin previously saved so it applies automatically
+   the next time the game is opened — for every player, not just the owner. */
+function loadSavedAssets(){
+  try {
+    const bg = localStorage.getItem(ASSET_KEYS.bg);
+    if (bg){ loadImageAsset(bg, img => { customBgImg = img; }); }
+    const pl = localStorage.getItem(ASSET_KEYS.player);
+    if (pl){ loadImageAsset(pl, img => { customPlayerImg = img; }); }
+    const music = localStorage.getItem(ASSET_KEYS.music);
+    if (music){ bgMusicEl.src = music; }
+  } catch (e) {
+    console.warn('Saqlangan assetlarni yuklab bo\'lmadi:', e);
+  }
+}
+loadSavedAssets();
+
+function playBgMusicIfAny(){
+  if (bgMusicEl.src){
+    bgMusicEl.volume = 0.4;
+    bgMusicEl.play().catch(() => {}); // ignored if blocked until a user gesture happens
+  }
+}
+function pauseBgMusic(){ bgMusicEl.pause(); }
 
 /* =========================================================================
    TELEGRAM WEBAPP INTEGRATION
@@ -662,10 +786,14 @@ function draw(){
   }
   ctx.translate(sx, sy);
 
-  drawSky();
-  drawMountains();
-  drawClouds();
-  drawBirds();
+  if(customBgImg){
+    drawCustomBackground();
+  } else {
+    drawSky();
+    drawMountains();
+    drawClouds();
+    drawBirds();
+  }
   drawGround();
   drawTree();
   if(fallingLog) drawFallingLog();
@@ -676,6 +804,16 @@ function draw(){
   ctx.restore();
 
   if(state==='playing' || state==='paused') drawTimerBar();
+}
+
+function drawCustomBackground(){
+  const img = customBgImg;
+  const iw = img.naturalWidth || 1, ih = img.naturalHeight || 1;
+  const canvasRatio = W / H, imgRatio = iw / ih;
+  let dw, dh, dx, dy;
+  if(imgRatio > canvasRatio){ dh = H; dw = H * imgRatio; dx = (W - dw) / 2; dy = 0; }
+  else { dw = W; dh = W / imgRatio; dx = 0; dy = (H - dh) / 2; }
+  ctx.drawImage(img, dx, dy, dw, dh);
 }
 
 function drawSky(){
@@ -909,6 +1047,7 @@ function drawFallingLog(){
    Strikes are chosen automatically (see nextMoveType) and alternate between
    kicks and punches in short random streaks. */
 function drawPlayer(){
+  if(customPlayerImg){ drawCustomPlayer(); return; }
   const skin = CHARACTERS[selected.character];
   const wrap = AXES[selected.axe];      // repurposed: belt / wrap accent color
   const eff  = EFFECTS[selected.effect];
@@ -1060,6 +1199,28 @@ function drawPlayer(){
 }
 
 /* Leg helper: rotates around the hip so kicks pivot naturally */
+function drawCustomPlayer(){
+  // admin-uploaded "main character" image, replacing the procedural fighter
+  const side = player.side;
+  const dir = side==='left' ? 1 : -1;
+  const px = side==='left' ? W/2 - 150*SCALE : W/2 + 150*SCALE;
+  const py = groundY;
+  const swing = player.swinging ? Math.sin(player.swingT*Math.PI) : 0;
+  const bounce = swing * 14 * SCALE;
+  const targetH = 155 * SCALE * 1.55;
+  const aspect = (customPlayerImg.naturalWidth && customPlayerImg.naturalHeight)
+    ? customPlayerImg.naturalWidth / customPlayerImg.naturalHeight : 1;
+  const targetW = targetH * aspect;
+
+  ctx.save();
+  ctx.fillStyle = 'rgba(0,0,0,0.25)';
+  ctx.beginPath(); ctx.ellipse(px, py+4, 36, 10, 0, 0, 6.283); ctx.fill();
+  ctx.translate(px, py - bounce);
+  ctx.scale(dir, 1);
+  ctx.drawImage(customPlayerImg, -targetW/2, -targetH, targetW, targetH);
+  ctx.restore();
+}
+
 function drawLeg(offsetX, hipY, skin, angle, wrapColor){
   ctx.save();
   ctx.translate(offsetX, hipY);
@@ -1138,6 +1299,7 @@ function goMenu(){
   hud.classList.remove('active');
   refreshMenuStats();
   showOnly('menu');
+  pauseBgMusic();
 }
 
 function startGame(){
@@ -1147,6 +1309,7 @@ function startGame(){
   hud.classList.add('active');
   showOnly(null);
   updateHud();
+  playBgMusicIfAny();
 }
 
 function updateHud(){
@@ -1158,10 +1321,12 @@ function pauseGame(){
   if(state!=='playing') return;
   state = 'paused';
   showOnly('pause');
+  pauseBgMusic();
 }
 function resumeGame(){
   state = 'playing';
   showOnly(null);
+  playBgMusicIfAny();
 }
 
 function showGameOver(){
@@ -1171,6 +1336,7 @@ function showGameOver(){
   document.getElementById('goCoins').textContent = "+" + sessionCoins + " tanga";
   showOnly('gameover');
   hud.classList.remove('active');
+  pauseBgMusic();
 
   // Submit the score automatically now that the run has ended.
   setSubmitStatus("");
@@ -1340,6 +1506,240 @@ canvas.addEventListener('pointerdown', (e)=>{
 });
 canvas.style.touchAction = 'none';
 
+/* ======================================================================
+   TELEGRAM MINI APP AUTHENTICATION
+   Runs automatically on load. Reads the Telegram user from initData and
+   checks it against OWNER_ID and the persisted admin list. Only on a
+   match do we build any admin DOM — for every other user, zero admin
+   elements are ever created, so there is nothing in the page to find or
+   unhide via dev tools.
+   ====================================================================== */
+function checkTelegramAuth(){
+  try {
+    if (!tg) return; // not running inside Telegram — no admin access
+    const user = tg.initDataUnsafe && tg.initDataUnsafe.user;
+    if (!user) return;
+    const isOwner = String(user.id) === String(OWNER_ID);
+    if (isOwner || isAdminId(user.id)){
+      buildAdminUI(user, isOwner);
+    }
+  } catch (e) {
+    console.warn('Telegram auth tekshiruvi muvaffaqiyatsiz:', e);
+  }
+}
+
+function buildAdminUI(user, isOwner){
+  /* Admin entry button, appended to the main menu only for the owner/admins */
+  const adminBtn = document.createElement('button');
+  adminBtn.id = 'adminBtn';
+  adminBtn.textContent = '⚙️ Admin panel';
+  document.getElementById('menuScreen').querySelector('.panel').appendChild(adminBtn);
+
+  /* Admin modal, built once, hidden until opened */
+  const modal = document.createElement('div');
+  modal.id = 'adminModal';
+  modal.className = 'hidden';
+  modal.innerHTML = `
+    <div class="admin-card">
+      <h2>⚙️ Admin panel</h2>
+      <div class="admin-sub">Xush kelibsiz, ${user.first_name ? user.first_name.replace(/</g,'') : 'Admin'} (${isOwner ? 'EGASI' : 'Administrator'}). Bu yerda o'yin ko'rinishini o'zgartirishingiz mumkin.</div>
+
+      <div class="admin-section">
+        <h3>Fon rasmi</h3>
+        <div class="admin-row">
+          <label class="file-label">Fayl tanlash<input type="file" accept="image/*" id="bgFileInput" style="display:none;"></label>
+          <img id="bgPreview" class="admin-preview" alt="Fon ko'rinishi">
+          <button class="clear-btn" id="bgClearBtn">Tozalash</button>
+        </div>
+      </div>
+
+      <div class="admin-section">
+        <h3>Bosh qahramon rasmi</h3>
+        <div class="admin-row">
+          <label class="file-label">Fayl tanlash<input type="file" accept="image/*" id="playerFileInput" style="display:none;"></label>
+          <img id="playerPreview" class="admin-preview" alt="Qahramon ko'rinishi">
+          <button class="clear-btn" id="playerClearBtn">Tozalash</button>
+        </div>
+      </div>
+
+      <div class="admin-section">
+        <h3>Fon musiqasi</h3>
+        <div class="admin-row">
+          <label class="file-label">Fayl tanlash<input type="file" accept="audio/*" id="musicFileInput" style="display:none;"></label>
+          <button class="clear-btn" id="musicClearBtn">Tozalash</button>
+        </div>
+        <audio id="musicPreview" class="admin-preview-audio" controls></audio>
+      </div>
+
+      ${isOwner ? `
+      <div class="admin-section">
+        <h3>Administratorlarni boshqarish</h3>
+        <div class="admin-row">
+          <input type="text" id="newAdminInput" placeholder="Telegram User ID" inputmode="numeric"
+                 style="flex:1; min-width:140px; padding:9px 12px; border-radius:10px; border:1px solid #c99a4e; background:#fff8e7; color:#6b3d12; font-size:13px;">
+          <button class="file-label" id="addAdminBtn">Qo'shish</button>
+        </div>
+        <div id="adminListBox" style="margin-top:10px; display:flex; flex-direction:column; gap:6px;"></div>
+        <div class="admin-note">Faqat EGASI administratorlar ro'yxatini boshqarishi mumkin. Administratorlar boshqa administrator qo'sha yoki o'chira olmaydi va EGASINI o'chirib bo'lmaydi.</div>
+      </div>
+      ` : ''}
+
+      <div class="admin-note">Fayllar shu qurilmada saqlanadi va o'yin keyingi safar ochilganda avtomatik qo'llanadi.</div>
+      <div class="admin-actions">
+        <button class="btn secondary small" id="adminCloseBtn">Yopish</button>
+        <button class="btn small" id="adminSaveBtn">Saqlash</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+
+  // pending (not-yet-saved) selections, applied only on "Saqlash"
+  let pending = { bg: undefined, player: undefined, music: undefined };
+
+  function readFileAsDataURL(file, cb){
+    const reader = new FileReader();
+    reader.onload = () => cb(reader.result);
+    reader.readAsDataURL(file);
+  }
+
+  const bgPreview = modal.querySelector('#bgPreview');
+  const playerPreview = modal.querySelector('#playerPreview');
+  const musicPreview = modal.querySelector('#musicPreview');
+
+  // pre-fill previews with whatever is currently saved
+  const savedBg = localStorage.getItem(ASSET_KEYS.bg);
+  if (savedBg){ bgPreview.src = savedBg; bgPreview.classList.add('show'); }
+  const savedPlayer = localStorage.getItem(ASSET_KEYS.player);
+  if (savedPlayer){ playerPreview.src = savedPlayer; playerPreview.classList.add('show'); }
+  const savedMusic = localStorage.getItem(ASSET_KEYS.music);
+  if (savedMusic){ musicPreview.src = savedMusic; musicPreview.classList.add('show'); }
+
+  /* Administrator list management — owner only. This whole block simply
+     doesn't run (and its DOM doesn't exist) when isOwner is false. */
+  if (isOwner){
+    const listBox = modal.querySelector('#adminListBox');
+    function renderAdminList(){
+      const list = getAdminList();
+      listBox.innerHTML = '';
+      if (list.length === 0){
+        listBox.innerHTML = '<div class="admin-note" style="margin:0;">Hozircha qo\'shimcha administrator yo\'q.</div>';
+        return;
+      }
+      list.forEach(id => {
+        const row = document.createElement('div');
+        row.className = 'admin-row';
+        row.style.justifyContent = 'space-between';
+        row.style.background = 'rgba(255,255,255,0.35)';
+        row.style.padding = '8px 10px';
+        row.style.borderRadius = '8px';
+        row.innerHTML = `<span style="font-size:13px;">🆔 ${id}</span>`;
+        const removeBtn = document.createElement('button');
+        removeBtn.className = 'clear-btn';
+        removeBtn.textContent = "O'chirish";
+        removeBtn.addEventListener('click', () => {
+          saveAdminList(getAdminList().filter(x => x !== id));
+          renderAdminList();
+        });
+        row.appendChild(removeBtn);
+        listBox.appendChild(row);
+      });
+    }
+    renderAdminList();
+
+    modal.querySelector('#addAdminBtn').addEventListener('click', () => {
+      const input = modal.querySelector('#newAdminInput');
+      const raw = input.value.trim();
+      if (!raw || !/^\d+$/.test(raw)){
+        alert("Iltimos, to'g'ri Telegram User ID kiriting (faqat raqamlar).");
+        return;
+      }
+      if (raw === String(OWNER_ID)){
+        alert("EGASI allaqachon to'liq huquqlarga ega — qo'shish shart emas.");
+        return;
+      }
+      const list = getAdminList();
+      if (!list.includes(raw)){
+        list.push(raw);
+        saveAdminList(list);
+        renderAdminList();
+      }
+      input.value = '';
+    });
+  }
+
+  modal.querySelector('#bgFileInput').addEventListener('change', e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    readFileAsDataURL(file, url => {
+      pending.bg = url;
+      bgPreview.src = url;
+      bgPreview.classList.add('show');
+    });
+  });
+  modal.querySelector('#playerFileInput').addEventListener('change', e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    readFileAsDataURL(file, url => {
+      pending.player = url;
+      playerPreview.src = url;
+      playerPreview.classList.add('show');
+    });
+  });
+  modal.querySelector('#musicFileInput').addEventListener('change', e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    readFileAsDataURL(file, url => {
+      pending.music = url;
+      musicPreview.src = url;
+      musicPreview.classList.add('show');
+    });
+  });
+
+  modal.querySelector('#bgClearBtn').addEventListener('click', () => {
+    pending.bg = null; bgPreview.classList.remove('show'); bgPreview.src = '';
+  });
+  modal.querySelector('#playerClearBtn').addEventListener('click', () => {
+    pending.player = null; playerPreview.classList.remove('show'); playerPreview.src = '';
+  });
+  modal.querySelector('#musicClearBtn').addEventListener('click', () => {
+    pending.music = null; musicPreview.classList.remove('show'); musicPreview.src = '';
+  });
+
+  function closeModal(){ modal.classList.add('hidden'); pending = { bg: undefined, player: undefined, music: undefined }; }
+
+  modal.querySelector('#adminCloseBtn').addEventListener('click', closeModal);
+
+  modal.querySelector('#adminSaveBtn').addEventListener('click', () => {
+    try {
+      if (pending.bg === null){
+        localStorage.removeItem(ASSET_KEYS.bg); customBgImg = null;
+      } else if (pending.bg){
+        localStorage.setItem(ASSET_KEYS.bg, pending.bg);
+        loadImageAsset(pending.bg, img => { customBgImg = img; });
+      }
+      if (pending.player === null){
+        localStorage.removeItem(ASSET_KEYS.player); customPlayerImg = null;
+      } else if (pending.player){
+        localStorage.setItem(ASSET_KEYS.player, pending.player);
+        loadImageAsset(pending.player, img => { customPlayerImg = img; });
+      }
+      if (pending.music === null){
+        localStorage.removeItem(ASSET_KEYS.music); bgMusicEl.removeAttribute('src');
+      } else if (pending.music){
+        localStorage.setItem(ASSET_KEYS.music, pending.music);
+        bgMusicEl.src = pending.music;
+      }
+      closeModal();
+    } catch (err){
+      // localStorage quota exceeded, etc. — files may simply be too large
+      alert("Saqlashda xatolik: fayl(lar) hajmi juda katta bo'lishi mumkin.");
+      console.error(err);
+    }
+  });
+
+  adminBtn.addEventListener('click', () => { modal.classList.remove('hidden'); });
+}
+
 /* =========================================================================
    BOOTSTRAP
    ========================================================================= */
@@ -1348,6 +1748,7 @@ initBackground();
 resetGame();
 refreshMenuStats();
 requestAnimationFrame(loop);
+checkTelegramAuth();
 
 </script>
 </body>
