@@ -140,11 +140,16 @@ async def cb_file_manager_menu(q: CallbackQuery, state: FSMContext) -> None:
 # ── File helpers ──────────────────────────────────────────────────────────────
 
 def _resolve(user_path: str) -> str | None:
-    """Normalize a repository path and reject traversal."""
+    """Normalize a path (relative to gamehub/) and reject traversal.
+
+    Returns the real repository path (with the ``gamehub/`` root kept),
+    matching the deployed checkout layout used by services/github_service.py.
+    """
     try:
-        return get_project_provider().normalize_path(user_path)
+        rel = get_project_provider().normalize_path(user_path)
     except ProjectProviderError:
         return None
+    return rel if rel.startswith("gamehub/") else f"gamehub/{rel}"
 
 def _diff_text(old: str, new: str, filename: str, max_lines: int = 60) -> str:
     old_l = old.splitlines(keepends=True)
@@ -194,7 +199,7 @@ async def msg_file_create_path(m: Message, state: FSMContext) -> None:
                        reply_markup=_cancel_kb())
         return
     try:
-        await get_project_provider().get_file(path)
+        await get_project_provider().get_file(path, preserve_repository_root=True)
     except FileNotFoundError:
         pass
     else:
@@ -248,7 +253,7 @@ async def cb_file_create_confirm(q: CallbackQuery, state: FSMContext) -> None:
     await q.answer()
     try:
         await get_project_provider().put_file(
-            path, content, f"Create {path}"
+            path, content, f"Create {path}", preserve_repository_root=True
         )
         rel = path
         await q.message.edit_text(
@@ -291,13 +296,15 @@ async def msg_file_read(m: Message, state: FSMContext) -> None:
         await m.answer("Xavfli yoki noto'g'ri yo'l.")
         return
     try:
-        await get_project_provider().get_file(path)
+        await get_project_provider().get_file(path, preserve_repository_root=True)
     except FileNotFoundError:
         await m.answer(f"Fayl topilmadi: <code>{m.text}</code>",
                        parse_mode="HTML")
         return
     try:
-        content = (await get_project_provider().get_file(path)).content
+        content = (await get_project_provider().get_file(
+            path, preserve_repository_root=True
+        )).content
         rel     = path
         header  = (f"<b>Fayl:</b> <code>{rel}</code>\n"
                    f"<b>Hajm:</b> {len(content)} bayt | "
@@ -340,13 +347,15 @@ async def msg_file_edit_path(m: Message, state: FSMContext) -> None:
         await m.answer("Xavfli yoki noto'g'ri yo'l.", reply_markup=_cancel_kb())
         return
     try:
-        await get_project_provider().get_file(path)
+        await get_project_provider().get_file(path, preserve_repository_root=True)
     except FileNotFoundError:
         await m.answer(f"Fayl topilmadi: <code>{m.text}</code>",
                        reply_markup=_cancel_kb(), parse_mode="HTML")
         return
     try:
-        old_content = (await get_project_provider().get_file(path)).content
+        old_content = (await get_project_provider().get_file(
+            path, preserve_repository_root=True
+        )).content
         rel         = path
         await state.update_data(path=path, old_content=old_content)
         await state.set_state(FileEditStates.waiting_content)
@@ -374,7 +383,7 @@ async def msg_file_edit_content(m: Message, state: FSMContext) -> None:
     path        = data["path"]
     old_content = data["old_content"]
 
-    diff = _diff_text(old_content, new_content, path.name)
+    diff = _diff_text(old_content, new_content, path.rsplit("/", 1)[-1])
     diff_preview = diff[:1200]
     if len(diff) > 1200:
         diff_preview += "\n..."
@@ -448,7 +457,7 @@ async def msg_file_delete_path(m: Message, state: FSMContext) -> None:
         await m.answer("Xavfli yoki noto'g'ri yo'l.", reply_markup=_cancel_kb())
         return
     try:
-        file = await get_project_provider().get_file(path)
+        file = await get_project_provider().get_file(path, preserve_repository_root=True)
     except FileNotFoundError:
         await m.answer(f"Fayl topilmadi: <code>{m.text}</code>",
                        reply_markup=_cancel_kb(), parse_mode="HTML")
@@ -484,7 +493,9 @@ async def cb_file_delete_confirm(q: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
     await q.answer()
     try:
-        await get_project_provider().delete_file(path, f"Delete {path}")
+        await get_project_provider().delete_file(
+            path, f"Delete {path}", preserve_repository_root=True
+        )
         rel    = path
         await q.message.edit_text(
             f"Fayl o'chirildi: <code>{rel}</code>\n"
