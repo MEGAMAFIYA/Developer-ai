@@ -142,5 +142,48 @@ class GithubPersistenceTests(unittest.IsolatedAsyncioTestCase):
         )
 
 
+class ListFilesDeployRootTests(unittest.IsolatedAsyncioTestCase):
+    """Regression tests for the File Manager / AI Developer file listing bug.
+
+    The real repository tree (as deployed via Dockerfile: ``COPY gamehub/
+    gamehub/``) contains entries such as ``gamehub/webapp/games/x.html``.
+    ``list_files(..., preserve_repository_root=True)`` must match against
+    those real paths instead of silently stripping the ``gamehub/`` prefix
+    from the search folder and finding nothing (or matching the stale
+    repository-root ``webapp/`` duplicate instead).
+    """
+
+    @staticmethod
+    def _provider_with_tree(entries: list) -> GitHubProjectProvider:
+        provider = GitHubProjectProvider()
+        provider._tree_cache = (float("inf"), entries)
+        return provider
+
+    async def test_list_files_finds_real_deployed_games_with_preserve_root(self) -> None:
+        from services.project_provider import RepositoryEntry
+
+        entries = [
+            RepositoryEntry(path=CANONICAL_HTML, kind="file", size=100),
+            RepositoryEntry(path=LEGACY_HTML, kind="file", size=999),
+        ]
+        provider = self._provider_with_tree(entries)
+
+        found = await provider.list_files(
+            "gamehub/webapp/games", preserve_repository_root=True
+        )
+
+        self.assertEqual([e.path for e in found], [CANONICAL_HTML])
+
+    async def test_delete_file_supports_preserve_repository_root(self) -> None:
+        # A signature regression test: delete_file must accept the
+        # preserve_repository_root keyword (it previously had no such
+        # parameter at all, which made it impossible to delete files at
+        # their real gamehub/-rooted repository path).
+        import inspect
+
+        sig = inspect.signature(GitHubProjectProvider.delete_file)
+        self.assertIn("preserve_repository_root", sig.parameters)
+
+
 if __name__ == "__main__":
     asyncio.run(unittest.main(module=None, exit=False))
