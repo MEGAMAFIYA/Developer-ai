@@ -13,38 +13,26 @@ Yangi o'yin qo'shish:
 8. Saqlash
 
 MP4 rejimi (browser-based recording):
-- HTML fayl darhol webapp/games/{slug}.html
-ga saqlanadi, shunda
-u /games/{slug} orqali xizmat qilinishi
-mumkin.
-- Admin uchun Telegram Mini App tugmasi
-yuboriladi — bu tugma
-to'g'ridan-to'g'ri ADMINNING O'Z
-TELEFONIDA ochiladi (serverda emas),
-shuning uchun admin o'yinni chindan ham
-o'zi ko'rib, o'ynay oladi.
-- Mini App sahifasi
-(api/routes/recorder.py) o'yin <canvas>'ini
-captureStream() + MediaRecorder bilan
-yozib oladi va WEBM'ni
-/api/recording/upload'ga yuboradi.
-- Bot fon vazifasi (background task) orqali
-yuklanishini kutadi,
-keyin FFmpeg bilan 640x360 MP4'ga
-o'tkazadi (services/game_video_service.py)
-va preview ko'rsatadi.
+- HTML fayl darhol webapp/games/{slug}.html ga saqlanadi, shunda
+  u /games/{slug} orqali xizmat qilinishi mumkin.
+- Admin uchun Telegram Mini App tugmasi yuboriladi — bu tugma
+  to'g'ridan-to'g'ri ADMINNING O'Z TELEFONIDA ochiladi (serverda emas),
+  shuning uchun admin o'yinni chindan ham o'zi ko'rib, o'ynay oladi.
+- Mini App sahifasi (api/routes/recorder.py) o'yin <canvas>'ini
+  captureStream() + MediaRecorder bilan yozib oladi va WEBM'ni
+  /api/recording/upload'ga yuboradi.
+- Bot fon vazifasi (background task) orqali yuklanishini kutadi,
+  keyin FFmpeg bilan 640x360 MP4'ga o'tkazadi (services/game_video_service.py)
+  va preview ko'rsatadi.
 
-Eslatma: serverda headless
-Playwright/Chromium orqali o'yinni
-"o'zi o'ynash" imkonsiz edi — chunki
-Chromium oynasi serverda,
-adminning telefonida emas edi. Shu sabab
-MP4 rejimi butunlay
-brauzer-tomonidagi (client-side) yozib
-olishga o'tkazildi.
+Eslatma: serverda headless Playwright/Chromium orqali o'yinni
+"o'zi o'ynash" imkonsiz edi — chunki Chromium oynasi serverda,
+adminning telefonida emas edi. Shu sabab MP4 rejimi butunlay
+brauzer-tomonidagi (client-side) yozib olishga o'tkazildi.
 """
 
 from __future__ import annotations
+
 import asyncio
 import logging
 from pathlib import Path
@@ -67,7 +55,6 @@ from database.global_db import (
     add_game,
     get_game_by_slug,
 )
-
 from services import recording_bridge
 from services.game_video_service import convert_recorded_video_to_mp4
 from services.upload_service import (
@@ -80,19 +67,18 @@ from services.upload_service import (
 )
 
 logger = logging.getLogger(__name__)
+
 router = Router()
 
-# Background poll tasks waiting for an
-# uploaded WEBM, keyed by admin user_id.
+# Background poll tasks waiting for an uploaded WEBM, keyed by admin user_id.
 _ACTIVE_POLL_TASKS: dict[int, asyncio.Task] = {}
 
 POLL_INTERVAL_SECONDS = 2
 POLL_MAX_SECONDS = 15 * 60  # give up waiting after 15 minutes
 
-
-# =================================================
+# ============================================================
 # FSM
-# =================================================
+# ============================================================
 
 class AddGameFSM(StatesGroup):
     waiting_name = State()
@@ -100,44 +86,45 @@ class AddGameFSM(StatesGroup):
     waiting_description = State()
     waiting_category = State()
     waiting_html = State()
+
     # Thumbnail
     waiting_image = State()
-    # MP4 recording (admin is inside the
-    # Mini App recorder page)
+
+    # MP4 recording (admin is inside the Mini App recorder page)
     waiting_recording = State()
+
     # Final preview / save
     waiting_confirm = State()
 
-
-# =================================================
+# ============================================================
 # ADMIN
-# =================================================
+# ============================================================
 
 def _is_admin(user_id: int) -> bool:
     """
-    Faqat config.ADMIN_ID ga ega
-    foydalanuvchiga /yangi va MP4 recording funksiyalaridan
-    foydalanishga
+    Faqat config.ADMIN_ID ga ega foydalanuvchiga
+    /yangi va MP4 recording funksiyalaridan foydalanishga
     ruxsat beradi.
     """
+
     return user_id == config.ADMIN_ID
 
 
-# =================================================
+# ============================================================
 # CLEANUP HELPERS
-# =================================================
+# ============================================================
 
 def _cleanup_admin_state(user_id: int) -> None:
     """
-    Avvalgi recording fon vazifasi va
-    sessiyasini tozalaydi.
-    /yangi qayta boshlanganda, /bekor
-    bosilganda yoki admin:cancel
-    bosilganda chaqiriladi — resurs va
-    vaqtinchalik fayl leak
+    Avvalgi recording fon vazifasi va sessiyasini tozalaydi.
+
+    /yangi qayta boshlanganda, /bekor bosilganda yoki admin:cancel
+    bosilganda chaqiriladi — resurs va vaqtinchalik fayl leak
     bo'lmasligi uchun.
     """
+
     task = _ACTIVE_POLL_TASKS.pop(user_id, None)
+
     if task and not task.done():
         task.cancel()
 
@@ -146,26 +133,29 @@ def _cleanup_admin_state(user_id: int) -> None:
 
 async def _delete_orphan_html(slug: str | None) -> None:
     """
-    MP4 recording uchun oldindan saqlangan
-    HTML faylni o'chiradi,
-    agar o'yin hech qachon bazaga
-    saqlanmagan bo'lsa.
+    MP4 recording uchun oldindan saqlangan HTML faylni o'chiradi,
+    agar o'yin hech qachon bazaga saqlanmagan bo'lsa.
     """
+
     if not slug:
         return
 
     try:
         existing = await get_game_by_slug(slug)
+
         if existing:
             return
 
         html_path = GAMES_DIR / f"{slug}.html"
+
         if html_path.exists():
             html_path.unlink()
+
             logger.info(
                 "[CLEANUP] Orphaned HTML removed: %s",
                 html_path,
             )
+
     except Exception:
         logger.exception(
             "[CLEANUP] Failed to remove orphaned HTML for slug=%s",
@@ -173,14 +163,15 @@ async def _delete_orphan_html(slug: str | None) -> None:
         )
 
 
-# =================================================
+# ============================================================
 # THUMBNAIL KEYBOARD
-# =================================================
+# ============================================================
 
 def _thumbnail_keyboard() -> InlineKeyboardMarkup:
     """
     Thumbnail tanlash oynasi.
     """
+
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -205,22 +196,21 @@ def _thumbnail_keyboard() -> InlineKeyboardMarkup:
     )
 
 
-# =================================================
+# ============================================================
 # RECORDER KEYBOARD
-# =================================================
+# ============================================================
 
 def _recorder_keyboard(
     recorder_url: str,
 ) -> InlineKeyboardMarkup:
     """
-    Admin brauzerda o'yinni ochib yozib
-    olishi uchun tugmalar.
-    ▶️ tugmasi Telegram Mini App'ni
-    ADMINNING O'Z TELEFONIDA ochadi
-    (serverda emas) — shu yerda 🎥 YOZISH /
-    ⏹ TO'XTATISH tugmalari
+    Admin brauzerda o'yinni ochib yozib olishi uchun tugmalar.
+
+    ▶️ tugmasi Telegram Mini App'ni ADMINNING O'Z TELEFONIDA ochadi
+    (serverda emas) — shu yerda 🎥 YOZISH / ⏹ TO'XTATISH tugmalari
     sahifaning o'zida joylashgan.
     """
+
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -246,9 +236,10 @@ def _recorder_keyboard(
         ]
     )
 
-# =================================================
+
+# ============================================================
 # CONFIRM KEYBOARD
-# =================================================
+# ============================================================
 
 def _confirm_keyboard() -> InlineKeyboardMarkup:
     """
@@ -257,6 +248,7 @@ def _confirm_keyboard() -> InlineKeyboardMarkup:
     - Tahrirlash
     - Bekor qilish
     """
+
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -274,20 +266,16 @@ def _confirm_keyboard() -> InlineKeyboardMarkup:
                     text="❌ Bekor",
                     callback_data="admin:cancel",
                 )
-            ],
-        ]
-    )
 
-
-# =================================================
+# ============================================================
 # PREVIEW CAPTION
-# =================================================
+# ============================================================
 
 def _preview_caption(data: dict) -> str:
     """
-    Yangi o'yin preview kartasi uchun
-    caption.
+    Yangi o'yin preview kartasi uchun caption.
     """
+
     media_kind = data.get(
         "image_kind",
         "photo",
@@ -295,11 +283,13 @@ def _preview_caption(data: dict) -> str:
 
     if media_kind == "mp4":
         media_text = "🎬 MP4 yozib olindi"
+
     elif media_kind in {
         "animation",
         "gif_document",
     }:
         media_text = "🎞 GIF yuklandi"
+
     else:
         media_text = "🖼 Thumbnail yuklandi"
 
@@ -315,9 +305,9 @@ def _preview_caption(data: dict) -> str:
     )
 
 
-# =================================================
+# ============================================================
 # PREVIEW
-# =================================================
+# ============================================================
 
 async def _send_preview(
     message: Message,
@@ -325,10 +315,14 @@ async def _send_preview(
 ) -> None:
     """
     Yangi o'yin preview kartasini yuboradi.
+
     MP4 / GIF / rasm formatlarini alohida
     ko'rsatadi.
     """
-    caption = _preview_caption(data)
+
+    caption = _preview_caption(
+        data
+    )
 
     keyboard = _confirm_keyboard()
 
@@ -344,12 +338,12 @@ async def _send_preview(
         "image_path"
     )
 
-    # -------------------------------------
-    # MP4 (local file on disk — recorded
-    # in-browser)
-    # -------------------------------------
+    # --------------------------------------------------------
+    # MP4 (local file on disk — recorded in-browser)
+    # --------------------------------------------------------
 
     if image_kind == "mp4":
+
         if image_path and Path(image_path).exists():
             await message.answer_video(
                 video=FSInputFile(
@@ -372,9 +366,9 @@ async def _send_preview(
             )
             return
 
-    # -------------------------------------
+    # --------------------------------------------------------
     # TELEGRAM GIF
-    # -------------------------------------
+    # --------------------------------------------------------
 
     if (
         image_id
@@ -388,9 +382,9 @@ async def _send_preview(
         )
         return
 
-    # -------------------------------------
+    # --------------------------------------------------------
     # GIF DOCUMENT
-    # -------------------------------------
+    # --------------------------------------------------------
 
     if (
         image_id
@@ -404,9 +398,9 @@ async def _send_preview(
         )
         return
 
-    # -------------------------------------
+    # --------------------------------------------------------
     # NORMAL IMAGE
-    # -------------------------------------
+    # --------------------------------------------------------
 
     if image_id:
         await message.answer_photo(
@@ -417,9 +411,9 @@ async def _send_preview(
         )
         return
 
-    # -------------------------------------
+    # --------------------------------------------------------
     # TEXT ONLY
-    # -------------------------------------
+    # --------------------------------------------------------
 
     await message.answer(
         caption,
@@ -428,15 +422,16 @@ async def _send_preview(
     )
 
 
-# =================================================
+# ============================================================
 # /YANGI
-# =================================================
+# ============================================================
 
 @router.message(Command("yangi"))
 async def cmd_yangi(
     message: Message,
     state: FSMContext,
 ) -> None:
+
     if not message.from_user:
         return
 
@@ -474,15 +469,16 @@ async def cmd_yangi(
     )
 
 
-# =================================================
+# ============================================================
 # /BEKOR
-# =================================================
+# ============================================================
 
 @router.message(Command("bekor"))
 async def cmd_cancel(
     message: Message,
     state: FSMContext,
 ) -> None:
+
     current_state = await state.get_state()
 
     if current_state is None:
@@ -506,9 +502,9 @@ async def cmd_cancel(
     )
 
 
-# =================================================
+# ============================================================
 # STEP 1 — NAME
-# =================================================
+# ============================================================
 
 @router.message(
     AddGameFSM.waiting_name
@@ -517,6 +513,7 @@ async def step_name(
     message: Message,
     state: FSMContext,
 ) -> None:
+
     if not message.text:
         await message.answer(
             "⚠️ Iltimos, matn kiriting."
@@ -545,14 +542,14 @@ async def step_name(
         "2️⃣ <b>Slug</b> kiriting:\n"
         "<i>Faqat kichik lotin harflari, "
         "raqamlar, - yoki _.</i>\n\n"
-        "<i>Masalan: zombi, ilon-o'yini</i>",
+        "<i>Masalan: zombi, ilon-oyini</i>",
         parse_mode="HTML",
     )
 
 
-# =================================================
+# ============================================================
 # SLUG CHARACTERS
-# =================================================
+# ============================================================
 
 _SLUG_CHARS = frozenset(
     "abcdefghijklmnopqrstuvwxyz"
@@ -560,9 +557,9 @@ _SLUG_CHARS = frozenset(
 )
 
 
-# =================================================
+# ============================================================
 # STEP 2 — SLUG
-# =================================================
+# ============================================================
 
 @router.message(
     AddGameFSM.waiting_slug
@@ -571,6 +568,7 @@ async def step_slug(
     message: Message,
     state: FSMContext
 ) -> None:
+
     if not message.text:
         await message.answer(
             "⚠️ Iltimos, matn kiriting."
@@ -626,9 +624,10 @@ async def step_slug(
         parse_mode="HTML",
     )
 
-# =================================================
+
+# ============================================================
 # STEP 3 — DESCRIPTION
-# =================================================
+# ============================================================
 
 @router.message(
     AddGameFSM.waiting_description
@@ -637,6 +636,7 @@ async def step_description(
     message: Message,
     state: FSMContext,
 ) -> None:
+
     if not message.text:
         await message.answer(
             "⚠️ Iltimos, matn kiriting."
@@ -646,6 +646,9 @@ async def step_description(
     description = (
         message.text.strip()
     )
+``` 0
+
+**2-qism tugadi.**
 
     if not description:
         await message.answer(
@@ -669,9 +672,9 @@ async def step_description(
     )
 
 
-# =================================================
+# ============================================================
 # STEP 4 — CATEGORY
-# =================================================
+# ============================================================
 
 @router.message(
     AddGameFSM.waiting_category
@@ -680,6 +683,7 @@ async def step_category(
     message: Message,
     state: FSMContext
 ) -> None:
+
     if not message.text:
         await message.answer(
             "⚠️ Iltimos, matn kiriting."
@@ -716,9 +720,9 @@ async def step_category(
     )
 
 
-# =================================================
+# ============================================================
 # STEP 5 — HTML
-# =================================================
+# ============================================================
 
 @router.message(
     AddGameFSM.waiting_html
@@ -727,6 +731,7 @@ async def step_html(
     message: Message,
     state: FSMContext
 ) -> None:
+
     document = message.document
 
     if not document:
@@ -776,9 +781,9 @@ async def step_html(
     )
 
 
-# =================================================
+# ============================================================
 # STEP 6 — THUMBNAIL / RASM / GIF
-# =================================================
+# ============================================================
 
 @router.message(
     AddGameFSM.waiting_image
@@ -787,12 +792,6 @@ async def step_image(
     message: Message,
     state: FSMContext
 ) -> None:
-    """
-    Admin rasm yoki GIF yuborsa,
-    uni thumbnail sifatida qabul qiladi.
-    MP4 uchun esa yuqoridagi
-    🎬 MP4 YARATISH tugmasi ishlatiladi.
-    """
 
     file_id: str | None = None
     ext = ".jpg"
@@ -887,9 +886,9 @@ async def step_image(
     )
 
 
-# =================================================
+# ============================================================
 # THUMBNAIL INFORMATION
-# =================================================
+# ============================================================
 
 @router.callback_query(
     F.data == "admin:thumbnail_info",
@@ -898,6 +897,7 @@ async def step_image(
 async def cb_thumbnail_info(
     callback: CallbackQuery,
 ) -> None:
+
     await callback.answer()
 
     await callback.message.answer(
@@ -916,9 +916,9 @@ async def cb_thumbnail_info(
         parse_mode="HTML",
     )
 
-# =================================================
-# MP4 CREATION — OPEN RECORDER MINI APP
-# =================================================
+# ============================================================
+# MP4 — CREATE RECORDER SESSION
+# ============================================================
 
 @router.callback_query(
     F.data == "admin:create_mp4",
@@ -927,98 +927,33 @@ async def cb_thumbnail_info(
 async def cb_create_mp4(
     callback: CallbackQuery,
     state: FSMContext,
-    bot: Bot
 ) -> None:
-    """
-    MP4 rejimini boshlaydi.
-    Oqim:
-        🎬 MP4 YARATISH
-            ↓
-        HTML webapp/games/{slug}.html ga
-        saqlanadi
-        (shunda /games/{slug} uni xizmat
-        qila oladi)
-            ↓
-        Telegram Mini App tugmasi
-        yuboriladi
-        (ADMINNING O'Z TELEFONIDA ochiladi)
-            ↓
-        Admin sahifada 🎥 YOZISH / ⏹
-        TO'XTATISH orqali
-        o'zi yozib oladi, WEBM avtomatik
-        yuboriladi
-            ↓
-        Bot fon vazifasi orqali kutadi,
-        FFmpeg bilan
-        MP4'ga o'tkazadi va previewni
-        ko'rsatadi
-    """
+
+    if not callback.from_user:
+        return
 
     await callback.answer(
-        "🎬 MP4 rejimi tayyorlanmoqda..."
+        "🎬 Recorder tayyorlanmoqda..."
     )
-
-    if not callback.from_user or not callback.message:
-        return
 
     data = await state.get_data()
 
-    html_file_id = data.get("html_file_id")
     slug = data.get("slug")
 
-    if not html_file_id or not slug:
+    if not slug:
         await callback.message.answer(
-            "❌ HTML fayl yoki slug topilmadi.\n\n"
-            "Iltimos, /yangi jarayonini "
-            "qaytadan boshlang."
+            "❌ Slug topilmadi. "
+            "Jarayonni qaytadan boshlang."
         )
         return
 
-    status = await callback.message.answer(
-        "⏳ <b>O'yin tayyorlanmoqda...</b>\n\n"
-        "📄 HTML yuklanmoqda...",
-        parse_mode="HTML",
+    # Avvalgi recording session/taskni tozalash.
+    _cleanup_admin_state(
+        callback.from_user.id
     )
 
-    # -------------------------------------
-    # HTML'ni /games/{slug} orqali xizmat
-    # qilish uchun
-    # darhol saqlaymiz. O'yin hali bazaga
-    # saqlanmagan bo'lsa,
-    # /bekor yoki admin:cancel bu faylni
-    # tozalaydi.
-    # -------------------------------------
-
-    try:
-        await save_html(
-            bot,
-            html_file_id,
-            slug,
-        )
-
-    except Exception as exc:
-        logger.exception(
-            "Failed to pre-save HTML for recording: %s",
-            exc,
-        )
-
-        await status.edit_text(
-            "❌ <b>HTML tayyorlashda xato</b>\n\n"
-            f"<code>{str(exc)[:500]}</code>",
-            parse_mode="HTML",
-        )
-        return
-
-    user_id = callback.from_user.id
-    chat_id = callback.message.chat.id
-
-    # Avvalgi urinishdan qolgan
-    # session/task bo'lsa tozalaymiz.
-    _cleanup_admin_state(user_id)
-
     token = recording_bridge.create_session(
-        user_id=user_id,
-        chat_id=chat_id,
+        user_id=callback.from_user.id,
         slug=slug,
     )
 
@@ -1032,23 +967,20 @@ async def cb_create_mp4(
 
     recorder_url = (
         f"{config.WEBAPP_URL.rstrip('/')}"
-        f"/record/{slug}?token={token}"
+        f"/admin/recorder"
+        f"?slug={slug}"
+        f"&token={token}"
     )
 
-    await status.edit_text(
-        "🎮 <b>O'yin tayyor!</b>\n\n"
-        "▶️ tugmasini bosing — o'yin "
-        "to'g'ridan-to'g'ri "
-        "SIZNING telefoningizda "
-        "ochiladi.\n\n"
-        "🎥 <b>YOZISH</b> — sahifa ichida "
-        "video yozishni boshlaydi\n"
-        "⏹ <b>TO'XTATISH</b> — yozishni "
-        "tugatadi va avtomatik yuboradi\n\n"
-        "Yuborilgach, shu suhbatga o'zimiz "
-        "qaytamiz — "
-        "hech narsa bosishingiz shart "
-        "emas.",
+    await callback.message.answer(
+        "🎬 <b>O'yinni video qilib yozish</b>\n\n"
+        "1️⃣ Quyidagi tugmani bosing.\n"
+        "2️⃣ O'yin telefoningizda ochiladi.\n"
+        "3️⃣ 🎥 <b>YOZISH</b> tugmasini bosing.\n"
+        "4️⃣ O'yinni o'ynang.\n"
+        "5️⃣ ⏹ <b>TO'XTATISH</b> tugmasini bosing.\n\n"
+        "Video avtomatik ravishda botga yuboriladi.\n"
+        "Keyin bot uni MP4 formatga o'tkazadi.",
         reply_markup=_recorder_keyboard(
             recorder_url
         ),
@@ -1057,20 +989,22 @@ async def cb_create_mp4(
 
     task = asyncio.create_task(
         _poll_recording_upload(
-            bot,
-            chat_id,
-            user_id,
-            token,
-            state,
+            bot=callback.bot,
+            chat_id=callback.message.chat.id,
+            user_id=callback.from_user.id,
+            token=token,
+            state=state,
         )
     )
 
-    _ACTIVE_POLL_TASKS[user_id] = task
+    _ACTIVE_POLL_TASKS[
+        callback.from_user.id
+    ] = task
 
 
-# =================================================
+# ============================================================
 # RECORDING — FINALIZE UPLOADED WEBM → MP4
-# =================================================
+# ============================================================
 
 async def _finalize_uploaded_recording(
     bot: Bot,
@@ -1180,11 +1114,20 @@ async def _finalize_uploaded_recording(
         try:
             if (
                 session.webm_path
-                and session
+                and session.webm_path.exists()
+            ):
+                session.webm_path.unlink()
+        except Exception:
+            logger.exception(
+                "[RECORDING] Failed to remove "
+                "temporary WEBM: %s",
+                session.webm_path,
+            )
 
-# =================================================
+
+# ============================================================
 # RECORDING — BACKGROUND POLL TASK
-# =================================================
+# ============================================================
 
 async def _poll_recording_upload(
     bot: Bot,
@@ -1287,285 +1230,6 @@ async def _poll_recording_upload(
             None,
         )
 
-
-# =================================================
-# RECORDING — MANUAL STATUS CHECK
-# (FALLBACK)
-# =================================================
-
-@router.callback_query(
-    F.data == "admin:recording_check",
-    AddGameFSM.waiting_recording,
-)
-async def cb_recording_check(
-    callback: CallbackQuery,
-    state: FSMContext,
-    bot: Bot,
-) -> None:
-    """
-    🔄 Holatni tekshirish — fon vazifasi
-    biror sababdan
-    ishlamay qolgan taqdirda qo'lda
-    tekshirish imkonini beradi.
-    """
-
-    data = await state.get_data()
-
-    token = data.get(
-        "recording_token"
-    )
-
-    if not token:
-        await callback.answer(
-            "❌ Session topilmadi.",
-            show_alert=True,
-        )
-        return
-
-    session = recording_bridge.get_session(
-        token
-    )
-
-    if not session:
-        await callback.answer(
-            "❌ Session muddati tugagan. "
-            "Qaytadan MP4 YARATISH "
-            "tugmasini bosing.",
-            show_alert=True,
-        )
-        return
-
-    if session.status == "uploaded":
-        await callback.answer(
-            "✅ Video topildi, ishlanmoqda..."
-        )
-
-        await _finalize_uploaded_recording(
-            bot,
-            callback.message.chat.id,
-            token,
-            state,
-        )
-        return
-
-    if session.status == "error":
-        await callback.answer(
-            f"❌ Xato: {session.error}",
-            show_alert=True,
-        )
-        return
-
-    await callback.answer(
-        "⏳ Hali video yuborilmagan. "
-        "O'ynab, 🎥 YOZISH / ⏹ TO'XTATISH "
-        "tugmalarini bosing.",
-        show_alert=True,
-    )
-
-
-# =================================================
-# CONFIRM — SAQLASH
-# =================================================
-
-@router.callback_query(
-    F.data == "admin:save",
-    AddGameFSM.waiting_confirm,
-)
-async def cb_save(
-    callback: CallbackQuery,
-    state: FSMContext,
-    bot: Bot,
-) -> None:
-    """
-    ✅ Saqlash — HTML va thumbnailni webapp
-    papkasiga yozadi,
-    kerak bo'lsa GitHub'ga push qiladi va
-    bazaga qo'shadi.
-    """
-
-    await callback.answer(
-        "⏳ Saqlanmoqda..."
-    )
-
-    if not callback.message:
-        return
-
-    data = await state.get_data()
-
-    slug = data.get("slug")
-    name = data.get("name")
-    description = data.get("description")
-    category = data.get("category")
-    html_file_id = data.get("html_file_id")
-
-    image_kind = data.get(
-        "image_kind",
-        "photo",
-    )
-
-    if not (
-        slug
-        and name
-        and description
-        and category
-        and html_file_id
-    ):
-        await callback.message.answer(
-            "❌ Ma'lumotlar to'liq emas.\n\n"
-            "Iltimos, /yangi jarayonini "
-            "qaytadan boshlang."
-        )
-        return
-
-    status = await callback.message.answer(
-        "⏳ <b>Saqlanmoqda...</b>",
-        parse_mode="HTML",
-    )
-
-    try:
-        html_path = await save_html(
-            bot,
-            html_file_id,
-            slug,
-        )
-
-        html_content = html_path.read_bytes()
-
-        if image_kind == "mp4":
-            image_path_str = data.get(
-                "image_path"
-            )
-
-            if (
-                not image_path_str
-                or not Path(image_path_str).exists()
-            ):
-                raise RuntimeError(
-                    "MP4 fayl topilmadi."
-                )
-
-            image_ext = ".mp4"
-
-            image_content = Path(
-                image_path_str
-            ).read_bytes()
-
-        else:
-            image_file_id = data.get(
-                "image_file_id"
-            )
-
-            image_ext = data.get(
-                "image_ext",
-                ".jpg",
-            )
-
-            if not image_file_id:
-                raise RuntimeError(
-                    "Thumbnail topilmadi."
-                )
-
-            image_path = await save_image(
-                bot,
-                image_file_id,
-                slug,
-                image_ext,
-            )
-
-            image_content = image
-
-        await status.edit_text(
-            "✅ <b>O'yin muvaffaqiyatli saqlandi!</b>\n\n"
-            f"🎮 <b>{name}</b>\n"
-            f"🔗 <code>{slug}</code>\n"
-            f"🗂 {category}\n"
-            f"🖼 Thumbnail: {image_ext}"
-            f"{gh_status_line}",
-            parse_mode="HTML",
-        )
-
-        logger.info(
-            "[ADMIN] New game saved: "
-            "slug=%s name=%s category=%s",
-            slug,
-            name,
-            category,
-        )
-
-        # Recording session tugaganidan keyin
-        # cleanup.
-        if callback.from_user:
-            _cleanup_admin_state(
-                callback.from_user.id
-            )
-
-        await state.clear()
-
-    except Exception as exc:
-        logger.exception(
-            "[ADMIN] Failed to save game: %s",
-            exc,
-        )
-
-        await status.edit_text(
-            "❌ <b>O'yinni saqlashda xato!</b>\n\n"
-            f"<code>{str(exc)[:1000]}</code>",
-            parse_mode="HTML",
-        )
-
-
-# =================================================
-# CONFIRM — EDIT
-# =================================================
-
-@router.callback_query(
-    F.data == "admin:edit",
-    AddGameFSM.waiting_confirm,
-)
-async def cb_edit(
-    callback: CallbackQuery,
-    state: FSMContext,
-) -> None:
-    """
-    Previewdan keyin tahrirlash.
-    Jarayon boshidan boshlanadi.
-    """
-
-    await callback.answer()
-
-    if not callback.message:
-        return
-
-    data = await state.get_data()
-
-    if callback.from_user:
-        _cleanup_admin_state(
-            callback.from_user.id
-        )
-
-    await _delete_orphan_html(
-        data.get("slug")
-    )
-
-    await state.clear()
-
-    await state.set_state(
-        AddGameFSM.waiting_name
-    )
-
-    await callback.message.answer(
-        "✏️ <b>Tahrirlash</b>\n\n"
-        "1️⃣ O'yinning yangi "
-        "<b>nomini</b> kiriting:\n\n"
-        "/bekor — bekor qilish",
-        parse_mode="HTML",
-    )
-
-
-# =================================================
-# CONFIRM — CANCEL
-# =================================================
-
 @router.callback_query(
     F.data == "admin:cancel",
 )
@@ -1609,10 +1273,9 @@ async def cb_cancel(
         "bekor qilindi."
     )
 
-
-# =================================================
+# ============================================================
 # FALLBACK — RECORDING MESSAGE
-# =================================================
+# ============================================================
 
 @router.message(
     AddGameFSM.waiting_recording
@@ -1642,9 +1305,9 @@ async def recording_message_fallback(
     )
 
 
-# =================================================
+# ============================================================
 # FALLBACK — CONFIRM
-# =================================================
+# ============================================================
 
 @router.message(
     AddGameFSM.waiting_confirm
