@@ -87,8 +87,7 @@ router = Router()
 _ACTIVE_POLL_TASKS: dict[int, asyncio.Task] = {}
 
 POLL_INTERVAL_SECONDS = 2
-POLL_MAX_SECONDS = 15 * 60  # give up
-waiting after 15 minutes
+POLL_MAX_SECONDS = 15 * 60  # give up waiting after 15 minutes
 
 
 # =================================================
