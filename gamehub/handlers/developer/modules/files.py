@@ -99,7 +99,9 @@ def _confirm_del_kb(filename: str) -> InlineKeyboardMarkup:
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 async def _list_files() -> list[dict]:
-    entries = await get_project_provider().list_files(_GAMES_DIR)
+    entries = await get_project_provider().list_files(
+        _GAMES_DIR, preserve_repository_root=True
+    )
     allowed = {".html", ".js", ".css", ".json", ".py", ".svg", ".txt"}
     return [
         {"name": entry.path.rsplit("/", 1)[-1], "path": entry.path, "size": entry.size}
@@ -162,7 +164,9 @@ async def cb_file_view(q: CallbackQuery) -> None:
         return
     filename = q.data[len(_VIEW_PFX):]
     try:
-        file = await get_project_provider().get_file(filename)
+        file = await get_project_provider().get_file(
+            filename, preserve_repository_root=True
+        )
     except (FileNotFoundError, ProjectProviderError):
         await q.answer("Fayl topilmadi.", show_alert=True)
         return
@@ -193,7 +197,9 @@ async def cb_file_download(q: CallbackQuery) -> None:
         return
     filename = q.data[len(_DL_PFX):]
     try:
-        raw, _ = await get_project_provider().get_file_bytes(filename)
+        raw, _ = await get_project_provider().get_file_bytes(
+            filename, preserve_repository_root=True
+        )
     except (FileNotFoundError, ProjectProviderError):
         await q.answer("Fayl topilmadi.", show_alert=True)
         return
@@ -217,7 +223,9 @@ async def cb_file_delete_confirm(q: CallbackQuery, state: FSMContext) -> None:
         return
     filename = q.data[len(_DEL_PFX):]
     try:
-        file = await get_project_provider().get_file(filename)
+        file = await get_project_provider().get_file(
+            filename, preserve_repository_root=True
+        )
     except (FileNotFoundError, ProjectProviderError):
         await q.answer("Fayl topilmadi.", show_alert=True)
         return
@@ -242,9 +250,13 @@ async def cb_file_delete_ok(q: CallbackQuery, state: FSMContext) -> None:
     filename = data.get("filename", "")
     await state.clear()
     try:
-        file = await get_project_provider().get_file(filename, force=True)
+        file = await get_project_provider().get_file(
+            filename, force=True, preserve_repository_root=True
+        )
         size = file.size
-        await get_project_provider().delete_file(filename, f"Delete {filename}")
+        await get_project_provider().delete_file(
+            filename, f"Delete {filename}", preserve_repository_root=True
+        )
 
         # Keep the game registry in sync: hard-delete every DB record that
         # points to this HTML file, then remove any now-orphaned local image,
@@ -340,6 +352,7 @@ async def msg_file_upload(m: Message, state: FSMContext) -> None:
             f"{_GAMES_DIR}/{filename}",
             raw,
             f"Upload {filename}",
+            preserve_repository_root=True,
         )
         await log_action(m.from_user.id, "FILE_UPLOAD", filename,
                          f"size={len(raw)}")
