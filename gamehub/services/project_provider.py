@@ -224,8 +224,15 @@ class GitHubProjectProvider:
         self._tree_cache = (now, entries)
         return list(entries)
 
-    async def list_files(self, folder: str = "") -> list[RepositoryEntry]:
-        prefix = folder.strip().strip("/").removeprefix("gamehub/")
+    async def list_files(
+        self,
+        folder: str = "",
+        *,
+        preserve_repository_root: bool = False,
+    ) -> list[RepositoryEntry]:
+        prefix = folder.strip().strip("/")
+        if not preserve_repository_root:
+            prefix = prefix.removeprefix("gamehub/")
         entries = await self.tree()
         if not prefix:
             return entries
@@ -342,10 +349,26 @@ class GitHubProjectProvider:
         await self.clear_cache()
         return json.loads(body)
 
-    async def delete_file(self, path: str, message: str, *, sha: str | None = None) -> dict:
-        normalized = self._safe_path(path)
+    async def delete_file(
+        self,
+        path: str,
+        message: str,
+        *,
+        sha: str | None = None,
+        preserve_repository_root: bool = False,
+    ) -> dict:
+        normalized = self._safe_path(
+            path,
+            preserve_repository_root=preserve_repository_root,
+        )
         if sha is None:
-            sha = (await self.get_file(normalized, force=True)).sha
+            sha = (
+                await self.get_file(
+                    normalized,
+                    force=True,
+                    preserve_repository_root=preserve_repository_root,
+                )
+            ).sha
         session, settings = await self._session()
         try:
             status, body = await self._request(
