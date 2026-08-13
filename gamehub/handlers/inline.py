@@ -1,55 +1,111 @@
-"""Inline mode — search and launch games from the Telegram inline query."""
+"""Inline mode — search and launch games from the Telegram inline query.
 
+Picker (the "@Kichik_oyinlar_bot ..." results list) always uses
+InlineQueryResultArticle so the list keeps its usual look — a small
+thumbnail, bold title and description, exactly like before.
+
+Telegram's article thumbnail must be a static JPEG; pointing it at a
+`.gif`/`.mp4` file makes the preview silently disappear. So for
+GIF/MP4 games we generate (and cache) a static poster frame with
+ffmpeg via `services.poster_service` and use that as the thumbnail.
+
+Article results can only carry *text* as their sent message — Telegram
+does not allow photo/animation/video content for InlineQueryResultArticle.
+So right after the user picks a game, we receive a `chosen_inline_result`
+update (this requires "Inline feedback" to be enabled for the bot via
+@BotFather → /setinlinefeedback → 100%) and immediately upgrade that
+just-sent text message into the real photo/GIF/video with
+`edit_message_media`, using the message's `inline_message_id`.
+"""
+
+from __future__ import annotations
+
+import logging
 from pathlib import Path
 
-from aiogram import Router
+from aiogram import Bot, Router
 from aiogram.types import (
+    ChosenInlineResult,
     InlineQuery,
     InlineQueryResultArticle,
-    InlineQueryResultPhoto,
-    InlineQueryResultGif,
-    InlineQueryResultMpeg4Gif,
     InputTextMessageContent,
     InlineKeyboardMarkup,
     InlineKeyboardButton,
+    InputMediaAnimation,
+    InputMediaPhoto,
+    InputMediaVideo,
 )
 
-from database.global_db import get_all_games
+from database.global_db import get_all_games, get_game_by_slug
 from config import config
+from services.poster_service import get_or_create_poster
+
+logger = logging.getLogger(__name__)
 
 router = Router()
 
-# The media is always sent as a *real* Telegram media result (Photo /
-# Gif / Mpeg4Gif) so the actual animated gif or image reliably shows up
-# once the user picks it — link-preview tricks are NOT reliable for
-# animated gifs, so we don't use them.
-#
-# Trade-off: Telegram's Bot API doesn't give InlineQueryResultGif /
-# InlineQueryResultMpeg4Gif a "description" field (only Photo has one),
-# so gif/mp4-covered games can show up in the picker list with just a
-# title (no second description line) on some clients — that's a
-# platform limitation, not a bug. To soften it we fold a short bit of
-# the description into the title for those two types.
+WEBAPP_DIR = Path(__file__).parent.parent / "webapp"
+
+_ANIMATION_EXTS = {".gif", ".mp4"}
 _PHOTO_EXTS = {".jpg", ".jpeg", ".png", ".webp"}
 
 
-def _resolve_media_url(image_url: str) -> str:
-    """Turn a stored `image_url` (local `/webapp/...` path or absolute
-    http(s) URL) into a public URL Telegram's servers can fetch.
+def _public_url(local_or_remote: str) -> str:
+    """Turn a stored `image_url` (local `/webapp/...` path, or an
+    absolute http(s) URL) into a public URL Telegram's servers can fetch.
     """
 
-    image_url = (image_url or "").strip()
+    local_or_remote = (local_or_remote or "").strip()
 
-    if not image_url:
+    if not local_or_remote:
         return ""
 
-    if image_url.startswith("/"):
-        return f"{config.WEBAPP_URL.rstrip('/')}{image_url}"
+    if local_or_remote.startswith("/"):
+        return f"{config.WEBAPP_URL.rstrip('/')}{local_or_remote}"
 
-    if image_url.startswith("http://") or image_url.startswith("https://"):
-        return image_url
+    if local_or_remote.startswith("http://") or local_or_remote.startswith("https://"):
+        return local_or_remote
 
     return ""
+
+
+def _build_keyboard(slug: str, user_id: int) -> InlineKeyboardMarkup:
+    start_param = f"{slug}__{user_id}"
+    url = f"https://t.me/{config.BOT_USERNAME}/play?startapp={start_param}"
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text="🎮 O'ynash", url=url)]]
+    )
+
+
+def _build_caption(name: str, description: str) -> str:
+    return f"🎮 <b>{name}</b>\n\n{description}"
+
+
+async def _thumbnail_url_for(raw_image_url: str, suffix: str) -> str:
+    """Resolve a *static* thumbnail URL suitable for an Article result.
+
+    JPG/PNG/WEBP are used directly. GIF/MP4 assets get a cached poster
+    frame generated via ffmpeg. Remote (http/https) GIF/MP4 assets are
+    used as-is (best effort — we don't download+extract remote files).
+    """
+
+    if suffix in _PHOTO_EXTS or not raw_image_url:
+        return _public_url(raw_image_url)
+
+    if suffix in _ANIMATION_EXTS and raw_image_url.startswith("/webapp/"):
+        source_path = WEBAPP_DIR / raw_image_url.removeprefix("/webapp/")
+        poster = await get_or_create_poster(source_path)
+
+        if poster is not None:
+            rel = poster.relative_to(WEBAPP_DIR).as_posix()
+            return _public_url(f"/webapp/{rel}")
+
+        # Poster generation failed — no reliable static preview available.
+        return ""
+
+    # Remote gif/mp4 or anything else — best effort passthrough.
+    return _public_url(raw_image_url)
 
 
 @router.inline_query()
@@ -76,99 +132,106 @@ async def inline_games(inline_query: InlineQuery) -> None:
         name = str(game.get("name") or slug)
         description = str(game.get("description") or "")
 
-        start_param = f"{slug}__{inline_query.from_user.id}"
-        url = (
-            f"https://t.me/{config.BOT_USERNAME}/play"
-            f"?startapp={start_param}"
-        )
+        keyboard = _build_keyboard(slug, inline_query.from_user.id)
+        caption = _build_caption(name, description)
 
-        keyboard = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(
-                        text="🎮 O'ynash",
-                        url=url,
-                    )
-                ]
-            ]
-        )
-
-        caption = f"🎮 <b>{name}</b>\n\n{description}"
-
-        # ── Game media (photo / gif / mp4) ─────────────────────────────
         raw_image_url = str(game.get("image_url") or "").strip()
-        media_url = _resolve_media_url(raw_image_url)
         suffix = Path(raw_image_url.split("?", 1)[0]).suffix.lower()
 
-        result = None
+        thumbnail_url = await _thumbnail_url_for(raw_image_url, suffix)
 
-        if media_url and suffix == ".gif":
-            # GIF result: Telegram sends the ACTUAL animated gif as the
-            # message when this is picked, with `caption` shown under
-            # it and the play button attached. `title` shows in the
-            # picker list; Telegram's Bot API has no `description`
-            # field for this type, so we fold a short description into
-            # the title itself as a fallback.
-            short_desc = f" — {description}" if description else ""
-            result = InlineQueryResultGif(
-                id=f"game:{slug}",
-                gif_url=media_url,
-                thumbnail_url=media_url,
-                thumbnail_mime_type="image/gif",
-                title=f"🎮 {name}{short_desc}"[:100],
-                caption=caption,
+        result_kwargs = {
+            "id": f"game:{slug}",
+            "title": f"🎮 {name}",
+            "description": description[:200],
+            "input_message_content": InputTextMessageContent(
+                message_text=caption,
                 parse_mode="HTML",
-                reply_markup=keyboard,
-            )
+            ),
+            "reply_markup": keyboard,
+        }
 
-        elif media_url and suffix == ".mp4":
-            # MP4 used as a soundless "animation" (same idea as gif).
-            short_desc = f" — {description}" if description else ""
-            result = InlineQueryResultMpeg4Gif(
-                id=f"game:{slug}",
-                mpeg4_url=media_url,
-                thumbnail_url=media_url,
-                thumbnail_mime_type="video/mp4",
-                title=f"🎮 {name}{short_desc}"[:100],
-                caption=caption,
-                parse_mode="HTML",
-                reply_markup=keyboard,
-            )
+        if thumbnail_url:
+            result_kwargs["thumbnail_url"] = thumbnail_url
+            result_kwargs["thumbnail_width"] = 320
+            result_kwargs["thumbnail_height"] = 180
 
-        elif media_url and (suffix in _PHOTO_EXTS or not suffix):
-            # JPG / PNG / WEBP → InlineQueryResultPhoto. This is the
-            # only result type Telegram gives a real `description`
-            # field to, so these show the full title + description in
-            # the picker list, and the real photo + caption + button
-            # once sent.
-            result = InlineQueryResultPhoto(
-                id=f"game:{slug}",
-                photo_url=media_url,
-                thumbnail_url=media_url,
-                title=f"🎮 {name}",
-                description=description[:200],
-                caption=caption,
-                parse_mode="HTML",
-                reply_markup=keyboard,
-            )
-
-        if result is None:
-            # No usable media on file → fall back to a plain text card.
-            result = InlineQueryResultArticle(
-                id=f"game:{slug}",
-                title=f"🎮 {name}",
-                description=description[:200],
-                input_message_content=InputTextMessageContent(
-                    message_text=caption,
-                    parse_mode="HTML",
-                ),
-                reply_markup=keyboard,
-            )
-
-        results.append(result)
+        results.append(InlineQueryResultArticle(**result_kwargs))
 
     await inline_query.answer(
         results=results,
         cache_time=0,
         is_personal=True,
     )
+
+
+@router.chosen_inline_result()
+async def on_game_chosen(chosen: ChosenInlineResult, bot: Bot) -> None:
+    """Upgrade the just-sent text card into the real photo/GIF/video.
+
+    Fires right after a user picks a game from the inline list. Requires
+    "Inline feedback" to be enabled for the bot (@BotFather →
+    /setinlinefeedback → 100%), otherwise `inline_message_id` never
+    arrives and this handler has nothing to edit.
+    """
+
+    if not chosen.inline_message_id:
+        return
+
+    if not chosen.result_id.startswith("game:"):
+        return
+
+    slug = chosen.result_id.removeprefix("game:")
+
+    game = await get_game_by_slug(slug)
+    if not game:
+        return
+
+    name = str(game.get("name") or slug)
+    description = str(game.get("description") or "")
+    caption = _build_caption(name, description)
+    keyboard = _build_keyboard(slug, chosen.from_user.id)
+
+    raw_image_url = str(game.get("image_url") or "").strip()
+    suffix = Path(raw_image_url.split("?", 1)[0]).suffix.lower()
+    media_url = _public_url(raw_image_url)
+
+    if not media_url:
+        # No media to upgrade to — leave the text message as-is.
+        return
+
+    try:
+        if suffix == ".gif":
+            media = InputMediaAnimation(
+                media=media_url,
+                caption=caption,
+                parse_mode="HTML",
+            )
+        elif suffix == ".mp4":
+            media = InputMediaVideo(
+                media=media_url,
+                caption=caption,
+                parse_mode="HTML",
+                supports_streaming=True,
+            )
+        elif suffix in _PHOTO_EXTS:
+            media = InputMediaPhoto(
+                media=media_url,
+                caption=caption,
+                parse_mode="HTML",
+            )
+        else:
+            return
+
+        await bot.edit_message_media(
+            inline_message_id=chosen.inline_message_id,
+            media=media,
+            reply_markup=keyboard,
+        )
+
+    except Exception as exc:
+        logger.warning(
+            "[INLINE] Could not upgrade message media for %s: %s",
+            slug,
+            exc,
+        )
