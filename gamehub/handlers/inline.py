@@ -6,8 +6,10 @@ from aiogram import Router
 from aiogram.types import (
     InlineQuery,
     InlineQueryResultArticle,
+    InlineQueryResultPhoto,
+    InlineQueryResultGif,
+    InlineQueryResultMpeg4Gif,
     InputTextMessageContent,
-    LinkPreviewOptions,
     InlineKeyboardMarkup,
     InlineKeyboardButton,
 )
@@ -17,24 +19,18 @@ from config import config
 
 router = Router()
 
-# NOTE on why this uses InlineQueryResultArticle for everything:
+# The media is always sent as a *real* Telegram media result (Photo /
+# Gif / Mpeg4Gif) so the actual animated gif or image reliably shows up
+# once the user picks it — link-preview tricks are NOT reliable for
+# animated gifs, so we don't use them.
 #
-# Telegram's InlineQueryResultGif / InlineQueryResultMpeg4Gif types do
-# NOT support a "description" field (only "title"), and most Telegram
-# clients render Photo/Gif/Mpeg4Gif inline results as bare thumbnail
-# tiles with no visible text at all. That's why gif-covered games were
-# showing up with just the raw gif and nothing else in the picker.
-#
-# InlineQueryResultArticle is the only result type that reliably shows
-# thumbnail + bold title + grey description as a list row on every
-# client (this is what produces the look in the screenshot). To still
-# get the actual image/gif to appear in the *sent* message (together
-# with the caption and the play button), we don't attach the media as
-# a photo/gif result — instead the message text contains an invisible
-# link to the media URL with `prefer_large_media`, which makes
-# Telegram render it as a large inline preview above the text.
+# Trade-off: Telegram's Bot API doesn't give InlineQueryResultGif /
+# InlineQueryResultMpeg4Gif a "description" field (only Photo has one),
+# so gif/mp4-covered games can show up in the picker list with just a
+# title (no second description line) on some clients — that's a
+# platform limitation, not a bug. To soften it we fold a short bit of
+# the description into the title for those two types.
 _PHOTO_EXTS = {".jpg", ".jpeg", ".png", ".webp"}
-_ANIMATION_EXTS = {".gif", ".mp4"}
 
 
 def _resolve_media_url(image_url: str) -> str:
@@ -103,37 +99,71 @@ async def inline_games(inline_query: InlineQuery) -> None:
         raw_image_url = str(game.get("image_url") or "").strip()
         media_url = _resolve_media_url(raw_image_url)
         suffix = Path(raw_image_url.split("?", 1)[0]).suffix.lower()
-        has_media = bool(media_url) and (suffix in _PHOTO_EXTS or suffix in _ANIMATION_EXTS or not suffix)
 
-        if has_media:
-            # Zero-width link at the very start of the message: it isn't
-            # visible to the user, but its `href` is what Telegram uses
-            # to build the large media preview above the text.
-            message_text = f'<a href="{media_url}">&#8203;</a>{caption}'
-            link_preview = LinkPreviewOptions(
-                url=media_url,
-                prefer_large_media=True,
-                show_above_text=True,
-            )
-        else:
-            message_text = caption
-            link_preview = None
+        result = None
 
-        # InlineQueryResultArticle is used for every game (regardless of
-        # media type) so the picker always shows thumbnail + title +
-        # description consistently — see note above.
-        result = InlineQueryResultArticle(
-            id=f"game:{slug}",
-            title=f"🎮 {name}",
-            description=description[:200],
-            thumbnail_url=media_url or None,
-            input_message_content=InputTextMessageContent(
-                message_text=message_text,
+        if media_url and suffix == ".gif":
+            # GIF result: Telegram sends the ACTUAL animated gif as the
+            # message when this is picked, with `caption` shown under
+            # it and the play button attached. `title` shows in the
+            # picker list; Telegram's Bot API has no `description`
+            # field for this type, so we fold a short description into
+            # the title itself as a fallback.
+            short_desc = f" — {description}" if description else ""
+            result = InlineQueryResultGif(
+                id=f"game:{slug}",
+                gif_url=media_url,
+                thumbnail_url=media_url,
+                thumbnail_mime_type="image/gif",
+                title=f"🎮 {name}{short_desc}"[:100],
+                caption=caption,
                 parse_mode="HTML",
-                link_preview_options=link_preview,
-            ),
-            reply_markup=keyboard,
-        )
+                reply_markup=keyboard,
+            )
+
+        elif media_url and suffix == ".mp4":
+            # MP4 used as a soundless "animation" (same idea as gif).
+            short_desc = f" — {description}" if description else ""
+            result = InlineQueryResultMpeg4Gif(
+                id=f"game:{slug}",
+                mpeg4_url=media_url,
+                thumbnail_url=media_url,
+                thumbnail_mime_type="video/mp4",
+                title=f"🎮 {name}{short_desc}"[:100],
+                caption=caption,
+                parse_mode="HTML",
+                reply_markup=keyboard,
+            )
+
+        elif media_url and (suffix in _PHOTO_EXTS or not suffix):
+            # JPG / PNG / WEBP → InlineQueryResultPhoto. This is the
+            # only result type Telegram gives a real `description`
+            # field to, so these show the full title + description in
+            # the picker list, and the real photo + caption + button
+            # once sent.
+            result = InlineQueryResultPhoto(
+                id=f"game:{slug}",
+                photo_url=media_url,
+                thumbnail_url=media_url,
+                title=f"🎮 {name}",
+                description=description[:200],
+                caption=caption,
+                parse_mode="HTML",
+                reply_markup=keyboard,
+            )
+
+        if result is None:
+            # No usable media on file → fall back to a plain text card.
+            result = InlineQueryResultArticle(
+                id=f"game:{slug}",
+                title=f"🎮 {name}",
+                description=description[:200],
+                input_message_content=InputTextMessageContent(
+                    message_text=caption,
+                    parse_mode="HTML",
+                ),
+                reply_markup=keyboard,
+            )
 
         results.append(result)
 
