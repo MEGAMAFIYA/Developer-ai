@@ -90,6 +90,22 @@
   .howtoText { text-align:left; color:#5a3a12; font-size:clamp(13px,3vw,16px); line-height:1.6; max-width:480px; }
   .howtoText b { color:#a15b0f; }
 
+  /* ---- Leaderboard ---- */
+  .lbTitle { font-size:clamp(13px,3vw,16px); font-weight:800; color:#a15b0f; margin:14px 0 8px; }
+  .lbList {
+    display:flex; flex-direction:column; gap:6px; max-width:420px; width:100%;
+    max-height:38vh; overflow-y:auto; margin:0 auto 6px;
+  }
+  .lbRow {
+    display:flex; align-items:center; gap:10px; background:rgba(255,255,255,0.5);
+    border:2px solid #c99a4e; border-radius:10px; padding:8px 12px;
+  }
+  .lbRow.lbMe { border-color:#2e8b2e; background:rgba(110,208,110,0.25); }
+  .lbRank { font-weight:900; color:#a15b0f; min-width:28px; text-align:left; }
+  .lbName { flex:1; text-align:left; color:#6b3d12; font-weight:700; font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .lbScore { font-weight:900; color:#2f6fd6; font-size:13px; }
+  .lbEmpty { color:#8a5a22; font-size:12.5px; font-weight:600; padding:10px 0; }
+
   #touchZones { position:absolute; top:0; left:0; width:100%; height:100%; display:flex; pointer-events:none; }
 
   /* ===================== Admin button & panel (only ever inserted into the DOM for the owner/admins) ===================== */
@@ -165,7 +181,17 @@
         <button class="btn" id="btnStart">Boshlash</button><br>
         <button class="btn secondary" id="btnShop">Do'kon</button>
         <button class="btn secondary" id="btnHowto">Qanday o'ynaladi</button>
+        <button class="btn secondary" id="btnLeaderboard">Reytinglar</button>
       </div>
+    </div>
+  </div>
+
+  <!-- LEADERBOARD -->
+  <div class="screen" id="leaderboardScreen">
+    <div class="panel">
+      <div class="title" style="font-size:clamp(22px,6vw,34px)">Reytinglar</div>
+      <div class="lbList" id="lbListMain"></div>
+      <button class="btn secondary" id="btnLbBack" style="margin-top:16px;">Orqaga</button>
     </div>
   </div>
 
@@ -181,7 +207,7 @@
         <p>&bull; Jangchi bo'yi 2 ta bo'lak balandligida. Shox pastki 2 bo'lakda bo'lsa sizga tegadi, lekin 3-bo'lakdagi shox boshingizdan baland bo'lib xavfsiz o'tadi.</p>
         <p>&bull; Ba'zi bo'laklar <b>toshdan</b> (beton) bo'lib, ustida "x2", "x3" kabi raqam ko'rsatiladi - shuncha marta zarba berib sindirish kerak.</p>
         <p>&bull; Vaqt tugashidan oldin zarba bering, aks holda o'yin tugaydi. O'yin tezligi asta-sekin oshadi.</p>
-        <p>&bull; To'plangan tangalar bilan <b>Do'kon</b>dan yangi jangchi, belbog' va effektlar sotib oling.</p>
+        <p>&bull; To'plangan tangalar bilan <b>Do'kon</b>dan yangi jangchi va belbog' sotib oling.</p>
       </div>
       <button class="btn secondary" id="btnHowtoBack">Orqaga</button>
     </div>
@@ -195,7 +221,6 @@
       <div class="tabRow">
         <div class="tabBtn active" data-tab="characters">Jangchilar</div>
         <div class="tabBtn" data-tab="axes">Belbog'lar</div>
-        <div class="tabBtn" data-tab="effects">Effektlar</div>
       </div>
       <div class="shopGrid" id="shopGrid"></div>
       <button class="btn secondary" id="btnShopBack" style="margin-top:16px;">Orqaga</button>
@@ -222,6 +247,8 @@
       </div>
       <div class="stat" id="goCoins" style="margin-bottom:14px;">+0 tanga</div>
       <div id="submitStatus" style="min-height:22px;margin:6px 0 4px;color:#6b3d12;font-weight:700;font-size:clamp(12px,2.8vw,15px);"></div>
+      <div class="lbTitle">Ushbu o'yin reytingi</div>
+      <div class="lbList" id="goLeaderboard"></div>
       <button class="btn" id="btnRestart">Qayta o'ynash</button><br>
       <button class="btn secondary" id="btnGoMenu">Bosh menyu</button>
     </div>
@@ -260,6 +287,13 @@ function resize(){
 }
 window.addEventListener('resize', resize);
 
+/* The player figure's feet sit slightly below the player's own origin
+   (which is placed at groundY) — see drawLeg()'s foot rect combined with
+   drawPlayer()'s S = SCALE*1.55 scale. This offset lines the tree's base
+   up exactly with the bottom of the player's feet instead of with groundY
+   directly, so there's no visual gap between them. */
+function treeBaseY(){ return groundY + 2 * SCALE * 1.55; }
+
 /* ----------------------------- Storage helpers --------------------------- */
 const store = {
   get(key, def){ try{ const v = localStorage.getItem(key); return v===null? def : JSON.parse(v);}catch(e){return def;} },
@@ -268,8 +302,8 @@ const store = {
 
 let bestScore = store.get('dk_best', 0);
 let coins     = store.get('dk_coins', 0);
-let unlocked  = store.get('dk_unlocked', { characters:[0], axes:[0], effects:[0] });
-let selected  = store.get('dk_selected', { character:0, axe:0, effect:0 });
+let unlocked  = store.get('dk_unlocked', { characters:[0], axes:[0] });
+let selected  = store.get('dk_selected', { character:0, axe:0 });
 
 /* =========================================================================
    ADMIN PANEL — owner + owner-designated admin IDs only.
@@ -421,10 +455,69 @@ async function submitScore(finalScore, finalCoins){
     if(!res.ok) throw new Error('HTTP ' + res.status);
     scoreSubmitted = true;       // one successful submission per run — no retries needed
     setSubmitStatus("Reytingga yuborildi ✓", "#1f5f1f");
+    // refresh the leaderboard shown on the game-over screen now that our
+    // new score has been recorded on the backend
+    loadLeaderboardInto(document.getElementById('goLeaderboard'));
   }catch(e){
     // Failed — leave scoreSubmitted false so a future run can still submit.
     setSubmitStatus("Yuborilmadi", "#a11d1d");
   }
+}
+
+/* =========================================================================
+   LEADERBOARD (Telegram rankings for this game)
+   Reads the ranking list from the backend via GET /api/scores — the read
+   counterpart of the POST /api/scores used by submitScore() above. The
+   backend is expected to answer with either { leaderboard: [...] } or a
+   bare array of entries shaped like { name, score }. If your backend uses
+   different field/endpoint names, adjust fetchLeaderboard() below to match.
+   ========================================================================= */
+function escapeHtml(s){
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+async function fetchLeaderboard(){
+  if(!CHAT_ID) return null; // no chat context — nothing to show
+  try{
+    const res = await fetch('/api/scores?game=daraxt-kesuvchi&chat_id=' + CHAT_ID);
+    if(!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    const list = Array.isArray(data) ? data : (Array.isArray(data.leaderboard) ? data.leaderboard : null);
+    return list;
+  }catch(e){
+    return null;
+  }
+}
+
+/* Renders a leaderboard list (or an empty/error state) into a container. */
+function renderLeaderboardInto(container, list){
+  if(!container) return;
+  if(list === null){
+    container.innerHTML = '<div class="lbEmpty">Reytingni yuklab bo\'lmadi.</div>';
+    return;
+  }
+  if(list.length === 0){
+    container.innerHTML = '<div class="lbEmpty">Hozircha reyting mavjud emas.</div>';
+    return;
+  }
+  const myId = (tg && tg.initDataUnsafe && tg.initDataUnsafe.user) ? String(tg.initDataUnsafe.user.id) : null;
+  container.innerHTML = list.map((row, i) => {
+    const name = row.name || row.first_name || row.username || ("O'yinchi " + (i+1));
+    const sc = (row.score !== undefined) ? row.score : (row.best_score !== undefined ? row.best_score : '');
+    const rowId = row.user_id !== undefined ? row.user_id : (row.id !== undefined ? row.id : (row.telegram_id !== undefined ? row.telegram_id : null));
+    const isMe = myId !== null && rowId !== null && String(rowId) === myId;
+    return '<div class="lbRow' + (isMe ? ' lbMe' : '') + '">'
+      + '<span class="lbRank">#' + (i+1) + '</span>'
+      + '<span class="lbName">' + escapeHtml(name) + '</span>'
+      + '<span class="lbScore">' + escapeHtml(sc) + '</span>'
+      + '</div>';
+  }).join('');
+}
+
+function loadLeaderboardInto(container){
+  if(!container) return;
+  container.innerHTML = '<div class="lbEmpty">Yuklanmoqda...</div>';
+  fetchLeaderboard().then(list => renderLeaderboardInto(container, list));
 }
 
 /* ----------------------------- Audio (WebAudio synth) -------------------- */
@@ -462,19 +555,26 @@ function sfxGameOver(){ tone(300,0.25,'sawtooth',0.25); tone(220,0.3,'sawtooth',
 
 /* ----------------------------- Shop data ---------------------------------- */
 const CHARACTERS = [
-  { name:"Oddiy",     cost:0,   shirt:'#f4f1e8', shirt2:'#d8d2bf', skin:'#f2c299', hair:'#4a2e14' },
-  { name:"Jangchi",   cost:60,  shirt:'#e9e4d8', shirt2:'#c7bfa8', skin:'#e8b98c', hair:'#1e1e1e' },
-  { name:"Usta",      cost:140, shirt:'#eef2ff', shirt2:'#c9d2ea', skin:'#f4d3ad', hair:'#d9d9d9' },
+  { name:"Oddiy",   cost:0,   damage:1,
+    shirt:'#ffffff', shirt2:'#d6d6d0',      // oq koʻylak
+    skin:'#f2c299',  hair:'#4a2e14',
+    belt:'#f5f5f5',  belt2:'#c9c9c9',       // oq belbogʻ
+    eye:'#3b2a1a',   browAngle:-0.08, mouth:'neutral', hairStyle:'short' },
+  { name:"Jangchi", cost:60,  damage:2,
+    shirt:'#2f8f46', shirt2:'#1c5e2c',      // yashil koʻylak
+    skin:'#dba06d',  hair:'#151515',
+    belt:'#555b61',  belt2:'#2c3033',       // toʻq kulrang belbogʻ
+    eye:'#1a1108',   browAngle:-0.4,  mouth:'gritted', hairStyle:'spiky' },
+  { name:"Usta",    cost:140, damage:3,
+    shirt:'#202020', shirt2:'#0c0c0c',      // qora koʻylak
+    skin:'#f4d3ad',  hair:'#e6e6e6',
+    belt:'#c1272d',  belt2:'#7d1418',       // qizil belbogʻ
+    eye:'#3a4550',   browAngle:-0.05, mouth:'calm', hairStyle:'mature' },
 ];
 const AXES = [
   { name:"Oq belbog'",   cost:0,   head:'#f2f2f2', head2:'#c9c9c9', glow:'#ffffff' },
   { name:"Qizil belbog'", cost:50,  head:'#e0473f', head2:'#a12920', glow:'#ffb3ad' },
   { name:"Qora belbog'",  cost:130, head:'#2b2b2b', head2:'#0f0f0f', glow:'#9a9a9a' },
-];
-const EFFECTS = [
-  { name:"Yo'q",       cost:0,   color:'#ffd35c' },
-  { name:"Uchqun",     cost:70,  color:'#7fd8ff' },
-  { name:"Alanga",     cost:150, color:'#ff7a3f' },
 ];
 
 /* ----------------------------- Game state --------------------------------- */
@@ -483,8 +583,33 @@ let score = 0, sessionCoins = 0;
 let groundY = 600;
 
 /* Background elements */
-let clouds=[], birds=[], leaves=[], mountainSeed1=[], mountainSeed2=[];
+let clouds=[], birds=[], leaves=[], mountainSeed1=[], mountainSeed2=[], starField=[];
 function rand(a,b){ return a + Math.random()*(b-a); }
+
+/* --- Day / night cycle: sun sets & moon rises, then moon sets & sun rises,
+   looping continuously. Driven by wall-clock time so it keeps animating
+   smoothly regardless of frame rate or pauses. --- */
+const DAY_NIGHT_SECONDS = 42; // full sun-to-moon-to-sun loop length
+function getNightAmount(){
+  // 0 = full day, 1 = full night, smooth sinusoidal blend between them
+  const t = (Date.now()/1000) % DAY_NIGHT_SECONDS;
+  return (1 - Math.cos((t/DAY_NIGHT_SECONDS)*6.283)) / 2;
+}
+function hexToRgb(hex){
+  const h = hex.replace('#','');
+  return [parseInt(h.substring(0,2),16), parseInt(h.substring(2,4),16), parseInt(h.substring(4,6),16)];
+}
+function blendColor(c1, c2, f){
+  const a = hexToRgb(c1), b = hexToRgb(c2);
+  const r = Math.round(a[0]+(b[0]-a[0])*f);
+  const g = Math.round(a[1]+(b[1]-a[1])*f);
+  const bl = Math.round(a[2]+(b[2]-a[2])*f);
+  return `rgb(${r},${g},${bl})`;
+}
+function edgeFade(localT){
+  // fades a celestial body in near one horizon and out near the other
+  return Math.max(0, Math.min(localT/0.08, (1-localT)/0.08, 1));
+}
 
 function initBackground(){
   clouds = []; for(let i=0;i<5;i++) clouds.push({ x:rand(0,W||1200), y:rand(40,H*0.28), s:rand(0.7,1.4), speed:rand(6,14) });
@@ -493,6 +618,8 @@ function initBackground(){
   // jagged mountain silhouettes (deterministic random offsets)
   mountainSeed1 = []; for(let i=0;i<10;i++) mountainSeed1.push(rand(0.5,1));
   mountainSeed2 = []; for(let i=0;i<10;i++) mountainSeed2.push(rand(0.5,1));
+  // night-sky stars (positions normalized 0..1, only visible after dusk)
+  starField = []; for(let i=0;i<70;i++) starField.push({ x:rand(0,1), y:rand(0,1), r:rand(0.6,1.8), seed:rand(0,10) });
 }
 function newLeaf(randomY){
   return { x:rand(0,W||1200), y: randomY? rand(-H,H) : -20, r:rand(6,12), speed:rand(20,45),
@@ -527,8 +654,26 @@ function nextMoveType(){
 let shakeMag = 0, shakeT = 0;
 let particles = []; // wood/stone chips & bursts
 
-let timeLeft = 3.2, timeMax = 3.2;
+let timeLeft = 4.0, timeMax = 4.0;
 let difficultyLevel = 0;
+
+/* Waiting time between strikes gets shorter as the player breaks more
+   blocks. Base values (in seconds) are admin-configurable from the admin
+   panel and persisted in localStorage; defaults below are the original
+   timings reduced by 20%. */
+const WAIT_TIME_KEY = 'dk_wait_times';
+const DEFAULT_WAIT_TIMES = { base: 3.2, tier20: 1.6, tier50: 1.36 }; // 4.0/2.0/1.7 minus 20%
+function getWaitTimes(){
+  const wt = store.get(WAIT_TIME_KEY, null);
+  if(wt && typeof wt.base==='number' && typeof wt.tier20==='number' && typeof wt.tier50==='number') return wt;
+  return DEFAULT_WAIT_TIMES;
+}
+function computeTimeMax(brokenCount){
+  const wt = getWaitTimes();
+  if(brokenCount >= 50) return wt.tier50;
+  if(brokenCount >= 20) return wt.tier20;
+  return wt.base;
+}
 
 function branchProbability(){ return Math.min(0.30 + score*0.012, 0.62); }
 // No stone (concrete) segments until 100 blocks have been broken this game;
@@ -537,11 +682,10 @@ function stoneProbability(){
   if(score < 100) return 0;
   return Math.min(0.05 + (score-100)*0.0006, 0.16);
 }
-// Coins are awarded per fully-broken block on a slow rising tier:
-// 0 coins for the first 49 blocks, 1 coin per block for 50-99,
-// 2 coins per block for 100-149, then +1 coin every further 50 blocks.
-function coinsPerBlock(brokenCount){
-  return brokenCount < 50 ? 0 : Math.floor(brokenCount/50);
+// Coins: 1 tanga is awarded every 15 broken trees (blocks) this game.
+const COINS_PER_BREAKS = 15;
+function coinAwardForScore(brokenCount){
+  return (brokenCount % COINS_PER_BREAKS === 0) ? 1 : 0;
 }
 
 function newSegment(forceSafe, prevBranch){
@@ -578,7 +722,7 @@ function initTree(){
 
 function resetGame(){
   score = 0; sessionCoins = 0;
-  timeMax = 3.2; timeLeft = timeMax; difficultyLevel = 0;
+  timeMax = computeTimeMax(0); timeLeft = timeMax; difficultyLevel = 0;
   segH = Math.max(70, 100*SCALE);
   initTree();
   particles = [];
@@ -589,7 +733,7 @@ function resetGame(){
 /* Called once a segment is actually fully broken (not on partial stone hits) */
 function awardBrokenBlock(){
   score++; // "Ochko" = total blocks broken this game
-  const gain = coinsPerBlock(score);
+  const gain = coinAwardForScore(score);
   coins += gain; sessionCoins += gain;
 }
 
@@ -612,17 +756,20 @@ function chop(direction){
 
   const bottom = segments[0];
   const cx = W/2 + (direction==='left' ? -46*SCALE : 46*SCALE);
-  const cy = groundY - segH*0.5;
+  const cy = treeBaseY() - segH*0.5;
 
   if(bottom.stone){
-    bottom.hitsLeft--;
+    // Beton (stone) bloklarga zarba kuchi personajga bog'liq — Oddiy 1,
+    // Jangchi 2, Usta 3 baravar tez sindiradi. Oddiy yog'och bloklarga
+    // bu taʼsir qilmaydi (pastdagi else shoxobchada bitta zarbada sinadi).
+    bottom.hitsLeft -= CHARACTERS[selected.character].damage;
     spawnStoneChips(cx, cy);
     sfxHit();
     shakeMag = 7*SCALE; shakeT = 0.15;
     if(bottom.hitsLeft > 0){
       // Segment survives this hit; tree does not advance yet, no score/coin
       // is given until the block is actually broken.
-      timeMax = Math.max(1.5, 3.2 - score*0.018);
+      timeMax = computeTimeMax(score);
       timeLeft = Math.min(timeMax, timeLeft + timeMax*0.35);
       return;
     }
@@ -637,13 +784,13 @@ function chop(direction){
   }
 
   // start falling log piece animation
-  fallingLog = { x: W/2, y: groundY - segH*0.5, vy:-40, vx: (direction==='left'? -70:70), rot:0, rotSpeed: rand(-4,4), life:1, stone: bottom.stone };
+  fallingLog = { x: W/2, y: treeBaseY() - segH*0.5, vy:-40, vx: (direction==='left'? -70:70), rot:0, rotSpeed: rand(-4,4), life:1, stone: bottom.stone };
 
   // camera shake
   shakeMag = Math.max(shakeMag, 10 * SCALE); shakeT = Math.max(shakeT, 0.22);
 
   // refill timer a bit, increase difficulty
-  timeMax = Math.max(1.5, 3.2 - score*0.018);
+  timeMax = computeTimeMax(score);
   timeLeft = Math.min(timeMax, timeLeft + timeMax*0.55);
 
   // begin slide animation; actual array shift happens when it completes
@@ -690,7 +837,7 @@ function triggerGameOver(){
   player.dead = true;
   sfxGameOver();
   shakeMag = 18*SCALE; shakeT = 0.4;
-  spawnLeafBurst(W/2, groundY - segH*0.5, '#e0473f');
+  spawnLeafBurst(W/2, treeBaseY() - segH*0.5, '#e0473f');
   if(score > bestScore){ bestScore = score; store.set('dk_best', bestScore); }
   store.set('dk_coins', coins);
   setTimeout(()=>{ showGameOver(); }, 550);
@@ -817,16 +964,70 @@ function drawCustomBackground(){
 }
 
 function drawSky(){
+  const n = getNightAmount(); // 0=day, 1=night
+  const t = (Date.now()/1000) % DAY_NIGHT_SECONDS;
+  const half = DAY_NIGHT_SECONDS/2;
+
   const g = ctx.createLinearGradient(0,0,0,H);
-  g.addColorStop(0,'#7fd0ff'); g.addColorStop(0.6,'#bfe9ff'); g.addColorStop(1,'#e8f8ff');
+  g.addColorStop(0,   blendColor('#7fd0ff', '#0b1330', n));
+  g.addColorStop(0.6, blendColor('#bfe9ff', '#182a52', n));
+  g.addColorStop(1,   blendColor('#e8f8ff', '#33456f', n));
   ctx.fillStyle = g; ctx.fillRect(0,0,W,H);
 
-  // sun
-  const sx = W*0.85, sy = H*0.15, sr = 46*SCALE;
-  const sg = ctx.createRadialGradient(sx,sy,0,sx,sy,sr*2.4);
-  sg.addColorStop(0,'rgba(255,244,190,0.9)'); sg.addColorStop(1,'rgba(255,244,190,0)');
-  ctx.fillStyle = sg; ctx.beginPath(); ctx.arc(sx,sy,sr*2.4,0,6.283); ctx.fill();
-  ctx.fillStyle = '#fff2b0'; ctx.beginPath(); ctx.arc(sx,sy,sr,0,6.283); ctx.fill();
+  // twinkling stars, fading in as night deepens
+  if(n > 0.15){
+    ctx.save();
+    ctx.globalAlpha = Math.min(1, (n-0.15)/0.5);
+    const now = Date.now();
+    starField.forEach(s=>{
+      const tw = 0.55 + 0.45*Math.sin(now/450 + s.seed);
+      ctx.fillStyle = `rgba(255,255,255,${(0.4+0.5*tw).toFixed(2)})`;
+      ctx.beginPath(); ctx.arc(s.x*W, s.y*H*0.62, s.r*SCALE, 0, 6.283); ctx.fill();
+    });
+    ctx.restore();
+  }
+
+  // sun & moon travel the same arc, taking turns: sun during the first
+  // half of the cycle, moon during the second half — so as one sets at
+  // the horizon, the other rises from it.
+  const horizonY = H*0.62, radius = W*0.55, arcHeight = H*0.5, cx = W/2;
+  function arcPos(localT){
+    const ang = Math.PI * localT;
+    return { x: cx - radius*Math.cos(ang), y: horizonY - Math.sin(ang)*arcHeight };
+  }
+
+  if(t < half){
+    const localT = t/half;
+    const alpha = edgeFade(localT);
+    if(alpha > 0.01){
+      const p = arcPos(localT);
+      ctx.save(); ctx.globalAlpha = alpha;
+      const sr = 46*SCALE;
+      const sg = ctx.createRadialGradient(p.x,p.y,0,p.x,p.y,sr*2.4);
+      sg.addColorStop(0,'rgba(255,244,190,0.9)'); sg.addColorStop(1,'rgba(255,244,190,0)');
+      ctx.fillStyle = sg; ctx.beginPath(); ctx.arc(p.x,p.y,sr*2.4,0,6.283); ctx.fill();
+      ctx.fillStyle = '#fff2b0'; ctx.beginPath(); ctx.arc(p.x,p.y,sr,0,6.283); ctx.fill();
+      ctx.restore();
+    }
+  } else {
+    const localT = (t-half)/half;
+    const alpha = edgeFade(localT);
+    if(alpha > 0.01){
+      const p = arcPos(localT);
+      ctx.save(); ctx.globalAlpha = alpha;
+      const mr = 34*SCALE;
+      const mg = ctx.createRadialGradient(p.x,p.y,0,p.x,p.y,mr*2.2);
+      mg.addColorStop(0,'rgba(220,225,255,0.5)'); mg.addColorStop(1,'rgba(220,225,255,0)');
+      ctx.fillStyle = mg; ctx.beginPath(); ctx.arc(p.x,p.y,mr*2.2,0,6.283); ctx.fill();
+      ctx.fillStyle = '#eef1ff'; ctx.beginPath(); ctx.arc(p.x,p.y,mr,0,6.283); ctx.fill();
+      // craters
+      ctx.fillStyle = 'rgba(160,170,205,0.45)';
+      ctx.beginPath(); ctx.arc(p.x-mr*0.32,p.y-mr*0.22,mr*0.18,0,6.283); ctx.fill();
+      ctx.beginPath(); ctx.arc(p.x+mr*0.26,p.y+mr*0.28,mr*0.13,0,6.283); ctx.fill();
+      ctx.beginPath(); ctx.arc(p.x+mr*0.08,p.y-mr*0.36,mr*0.1,0,6.283); ctx.fill();
+      ctx.restore();
+    }
+  }
 }
 
 function mountainPath(seedArr, baseY, amp, color){
@@ -843,8 +1044,9 @@ function mountainPath(seedArr, baseY, amp, color){
   ctx.fillStyle = color; ctx.fill();
 }
 function drawMountains(){
-  mountainPath(mountainSeed1, H*0.62, 90*SCALE, '#9fc9d8');
-  mountainPath(mountainSeed2, H*0.68, 70*SCALE, '#7fb3c4');
+  const n = getNightAmount();
+  mountainPath(mountainSeed1, H*0.62, 90*SCALE, blendColor('#9fc9d8','#3a4d70',n));
+  mountainPath(mountainSeed2, H*0.68, 70*SCALE, blendColor('#7fb3c4','#2a3a5a',n));
 }
 
 function drawCloud(x,y,s){
@@ -860,7 +1062,12 @@ function drawCloud(x,y,s){
   ctx.beginPath(); ctx.ellipse(4,10,30,10,0,0,6.283); ctx.fill();
   ctx.restore();
 }
-function drawClouds(){ clouds.forEach(c=>drawCloud(c.x,c.y,c.s)); }
+function drawClouds(){
+  ctx.save();
+  ctx.globalAlpha = 1 - 0.55*getNightAmount();
+  clouds.forEach(c=>drawCloud(c.x,c.y,c.s));
+  ctx.restore();
+}
 
 function drawBirds(){
   ctx.strokeStyle = '#3a3a3a'; ctx.lineWidth = 2.2*SCALE; ctx.lineCap='round';
@@ -876,12 +1083,14 @@ function drawBirds(){
 }
 
 function drawGround(){
+  const n = getNightAmount();
   const g = ctx.createLinearGradient(0,groundY,0,H);
-  g.addColorStop(0,'#8bc34a'); g.addColorStop(1,'#5a9c33');
+  g.addColorStop(0, blendColor('#8bc34a','#1f3320',n));
+  g.addColorStop(1, blendColor('#5a9c33','#0f1f12',n));
   ctx.fillStyle = g;
   ctx.fillRect(0, groundY, W, H-groundY);
   // grass tufts
-  ctx.strokeStyle = '#4c8a2a'; ctx.lineWidth = 2*SCALE;
+  ctx.strokeStyle = blendColor('#4c8a2a','#14260f',n); ctx.lineWidth = 2*SCALE;
   for(let i=0;i<W;i+=26*SCALE){
     ctx.beginPath();
     ctx.moveTo(i, groundY+6);
@@ -910,7 +1119,7 @@ function drawTree(){
 
   for(let i=segments.length-1;i>=0;i--){
     const seg = segments[i];
-    const y = groundY - i*segH + treeSlide;
+    const y = treeBaseY() - i*segH + treeSlide;
     if(y < -segH*1.5) continue;
     if(seg.stone) drawStoneSlice(cx, y, trunkW, i===0, seg);
     else drawTrunkSlice(cx, y, trunkW, i===0);
@@ -1045,157 +1254,231 @@ function drawFallingLog(){
 
 /* --- Player drawing: a karate fighter, roughly 2 tree-segments tall ---
    Strikes are chosen automatically (see nextMoveType) and alternate between
-   kicks and punches in short random streaks. */
+   kicks and punches in short random streaks. Shared between the live
+   gameplay canvas and the shop preview so both look identical; the target
+   context is passed in as g. */
+function drawFighterFigure(g, px, py, dir, S, skin, wrap, swingT, swinging, move){
+  g.save();
+  g.translate(px, py);
+  g.scale(dir*S, S);
+
+  // ground shadow
+  g.fillStyle = 'rgba(0,0,0,0.25)';
+  g.beginPath(); g.ellipse(0, 4, 36, 10, 0, 0, 6.283); g.fill();
+
+  const swing = swinging ? Math.sin(swingT*Math.PI) : 0; // 0->1->0
+  const kicking = swinging && move === 'kick';
+  const punching = swinging && move === 'punch';
+  const bodyLean = kicking ? -swing*0.16 : (punching ? swing*0.05 : 0);
+
+  const hipY = -34, shoulderY = -70;
+
+  g.save();
+  g.rotate(bodyLean);
+
+  // ---- Back leg (support) ----
+  drawLeg(g, -9, hipY, skin, kicking ? -0.18*swing : 0.05, wrap.head);
+
+  // ---- Torso (gi top, V-neck) ----
+  g.save();
+  g.translate(0, hipY);
+  const bodyG = g.createLinearGradient(-22,0,22,0);
+  bodyG.addColorStop(0, skin.shirt2); bodyG.addColorStop(0.5, skin.shirt); bodyG.addColorStop(1, skin.shirt2);
+  g.fillStyle = bodyG;
+  g.beginPath();
+  g.moveTo(-20,4); g.quadraticCurveTo(-24,-24,-13,-36);
+  g.quadraticCurveTo(0,-42,13,-36);
+  g.quadraticCurveTo(24,-24,20,4);
+  g.quadraticCurveTo(0,12,-20,4);
+  g.closePath(); g.fill();
+  // rounded shoulder highlights for a softer, less flat silhouette
+  g.fillStyle = 'rgba(255,255,255,0.18)';
+  g.beginPath(); g.ellipse(-14,-30,7,4,0.4,0,6.283); g.fill();
+  g.beginPath(); g.ellipse(14,-30,7,4,-0.4,0,6.283); g.fill();
+  // V-neck collar + center seam
+  g.strokeStyle = 'rgba(0,0,0,0.18)'; g.lineWidth = 2.2;
+  g.beginPath(); g.moveTo(-8,-34); g.lineTo(0,-14); g.lineTo(8,-34); g.stroke();
+  g.strokeStyle = 'rgba(0,0,0,0.08)'; g.lineWidth = 1.4;
+  g.beginPath(); g.moveTo(0,-14); g.lineTo(0,2); g.stroke();
+  // belt — fixed to each character's own colors (Usta = qizil belbogʻ)
+  g.fillStyle = skin.belt2; g.fillRect(-21,2,42,7);
+  g.fillStyle = skin.belt;  g.fillRect(-5,1,10,9);
+  g.restore();
+
+  // ---- Front leg (kick leg) ----
+  const frontLegAngle = kicking ? swing*1.65 : 0.05;
+  drawLeg(g, 9, hipY, skin, frontLegAngle, wrap.head);
+
+  // ---- Back arm (guard, near chest) ----
+  g.save();
+  g.translate(-13, shoulderY);
+  g.rotate(punching ? 0.75 + swing*0.15 : 0.95);
+  g.fillStyle = skin.shirt2;
+  g.beginPath(); g.roundRect(-5,0,10,28,5); g.fill();
+  g.fillStyle = 'rgba(255,255,255,0.16)';
+  g.fillRect(-4,2,2.4,22);
+  g.fillStyle = skin.skin;
+  g.beginPath(); g.arc(0,30,7,0,6.283); g.fill();
+  g.strokeStyle = 'rgba(0,0,0,0.15)'; g.lineWidth = 1;
+  g.beginPath();
+  g.moveTo(-4,27); g.lineTo(-4,33);
+  g.moveTo(0,26.5); g.lineTo(0,33.5);
+  g.moveTo(4,27); g.lineTo(4,33);
+  g.stroke();
+  g.restore();
+
+  // ---- Head with face detail & headband (front-facing, full face) ----
+  g.save();
+  g.translate(0, shoulderY-14);
+
+  // hair base layer (back of head)
+  g.fillStyle = skin.hair;
+  g.beginPath(); g.arc(0,-2,17,0,6.283); g.fill();
+
+  // ears (both sides, so the head reads as a full face, not a profile)
+  g.fillStyle = skin.skin;
+  g.beginPath(); g.ellipse(-14,3,3,4.6,0,0,6.283); g.fill();
+  g.beginPath(); g.ellipse(14,3,3,4.6,0,0,6.283); g.fill();
+  g.strokeStyle = 'rgba(0,0,0,0.14)'; g.lineWidth = 1;
+  g.beginPath(); g.arc(-14,3,1.7,0,3.4); g.stroke();
+  g.beginPath(); g.arc(14,3,1.7,0,3.4); g.stroke();
+
+  // face — round, front-facing
+  g.fillStyle = skin.skin;
+  g.beginPath(); g.arc(0,3,15,0,6.283); g.fill();
+  // gentle radial shading for volume (soft, no hard circle edge)
+  const faceShade = g.createRadialGradient(0,1,3,0,4,16);
+  faceShade.addColorStop(0,'rgba(255,255,255,0.14)');
+  faceShade.addColorStop(0.65,'rgba(0,0,0,0)');
+  faceShade.addColorStop(1,'rgba(0,0,0,0.10)');
+  g.fillStyle = faceShade;
+  g.beginPath(); g.arc(0,3,15,0,6.283); g.fill();
+
+  // cheek blush, symmetric & subtle
+  g.fillStyle = 'rgba(255,140,120,0.22)';
+  g.beginPath(); g.ellipse(-8,8,2.6,1.9,0,0,6.283); g.fill();
+  g.beginPath(); g.ellipse(8,8,2.6,1.9,0,0,6.283); g.fill();
+
+  // eyebrows — symmetric, angled per character (calm / fierce / wise)
+  g.strokeStyle = skin.hair; g.lineWidth = 2.2; g.lineCap = 'round';
+  g.save(); g.translate(-6,-5); g.rotate(-skin.browAngle);
+  g.beginPath(); g.moveTo(-4.5,0); g.lineTo(4,0); g.stroke();
+  g.restore();
+  g.save(); g.translate(6,-5); g.rotate(skin.browAngle);
+  g.beginPath(); g.moveTo(-4,0); g.lineTo(4.5,0); g.stroke();
+  g.restore();
+
+  // eyes — both visible, distinct iris color per character, with catch-light
+  [-6, 6].forEach(ex => {
+    g.fillStyle = '#fff';
+    g.beginPath(); g.ellipse(ex,0,3.3,3.7,0,0,6.283); g.fill();
+    g.fillStyle = skin.eye;
+    g.beginPath(); g.arc(ex + (ex>0?0.8:-0.8),0.4,1.9,0,6.283); g.fill();
+    g.fillStyle = '#150d06';
+    g.beginPath(); g.arc(ex + (ex>0?1.1:-1.1),0.4,0.9,0,6.283); g.fill();
+    g.fillStyle = 'rgba(255,255,255,0.85)';
+    g.beginPath(); g.arc(ex + (ex>0?1.5:-0.3),-0.6,0.6,0,6.283); g.fill();
+  });
+
+  // nose — small centered shape
+  g.strokeStyle = 'rgba(0,0,0,0.28)'; g.lineWidth = 1.3; g.lineCap = 'round';
+  g.beginPath(); g.moveTo(0,1); g.quadraticCurveTo(1.6,5,0,6.6); g.stroke();
+  g.beginPath(); g.moveTo(-2.2,7); g.quadraticCurveTo(0,8.3,2.2,7); g.stroke();
+
+  // mouth — centered, different expression per character
+  g.strokeStyle = 'rgba(60,25,15,0.55)'; g.lineWidth = 1.6; g.lineCap = 'round';
+  if(skin.mouth === 'gritted'){
+    g.beginPath(); g.moveTo(-5.5,10.5); g.lineTo(5.5,10.5); g.stroke();
+    g.strokeStyle = 'rgba(255,255,255,0.5)'; g.lineWidth = 1;
+    g.beginPath(); g.moveTo(-4,10.2); g.lineTo(4,10.2); g.stroke();
+  } else if(skin.mouth === 'calm'){
+    g.beginPath(); g.moveTo(-5,10); g.quadraticCurveTo(0,12.6,5,10); g.stroke();
+  } else {
+    g.beginPath(); g.moveTo(-4.5,10.5); g.quadraticCurveTo(0,12,4.5,10.5); g.stroke();
+  }
+
+  // hair front styling — short / spiky mohawk / mature grey, per character
+  if(skin.hairStyle === 'spiky'){
+    g.fillStyle = skin.hair;
+    for(let i=-1;i<=1;i++){
+      g.beginPath();
+      g.moveTo(i*6-3,-14); g.lineTo(i*6+3,-14); g.lineTo(i*6, -22-Math.abs(i)*2);
+      g.closePath(); g.fill();
+    }
+  } else if(skin.hairStyle === 'mature'){
+    g.fillStyle = skin.hair; g.globalAlpha = 0.85;
+    g.beginPath(); g.arc(0,-4,16,3.6,5.9); g.fill();
+    g.globalAlpha = 1;
+  }
+
+  // headband across forehead (shop accent colour)
+  g.fillStyle = wrap.head;
+  g.beginPath(); g.roundRect(-16,-9,32,6,3); g.fill();
+  g.fillStyle = wrap.head2;
+  g.beginPath(); g.roundRect(-16,-9,32,2,2); g.fill();
+  // trailing headband tails at the back
+  g.fillStyle = wrap.head;
+  g.beginPath();
+  g.moveTo(-15,-6); g.quadraticCurveTo(-26,-2,-22,8); g.lineTo(-17,4);
+  g.quadraticCurveTo(-20,-2,-13,-4); g.closePath(); g.fill();
+  g.restore();
+
+  // ---- Front arm (punch arm) ----
+  g.save();
+  g.translate(13, shoulderY);
+  const punchAngle = punching ? 0.95 + swing*0.65 : 0.95;
+  g.rotate(punchAngle);
+  const armLen = punching ? 26 + swing*14 : 26;
+  g.fillStyle = skin.shirt;
+  g.beginPath(); g.roundRect(-5,0,10,armLen,5); g.fill();
+  g.fillStyle = 'rgba(255,255,255,0.18)';
+  g.fillRect(-4,2,2.4,armLen-6);
+  // fist with wrap accent
+  g.fillStyle = skin.skin;
+  g.beginPath(); g.arc(0,armLen+6,7.5,0,6.283); g.fill();
+  g.strokeStyle = 'rgba(0,0,0,0.15)'; g.lineWidth = 1;
+  g.beginPath();
+  g.moveTo(-4,armLen+3); g.lineTo(-4,armLen+9);
+  g.moveTo(0,armLen+2.5); g.lineTo(0,armLen+9.5);
+  g.moveTo(4,armLen+3); g.lineTo(4,armLen+9);
+  g.stroke();
+  g.fillStyle = wrap.head;
+  g.beginPath(); g.arc(0,armLen+2,7.5,3.6,5.9); g.fill();
+  // punch impact glow
+  if(punching && swingT>0.4 && swingT<0.8){
+    g.fillStyle = wrap.glow; g.globalAlpha = 0.5;
+    g.beginPath(); g.arc(0,armLen+6,16,0,6.283); g.fill();
+    g.globalAlpha = 1;
+  }
+  g.restore();
+
+  // kick impact glow near the extended foot (same transform order as drawLeg)
+  if(kicking && swingT>0.4 && swingT<0.8){
+    g.save();
+    g.translate(9, hipY);
+    g.rotate(frontLegAngle);
+    g.fillStyle = wrap.glow; g.globalAlpha = 0.5;
+    g.beginPath(); g.arc(0,31,16,0,6.283); g.fill();
+    g.globalAlpha = 1;
+    g.restore();
+  }
+
+  g.restore(); // bodyLean
+
+  g.restore();
+}
+
 function drawPlayer(){
   if(customPlayerImg){ drawCustomPlayer(); return; }
   const skin = CHARACTERS[selected.character];
   const wrap = AXES[selected.axe];      // repurposed: belt / wrap accent color
-  const eff  = EFFECTS[selected.effect];
   const side = player.side;
   const dir  = side==='left' ? 1 : -1;  // facing direction toward trunk
   const px = side==='left' ? W/2 - 150*SCALE : W/2 + 150*SCALE;
   const py = groundY;
   const S = SCALE * 1.55; // bigger figure, spans roughly two log segments
 
-  ctx.save();
-  ctx.translate(px, py);
-  ctx.scale(dir*S, S);
-
-  // ground shadow
-  ctx.fillStyle = 'rgba(0,0,0,0.25)';
-  ctx.beginPath(); ctx.ellipse(0, 4, 36, 10, 0, 0, 6.283); ctx.fill();
-
-  const swing = player.swinging ? Math.sin(player.swingT*Math.PI) : 0; // 0->1->0
-  const kicking = player.swinging && player.move === 'kick';
-  const punching = player.swinging && player.move === 'punch';
-  const bodyLean = kicking ? -swing*0.16 : (punching ? swing*0.05 : 0);
-
-  const hipY = -34, shoulderY = -70;
-
-  ctx.save();
-  ctx.rotate(bodyLean);
-
-  // ---- Back leg (support) ----
-  drawLeg(-9, hipY, skin, kicking ? -0.18*swing : 0.05, wrap.head);
-
-  // ---- Torso (gi top, V-neck) ----
-  ctx.save();
-  ctx.translate(0, hipY);
-  const bodyG = ctx.createLinearGradient(-22,0,22,0);
-  bodyG.addColorStop(0, skin.shirt2); bodyG.addColorStop(0.5, skin.shirt); bodyG.addColorStop(1, skin.shirt2);
-  ctx.fillStyle = bodyG;
-  ctx.beginPath();
-  ctx.moveTo(-20,4); ctx.quadraticCurveTo(-24,-24,-13,-36);
-  ctx.quadraticCurveTo(0,-42,13,-36);
-  ctx.quadraticCurveTo(24,-24,20,4);
-  ctx.quadraticCurveTo(0,12,-20,4);
-  ctx.closePath(); ctx.fill();
-  // V-neck collar
-  ctx.strokeStyle = 'rgba(0,0,0,0.18)'; ctx.lineWidth = 2.2;
-  ctx.beginPath(); ctx.moveTo(-8,-34); ctx.lineTo(0,-14); ctx.lineTo(8,-34); ctx.stroke();
-  // belt (accent color) with knot
-  ctx.fillStyle = wrap.head2; ctx.fillRect(-21,2,42,7);
-  ctx.fillStyle = wrap.head;  ctx.fillRect(-5,1,10,9);
-  ctx.restore();
-
-  // ---- Front leg (kick leg) ----
-  const frontLegAngle = kicking ? swing*1.65 : 0.05;
-  drawLeg(9, hipY, skin, frontLegAngle, wrap.head);
-
-  // ---- Back arm (guard, near chest) ----
-  ctx.save();
-  ctx.translate(-13, shoulderY);
-  ctx.rotate(punching ? 0.75 + swing*0.15 : 0.95);
-  ctx.fillStyle = skin.shirt2;
-  ctx.beginPath(); ctx.roundRect(-5,0,10,28,5); ctx.fill();
-  ctx.fillStyle = skin.skin;
-  ctx.beginPath(); ctx.arc(0,30,7,0,6.283); ctx.fill();
-  ctx.restore();
-
-  // ---- Head with headband ----
-  ctx.save();
-  ctx.translate(0, shoulderY-14);
-  ctx.fillStyle = skin.hair;
-  ctx.beginPath(); ctx.arc(0,-2,17,0,6.283); ctx.fill();
-  ctx.fillStyle = skin.skin;
-  ctx.beginPath(); ctx.arc(0,2,15,0,6.283); ctx.fill();
-  // cheeks
-  ctx.fillStyle = 'rgba(255,140,120,0.32)';
-  ctx.beginPath(); ctx.arc(-8,7,3.4,0,6.283); ctx.arc(8,7,3.4,0,6.283); ctx.fill();
-  // focused eyebrow
-  ctx.strokeStyle = skin.hair; ctx.lineWidth = 2.2; ctx.lineCap='round';
-  ctx.beginPath(); ctx.moveTo(2,-3); ctx.lineTo(10,-6); ctx.stroke();
-  // eye
-  ctx.fillStyle='#fff'; ctx.beginPath(); ctx.ellipse(6,0,3.6,4,0,0,6.283); ctx.fill();
-  ctx.fillStyle='#2a1a10'; ctx.beginPath(); ctx.arc(7.2,0.4,2,0,6.283); ctx.fill();
-  // headband across forehead
-  ctx.fillStyle = wrap.head;
-  ctx.beginPath(); ctx.roundRect(-16,-9,32,6,3); ctx.fill();
-  ctx.fillStyle = wrap.head2;
-  ctx.beginPath(); ctx.roundRect(-16,-9,32,2,2); ctx.fill();
-  // trailing headband tails at the back
-  ctx.fillStyle = wrap.head;
-  ctx.beginPath();
-  ctx.moveTo(-15,-6); ctx.quadraticCurveTo(-26,-2,-22,8); ctx.lineTo(-17,4);
-  ctx.quadraticCurveTo(-20,-2,-13,-4); ctx.closePath(); ctx.fill();
-  ctx.restore();
-
-  // ---- Front arm (punch arm) ----
-  ctx.save();
-  ctx.translate(13, shoulderY);
-  const punchAngle = punching ? 0.95 + swing*0.65 : 0.95;
-  ctx.rotate(punchAngle);
-  const armLen = punching ? 26 + swing*14 : 26;
-  ctx.fillStyle = skin.shirt;
-  ctx.beginPath(); ctx.roundRect(-5,0,10,armLen,5); ctx.fill();
-  // fist with wrap accent
-  ctx.fillStyle = skin.skin;
-  ctx.beginPath(); ctx.arc(0,armLen+6,7.5,0,6.283); ctx.fill();
-  ctx.fillStyle = wrap.head;
-  ctx.beginPath(); ctx.arc(0,armLen+2,7.5,3.6,5.9); ctx.fill();
-  // punch impact glow
-  if(punching && player.swingT>0.4 && player.swingT<0.8){
-    ctx.fillStyle = wrap.glow; ctx.globalAlpha = 0.5;
-    ctx.beginPath(); ctx.arc(0,armLen+6,16,0,6.283); ctx.fill();
-    ctx.globalAlpha = 1;
-  }
-  ctx.restore();
-
-  // kick impact glow near the extended foot (same transform order as drawLeg)
-  if(kicking && player.swingT>0.4 && player.swingT<0.8){
-    ctx.save();
-    ctx.translate(9, hipY);
-    ctx.rotate(frontLegAngle);
-    ctx.fillStyle = wrap.glow; ctx.globalAlpha = 0.5;
-    ctx.beginPath(); ctx.arc(0,31,16,0,6.283); ctx.fill();
-    ctx.globalAlpha = 1;
-    ctx.restore();
-  }
-
-  ctx.restore(); // bodyLean
-
-  // shop effect: soft glowing aura + a few orbiting sparkles ("chiroyli" idle effect)
-  if(eff.name !== "Yo'q"){
-    const t = Date.now()/1000;
-    const pulse = 0.5 + 0.5*Math.sin(t*3);
-    const gx = 0, gy = shoulderY-40;
-    const rg = ctx.createRadialGradient(gx,gy,0,gx,gy,34+6*pulse);
-    rg.addColorStop(0, eff.color); rg.addColorStop(1, 'rgba(0,0,0,0)');
-    ctx.globalAlpha = 0.35 + 0.15*pulse;
-    ctx.fillStyle = rg;
-    ctx.beginPath(); ctx.arc(gx,gy,34+6*pulse,0,6.283); ctx.fill();
-    ctx.globalAlpha = 1;
-    for(let i=0;i<3;i++){
-      const a = t*2 + i*(6.283/3);
-      const ox = Math.cos(a)*30, oy = Math.sin(a)*14;
-      ctx.fillStyle = eff.color;
-      ctx.globalAlpha = 0.8;
-      ctx.beginPath(); ctx.arc(gx+ox, gy+oy, 3.2, 0, 6.283); ctx.fill();
-      ctx.globalAlpha = 1;
-    }
-  }
-
-  ctx.restore();
+  drawFighterFigure(ctx, px, py, dir, S, skin, wrap, player.swingT, player.swinging, player.move);
 }
 
 /* Leg helper: rotates around the hip so kicks pivot naturally */
@@ -1221,20 +1504,32 @@ function drawCustomPlayer(){
   ctx.restore();
 }
 
-function drawLeg(offsetX, hipY, skin, angle, wrapColor){
-  ctx.save();
-  ctx.translate(offsetX, hipY);
-  ctx.rotate(angle);
-  // gi pants (cropped, light color)
-  ctx.fillStyle = skin.shirt;
-  ctx.beginPath(); ctx.roundRect(-7,0,14,28,5); ctx.fill();
+function drawLeg(g, offsetX, hipY, skin, angle, wrapColor){
+  g.save();
+  g.translate(offsetX, hipY);
+  g.rotate(angle);
+  // gi pants (cropped) with soft shading, matching gi colors
+  const legG = g.createLinearGradient(-7,0,7,0);
+  legG.addColorStop(0, skin.shirt2); legG.addColorStop(0.5, skin.shirt); legG.addColorStop(1, skin.shirt2);
+  g.fillStyle = legG;
+  g.beginPath(); g.roundRect(-7,0,14,28,5); g.fill();
+  // knee crease
+  g.strokeStyle = 'rgba(0,0,0,0.12)'; g.lineWidth = 1.3;
+  g.beginPath(); g.moveTo(-6,15); g.lineTo(6,15); g.stroke();
   // ankle wrap accent
-  ctx.fillStyle = wrapColor;
-  ctx.fillRect(-8,23,16,5);
-  // bare foot
-  ctx.fillStyle = skin.skin;
-  ctx.beginPath(); ctx.roundRect(-9,27,20,9,4); ctx.fill();
-  ctx.restore();
+  g.fillStyle = wrapColor;
+  g.beginPath(); g.roundRect(-8,23,16,5,2); g.fill();
+  // bare foot with toe separation & sole shading
+  g.fillStyle = skin.skin;
+  g.beginPath(); g.roundRect(-9,27,20,9,4); g.fill();
+  g.fillStyle = 'rgba(0,0,0,0.14)';
+  g.beginPath(); g.roundRect(-9,32,20,4,4); g.fill();
+  g.strokeStyle = 'rgba(0,0,0,0.18)'; g.lineWidth = 1;
+  g.beginPath();
+  g.moveTo(-3,27); g.lineTo(-3,33);
+  g.moveTo(3,27); g.lineTo(3,33);
+  g.stroke();
+  g.restore();
 }
 
 /* --- Particles --- */
@@ -1281,6 +1576,7 @@ const screens = {
   shop: document.getElementById('shopScreen'),
   pause: document.getElementById('pauseScreen'),
   gameover: document.getElementById('gameoverScreen'),
+  leaderboard: document.getElementById('leaderboardScreen'),
 };
 const hud = document.getElementById('hud');
 
@@ -1338,6 +1634,9 @@ function showGameOver(){
   hud.classList.remove('active');
   pauseBgMusic();
 
+  // Show this game's Telegram leaderboard for the current chat.
+  loadLeaderboardInto(document.getElementById('goLeaderboard'));
+
   // Submit the score automatically now that the run has ended.
   setSubmitStatus("");
   if(!tg || !tg.initData || !CHAT_ID){
@@ -1353,6 +1652,11 @@ document.getElementById('btnHowto').onclick = ()=> showOnly('howto');
 document.getElementById('btnHowtoBack').onclick = ()=> showOnly('menu');
 document.getElementById('btnShop').onclick = ()=>{ renderShop(); showOnly('shop'); };
 document.getElementById('btnShopBack').onclick = ()=>{ refreshMenuStats(); showOnly('menu'); };
+document.getElementById('btnLeaderboard').onclick = ()=>{
+  showOnly('leaderboard');
+  loadLeaderboardInto(document.getElementById('lbListMain'));
+};
+document.getElementById('btnLbBack').onclick = ()=> showOnly('menu');
 
 document.getElementById('pauseBtn').onclick = pauseGame;
 document.getElementById('btnResume').onclick = resumeGame;
@@ -1375,8 +1679,7 @@ document.querySelectorAll('.tabBtn').forEach(btn=>{
 
 function shopData(tab){
   if(tab==='characters') return { list:CHARACTERS, unlockedList:unlocked.characters, selKey:'character' };
-  if(tab==='axes') return { list:AXES, unlockedList:unlocked.axes, selKey:'axe' };
-  return { list:EFFECTS, unlockedList:unlocked.effects, selKey:'effect' };
+  return { list:AXES, unlockedList:unlocked.axes, selKey:'axe' };
 }
 
 function renderShop(){
@@ -1431,32 +1734,17 @@ function renderShop(){
   });
 }
 
-/* Small preview renderer for shop cards (character/belt/effect swatches) */
+/* Small preview renderer for shop cards (character/belt swatches).
+   The "Jangchilar" (characters) tab now reuses the exact same
+   drawFighterFigure() used during real gameplay, in a static idle pose,
+   so the shop preview looks identical to how the fighter appears in-game. */
 function drawShopPreview(cv, tab, item){
   const c = cv.getContext('2d');
   c.clearRect(0,0,cv.width,cv.height);
   if(tab==='characters'){
-    c.save(); c.translate(50,80);
-    c.fillStyle = 'rgba(0,0,0,0.15)'; c.beginPath(); c.ellipse(0,4,24,6,0,0,6.283); c.fill();
-    // legs
-    c.fillStyle = item.shirt;
-    c.beginPath(); c.roundRect(-13,-30,10,26,4); c.fill();
-    c.beginPath(); c.roundRect(3,-30,10,26,4); c.fill();
-    c.fillStyle = item.skin;
-    c.beginPath(); c.roundRect(-14,-6,12,7,3); c.fill();
-    c.beginPath(); c.roundRect(2,-6,12,7,3); c.fill();
-    // gi top
-    c.fillStyle = item.shirt;
-    c.beginPath(); c.moveTo(-15,-28); c.quadraticCurveTo(-18,-50,-9,-58);
-    c.quadraticCurveTo(0,-62,9,-58); c.quadraticCurveTo(18,-50,15,-28);
-    c.quadraticCurveTo(0,-20,-15,-28); c.closePath(); c.fill();
-    c.fillStyle = '#c9a227'; c.fillRect(-15,-32,30,5);
-    // head
-    c.fillStyle = item.hair; c.beginPath(); c.arc(0,-66,13,0,6.283); c.fill();
-    c.fillStyle = item.skin; c.beginPath(); c.arc(0,-63,11,0,6.283); c.fill();
-    c.fillStyle = '#e0473f'; c.beginPath(); c.roundRect(-12,-70,24,5,2); c.fill();
-    c.restore();
-  } else if(tab==='axes'){
+    const wrap = AXES[selected.axe]; // currently equipped belt, same as in-game
+    drawFighterFigure(c, 50, 74, 1, 0.58, item, wrap, 0, false, 'punch');
+  } else {
     // belt / wrap accent swatch
     c.save(); c.translate(50,45);
     c.fillStyle = 'rgba(0,0,0,0.1)'; c.beginPath(); c.roundRect(-32,-14,64,28,10); c.fill();
@@ -1467,18 +1755,6 @@ function drawShopPreview(cv, tab, item){
     c.fillStyle = item.glow; c.globalAlpha=0.6;
     c.beginPath(); c.roundRect(-26,-8,52,4,4); c.fill();
     c.globalAlpha=1;
-    c.restore();
-  } else {
-    c.save(); c.translate(50,45);
-    const rg = c.createRadialGradient(0,0,0,0,0,34);
-    rg.addColorStop(0,item.color); rg.addColorStop(1,'rgba(0,0,0,0)');
-    c.fillStyle = rg; c.globalAlpha=0.9;
-    c.beginPath(); c.arc(0,0,34,0,6.283); c.fill();
-    c.globalAlpha=1;
-    for(let i=0;i<5;i++){
-      c.fillStyle = item.color;
-      c.beginPath(); c.arc(rand(-22,22),rand(-22,22),rand(3,6),0,6.283); c.fill();
-    }
     c.restore();
   }
 }
@@ -1571,6 +1847,28 @@ function buildAdminUI(user, isOwner){
         <audio id="musicPreview" class="admin-preview-audio" controls></audio>
       </div>
 
+      <div class="admin-section">
+        <h3>Zarbadan keyingi kutish vaqti (soniya)</h3>
+        <div class="admin-row" style="flex-direction:column; align-items:stretch; gap:8px;">
+          <label style="font-size:12.5px; display:flex; justify-content:space-between; gap:10px; align-items:center;">
+            0-19 daraxt sindirilganda
+            <input type="number" id="waitBaseInput" min="0.3" max="10" step="0.1"
+                   style="width:80px; padding:7px 9px; border-radius:8px; border:1px solid #c99a4e; background:#fff8e7; color:#6b3d12; font-size:13px;">
+          </label>
+          <label style="font-size:12.5px; display:flex; justify-content:space-between; gap:10px; align-items:center;">
+            20-49 daraxt sindirilganda
+            <input type="number" id="waitTier20Input" min="0.3" max="10" step="0.1"
+                   style="width:80px; padding:7px 9px; border-radius:8px; border:1px solid #c99a4e; background:#fff8e7; color:#6b3d12; font-size:13px;">
+          </label>
+          <label style="font-size:12.5px; display:flex; justify-content:space-between; gap:10px; align-items:center;">
+            50+ daraxt sindirilganda
+            <input type="number" id="waitTier50Input" min="0.3" max="10" step="0.1"
+                   style="width:80px; padding:7px 9px; border-radius:8px; border:1px solid #c99a4e; background:#fff8e7; color:#6b3d12; font-size:13px;">
+          </label>
+        </div>
+        <div class="admin-note">Jangchi har zarbadan so'ng navbatdagi zarba uchun shuncha soniya kutish beriladi (daraxt qanchalik ko'p sindirilgan bo'lsa, shuncha kam).</div>
+      </div>
+
       ${isOwner ? `
       <div class="admin-section">
         <h3>Administratorlarni boshqarish</h3>
@@ -1613,6 +1911,15 @@ function buildAdminUI(user, isOwner){
   if (savedPlayer){ playerPreview.src = savedPlayer; playerPreview.classList.add('show'); }
   const savedMusic = localStorage.getItem(ASSET_KEYS.music);
   if (savedMusic){ musicPreview.src = savedMusic; musicPreview.classList.add('show'); }
+
+  // pre-fill the wait-time (seconds) inputs with the currently active values
+  const waitBaseInput = modal.querySelector('#waitBaseInput');
+  const waitTier20Input = modal.querySelector('#waitTier20Input');
+  const waitTier50Input = modal.querySelector('#waitTier50Input');
+  const currentWaitTimes = getWaitTimes();
+  waitBaseInput.value = currentWaitTimes.base;
+  waitTier20Input.value = currentWaitTimes.tier20;
+  waitTier50Input.value = currentWaitTimes.tier50;
 
   /* Administrator list management — owner only. This whole block simply
      doesn't run (and its DOM doesn't exist) when isOwner is false. */
@@ -1729,6 +2036,23 @@ function buildAdminUI(user, isOwner){
         localStorage.setItem(ASSET_KEYS.music, pending.music);
         bgMusicEl.src = pending.music;
       }
+
+      // wait-time (seconds) settings — validated, falls back to the
+      // current values if a field is left empty or invalid
+      const parsedBase = parseFloat(waitBaseInput.value);
+      const parsedTier20 = parseFloat(waitTier20Input.value);
+      const parsedTier50 = parseFloat(waitTier50Input.value);
+      const fallback = getWaitTimes();
+      const newWaitTimes = {
+        base: (Number.isFinite(parsedBase) && parsedBase > 0) ? parsedBase : fallback.base,
+        tier20: (Number.isFinite(parsedTier20) && parsedTier20 > 0) ? parsedTier20 : fallback.tier20,
+        tier50: (Number.isFinite(parsedTier50) && parsedTier50 > 0) ? parsedTier50 : fallback.tier50,
+      };
+      store.set(WAIT_TIME_KEY, newWaitTimes);
+      // apply immediately to the current run's timer, if one is active
+      timeMax = computeTimeMax(score);
+      timeLeft = Math.min(timeLeft, timeMax);
+
       closeModal();
     } catch (err){
       // localStorage quota exceeded, etc. — files may simply be too large
