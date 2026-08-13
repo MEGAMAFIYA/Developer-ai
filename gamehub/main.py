@@ -126,6 +126,11 @@ async def main() -> None:
                     "message",
                     "callback_query",
                     "inline_query",
+                    # Needed so we get notified which game was picked
+                    # from the @Kichik_oyinlar_bot inline list, so we
+                    # can upgrade that message from text to the real
+                    # photo/GIF/video (see handlers/inline.py).
+                    "chosen_inline_result",
                 ],
             ),
             name="bot-polling",
