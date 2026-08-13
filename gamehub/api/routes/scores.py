@@ -14,6 +14,7 @@ from database.game_db import (
     save_score,
     verify_score_in_db,
     get_global_leaderboard,
+    get_group_leaderboard,
     get_game_pool,
 )
 from database.global_db import get_game_by_slug
@@ -224,6 +225,44 @@ async def post_score(payload: ScorePayload) -> dict:
         "rank":          result["rank"],
         "diamonds":      diamonds_earned,
     }
+
+
+# ---------------------------------------------------------------------------
+# GET /api/scores — read-only leaderboard for a game (and optionally one
+# Telegram chat). Used by the game's in-webapp "Reytinglar" screens.
+#
+#   GET /api/scores?game=daraxt-kesuvchi&chat_id=<cid>
+#
+# chat_id is the same value the bot embeds in the WebApp URL (?cid=). When
+# chat_id is 0/omitted (private chat, or local testing outside Telegram) we
+# fall back to the GLOBAL leaderboard across all chats for that game, so the
+# screen never comes back empty just because there is no group context.
+# ---------------------------------------------------------------------------
+
+@router.get("/scores")
+async def get_scores(game: str, chat_id: int = 0, limit: int = 20) -> dict:
+    game_slug = await _validate_registered_game(game)
+
+    if chat_id:
+        rows = await get_group_leaderboard(game_slug, chat_id, limit)
+    else:
+        rows = await get_global_leaderboard(game_slug, limit)
+
+    leaderboard = [
+        {
+            "user_id": r["user_id"],
+            "name":    r.get("first_name") or r.get("username") or f"O'yinchi {i + 1}",
+            "score":   r["best_score"],
+        }
+        for i, r in enumerate(rows)
+    ]
+
+    logger.info(
+        "LEADERBOARD READ: game=%s chat_id=%s rows=%d",
+        game_slug, chat_id, len(leaderboard),
+    )
+
+    return {"ok": True, "leaderboard": leaderboard}
 
 
 # ---------------------------------------------------------------------------
