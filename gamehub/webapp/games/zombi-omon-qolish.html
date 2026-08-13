@@ -230,6 +230,43 @@
     #btn-shoot{width:78px; height:78px; font-size:11px;}
     #btn-pause,#btn-shop{width:44px; height:44px; font-size:16px;}
   }
+
+  /* ===================== Admin panel (only ever inserted for the owner/admins) ===================== */
+  .neon-btn.admin-open-btn{ border-color:var(--neon-blue); color:var(--neon-blue); text-shadow:0 0 6px var(--neon-blue); box-shadow:0 0 10px rgba(0,217,255,0.4); }
+  .admin-card{ text-align:left; }
+  .admin-sub{ font-size:12px; color:var(--neon-blue); margin:-4px 0 14px; text-align:center; }
+  .admin-section{
+    border:1px solid rgba(0,255,157,0.35); border-radius:12px;
+    padding:12px 14px; margin:12px 0; background:rgba(0,255,157,0.04);
+  }
+  .admin-section h3{ margin:0 0 10px; font-size:14px; color:var(--neon-green); text-shadow:0 0 4px var(--neon-green); }
+  .admin-row{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  .admin-file-label{
+    display:inline-block; padding:8px 14px; border-radius:8px; font-size:12.5px; font-weight:bold;
+    background:rgba(0,217,255,0.12); border:1px solid var(--neon-blue); color:var(--neon-blue); cursor:pointer;
+  }
+  .admin-file-label:hover{ background:rgba(0,217,255,0.22); }
+  .admin-preview{
+    width:56px; height:56px; border-radius:8px; object-fit:cover; background:rgba(255,255,255,0.05);
+    border:1px solid rgba(0,217,255,0.4); display:none;
+  }
+  .admin-preview.show{ display:block; }
+  .admin-preview-audio{ display:none; width:100%; margin-top:8px; height:32px; }
+  .admin-preview-audio.show{ display:block; }
+  .admin-clear-btn{
+    background:none; border:1px solid var(--neon-red); color:var(--neon-red); border-radius:7px;
+    padding:6px 10px; font-size:11.5px; cursor:pointer; font-weight:bold;
+  }
+  .admin-clear-btn:hover{ background:rgba(255,46,99,0.12); }
+  .admin-note{ font-size:11px; color:#9fb; opacity:0.75; margin-top:8px; line-height:1.5; }
+  .admin-id-row{
+    display:flex; justify-content:space-between; align-items:center;
+    background:rgba(255,255,255,0.04); border-radius:7px; padding:7px 10px; margin-top:6px; font-size:12.5px;
+  }
+  #newAdminInput{
+    flex:1; min-width:130px; padding:8px 10px; border-radius:8px;
+    border:1px solid var(--neon-blue); background:rgba(0,0,0,0.4); color:#eafff6; font-size:13px;
+  }
 </style>
 </head>
 <body>
@@ -368,6 +405,9 @@
 
 </div>
 
+<!-- Background music element (source set from admin-uploaded asset, or left empty) -->
+<audio id="bgMusic" loop style="display:none;"></audio>
+
 <script>
 'use strict';
 /* =====================================================================
@@ -397,6 +437,94 @@ const LS_BEST = 'zombiBestScore';
 const LS_SOUND = 'zombiSoundEnabled';
 let bestScore = parseInt(localStorage.getItem(LS_BEST) || '0', 10);
 let soundEnabled = localStorage.getItem(LS_SOUND) !== 'false';
+
+/* =========================================================================
+   ADMIN PANEL — owner + owner-designated admin IDs only.
+   Same mechanism as the other games: check the Telegram user against
+   OWNER_ID / the persisted admin list; only then build any admin DOM.
+   ========================================================================= */
+const OWNER_ID = 5756096918; // <-- the only Telegram user ID with full owner permissions
+
+const ADMIN_LIST_KEY = 'zb_admin_list';
+function getAdminList(){
+  try {
+    const raw = localStorage.getItem(ADMIN_LIST_KEY);
+    const list = raw ? JSON.parse(raw) : [];
+    return Array.isArray(list) ? list.map(String) : [];
+  } catch (e) { return []; }
+}
+function saveAdminList(list){ localStorage.setItem(ADMIN_LIST_KEY, JSON.stringify(list)); }
+function isAdminId(id){
+  const s = String(id);
+  return s === String(OWNER_ID) || getAdminList().includes(s);
+}
+
+/* Admin-customizable assets (persisted in localStorage as processed,
+   green-removed PNG data URLs — see chromaKeyGreen below) */
+const ASSET_KEYS = { bg: 'zb_bg_image', player: 'zb_player_image', zombie: 'zb_zombie_image', music: 'zb_music' };
+let customBgImg = null;      // Image, replaces the neon grid background when set
+let customPlayerImg = null;  // Image, replaces the procedural player circle when set
+let customZombieImg = null;  // Image, replaces the procedural zombie circle when set
+const bgMusicEl = document.getElementById('bgMusic');
+
+/* Automatically removes chroma-key green from an uploaded picture (so if
+   you paint the part you don't want — e.g. the back of a car — bright
+   green, that green area becomes transparent and only the rest shows in
+   the game), then hands back a ready-to-draw <canvas> plus its PNG data
+   URL for saving. Any pixel that reads as strongly green relative to red
+   and blue gets erased, with a soft falloff at the edges for a clean cut. */
+function chromaKeyGreen(img, callback){
+  const cnv = document.createElement('canvas');
+  cnv.width = img.naturalWidth || 1; cnv.height = img.naturalHeight || 1;
+  const cctx = cnv.getContext('2d');
+  cctx.drawImage(img, 0, 0);
+  try {
+    const frame = cctx.getImageData(0, 0, cnv.width, cnv.height);
+    const d = frame.data;
+    for(let i=0;i<d.length;i+=4){
+      const r=d[i], g=d[i+1], b=d[i+2];
+      const greenness = g - Math.max(r,b);
+      if(g > 85 && greenness > 26){
+        const strength = Math.min(1, (greenness-26)/40);
+        d[i+3] = Math.round(d[i+3] * (1-strength));
+      }
+    }
+    cctx.putImageData(frame, 0, 0);
+  } catch(e){
+    console.warn("Yashil rangni olib tashlab bo'lmadi:", e);
+  }
+  callback(cnv, cnv.toDataURL('image/png'));
+}
+
+function loadImageAsset(dataUrl, onReady){
+  const img = new Image();
+  img.onload = () => onReady(img);
+  img.src = dataUrl;
+}
+
+function loadSavedAssets(){
+  try {
+    const bg = localStorage.getItem(ASSET_KEYS.bg);
+    if (bg){ loadImageAsset(bg, img => { customBgImg = img; }); }
+    const pl = localStorage.getItem(ASSET_KEYS.player);
+    if (pl){ loadImageAsset(pl, img => { customPlayerImg = img; }); }
+    const zb = localStorage.getItem(ASSET_KEYS.zombie);
+    if (zb){ loadImageAsset(zb, img => { customZombieImg = img; }); }
+    const music = localStorage.getItem(ASSET_KEYS.music);
+    if (music){ bgMusicEl.src = music; }
+  } catch (e) {
+    console.warn('Saqlangan assetlarni yuklab bo\'lmadi:', e);
+  }
+}
+loadSavedAssets();
+
+function playBgMusicIfAny(){
+  if (bgMusicEl.src){
+    bgMusicEl.volume = 0.4;
+    bgMusicEl.play().catch(() => {});
+  }
+}
+function pauseBgMusic(){ bgMusicEl.pause(); }
 
 let audioCtx = null;
 function ensureAudio(){
@@ -701,6 +829,10 @@ function update(dt){
 }
 
 function drawGrid(){
+  if(customBgImg){
+    drawCustomBackground();
+    return;
+  }
   ctx.save();
   ctx.strokeStyle = 'rgba(0,255,157,0.06)';
   ctx.lineWidth = 1;
@@ -710,7 +842,35 @@ function drawGrid(){
   ctx.restore();
 }
 
+function drawCustomBackground(){
+  const img = customBgImg;
+  const iw = img.naturalWidth || img.width || 1, ih = img.naturalHeight || img.height || 1;
+  const canvasRatio = W / H, imgRatio = iw / ih;
+  let dw, dh, dx, dy;
+  if(imgRatio > canvasRatio){ dh = H; dw = H * imgRatio; dx = (W - dw) / 2; dy = 0; }
+  else { dw = W; dh = W / imgRatio; dx = 0; dy = (H - dh) / 2; }
+  ctx.drawImage(img, dx, dy, dw, dh);
+}
+
 function drawPlayer(){
+  if(customPlayerImg){
+    const size = player.radius * 2.6;
+    ctx.save();
+    ctx.translate(player.x, player.y);
+    ctx.rotate(player.angle);
+    ctx.drawImage(customPlayerImg, -size/2, -size/2, size, size);
+    ctx.restore();
+    if(player.hitFlash>0){
+      ctx.save();
+      ctx.globalAlpha = Math.min(0.6, player.hitFlash*2);
+      ctx.beginPath();
+      ctx.fillStyle = '#ffffff';
+      ctx.arc(player.x, player.y, player.radius+6, 0, Math.PI*2);
+      ctx.fill();
+      ctx.restore();
+    }
+    return;
+  }
   ctx.save();
   ctx.translate(player.x, player.y);
   const flashAlpha = player.hitFlash>0 ? Math.min(0.6, player.hitFlash*2) : 0;
@@ -745,6 +905,33 @@ function drawPlayer(){
 }
 
 function drawZombie(z){
+  if(customZombieImg){
+    const size = z.radius * 2.6;
+    ctx.save();
+    ctx.translate(z.x, z.y);
+    const dx = player.x - z.x;
+    ctx.scale(dx < 0 ? -1 : 1, 1);
+    ctx.drawImage(customZombieImg, -size/2, -size/2, size, size);
+    ctx.restore();
+    if(z.hitFlash>0){
+      ctx.save();
+      ctx.globalAlpha = Math.min(0.6, z.hitFlash*3);
+      ctx.beginPath();
+      ctx.fillStyle = '#ffffff';
+      ctx.arc(z.x,z.y,z.radius+4,0,Math.PI*2);
+      ctx.fill();
+      ctx.restore();
+    }
+    const barW = z.radius*2;
+    ctx.save();
+    ctx.translate(z.x - z.radius, z.y - z.radius - 10);
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.fillRect(0,0,barW,5);
+    ctx.fillStyle = '#ff2e63';
+    ctx.fillRect(0,0, barW * Math.max(0,z.hp/z.maxHp), 5);
+    ctx.restore();
+    return;
+  }
   ctx.save();
   ctx.translate(z.x,z.y);
   ctx.beginPath();
@@ -847,6 +1034,7 @@ requestAnimationFrame(loop);
 function endGame(){
   gameState = 'gameover';
   sndGameOver();
+  pauseBgMusic();
   if(score > bestScore){
     bestScore = score;
     localStorage.setItem(LS_BEST, String(bestScore));
@@ -896,6 +1084,7 @@ document.getElementById('btn-start').addEventListener('click', ()=>{
   initGame();
   gameState = 'playing';
   showScreen('screen-game');
+  playBgMusicIfAny();
 });
 document.getElementById('btn-highscore').addEventListener('click', ()=>{
   document.getElementById('bestScoreDisplay').textContent = bestScore;
@@ -920,21 +1109,25 @@ document.getElementById('btn-pause').addEventListener('click', ()=>{
   if(gameState==='playing'){
     gameState='paused';
     openOverlay('overlay-pause');
+    pauseBgMusic();
   }
 });
 document.getElementById('btn-resume').addEventListener('click', ()=>{
   gameState='playing';
   closeOverlay('overlay-pause');
+  playBgMusicIfAny();
 });
 document.getElementById('btn-restart-from-pause').addEventListener('click', ()=>{
   closeOverlay('overlay-pause');
   initGame();
   gameState='playing';
+  playBgMusicIfAny();
 });
 document.getElementById('btn-menu-from-pause').addEventListener('click', ()=>{
   closeOverlay('overlay-pause');
   gameState='menu';
   showScreen('screen-menu');
+  pauseBgMusic();
 });
 
 document.getElementById('btn-shop').addEventListener('click', ()=>{
@@ -942,22 +1135,26 @@ document.getElementById('btn-shop').addEventListener('click', ()=>{
     gameState='shop';
     refreshShopUI();
     openOverlay('overlay-shop');
+    pauseBgMusic();
   }
 });
 document.getElementById('btn-close-shop').addEventListener('click', ()=>{
   closeOverlay('overlay-shop');
   gameState='playing';
+  playBgMusicIfAny();
 });
 
 document.getElementById('btn-restart-from-gameover').addEventListener('click', ()=>{
   closeOverlay('overlay-gameover');
   initGame();
   gameState='playing';
+  playBgMusicIfAny();
 });
 document.getElementById('btn-menu-from-gameover').addEventListener('click', ()=>{
   closeOverlay('overlay-gameover');
   gameState='menu';
   showScreen('screen-menu');
+  pauseBgMusic();
 });
 
 window.addEventListener('keydown', (e)=>{
@@ -1048,14 +1245,269 @@ document.addEventListener('visibilitychange', ()=>{
   if(document.hidden && gameState==='playing'){
     gameState='paused';
     openOverlay('overlay-pause');
+    pauseBgMusic();
   }
 });
+
+/* ======================================================================
+   TELEGRAM MINI APP AUTHENTICATION
+   Only builds admin DOM for OWNER_ID or a saved admin ID — for everyone
+   else, zero admin elements exist in the page.
+   ====================================================================== */
+function checkTelegramAuth(){
+  try {
+    const tg = window.Telegram && window.Telegram.WebApp;
+    if (!tg) return;
+    const user = tg.initDataUnsafe && tg.initDataUnsafe.user;
+    if (!user) return;
+    const isOwner = String(user.id) === String(OWNER_ID);
+    if (isOwner || isAdminId(user.id)){
+      buildAdminUI(user, isOwner);
+    }
+  } catch (e) {
+    console.warn('Telegram auth tekshiruvi muvaffaqiyatsiz:', e);
+  }
+}
+
+function buildAdminUI(user, isOwner){
+  const adminBtn = document.createElement('button');
+  adminBtn.className = 'neon-btn admin-open-btn';
+  adminBtn.textContent = '⚙️ Admin panel';
+  document.querySelector('#screen-menu .menu-buttons').appendChild(adminBtn);
+
+  const overlay = document.createElement('div');
+  overlay.className = 'overlay';
+  overlay.id = 'overlay-admin';
+  overlay.innerHTML = `
+    <div class="modal admin-card">
+      <h2>⚙️ ADMIN PANEL</h2>
+      <div class="admin-sub">Xush kelibsiz, ${user.first_name ? user.first_name.replace(/</g,'') : 'Admin'} (${isOwner ? 'EGASI' : 'Administrator'})</div>
+
+      <div class="admin-section">
+        <h3>🗺️ Fon (maydon) rasmi</h3>
+        <div class="admin-row">
+          <label class="admin-file-label">Fayl tanlash<input type="file" accept="image/*" id="bgFileInput" style="display:none;"></label>
+          <img id="bgPreview" class="admin-preview" alt="Fon">
+          <button class="admin-clear-btn" id="bgClearBtn">Tozalash</button>
+        </div>
+      </div>
+
+      <div class="admin-section">
+        <h3>🧍 O'yinchi (asosiy qahramon) rasmi</h3>
+        <div class="admin-row">
+          <label class="admin-file-label">Fayl tanlash<input type="file" accept="image/*" id="playerFileInput" style="display:none;"></label>
+          <img id="playerPreview" class="admin-preview" alt="O'yinchi">
+          <button class="admin-clear-btn" id="playerClearBtn">Tozalash</button>
+        </div>
+      </div>
+
+      <div class="admin-section">
+        <h3>🧟 Qo'shimcha dushman (zombi) ko'rinishi</h3>
+        <div class="admin-row">
+          <label class="admin-file-label">Fayl tanlash<input type="file" accept="image/*" id="zombieFileInput" style="display:none;"></label>
+          <img id="zombiePreview" class="admin-preview" alt="Dushman">
+          <button class="admin-clear-btn" id="zombieClearBtn">Tozalash</button>
+        </div>
+      </div>
+
+      <div class="admin-section">
+        <h3>🎵 Fon musiqasi</h3>
+        <div class="admin-row">
+          <label class="admin-file-label">Fayl tanlash<input type="file" accept="audio/*" id="musicFileInput" style="display:none;"></label>
+          <button class="admin-clear-btn" id="musicClearBtn">Tozalash</button>
+        </div>
+        <audio id="musicPreview" class="admin-preview-audio" controls></audio>
+      </div>
+
+      ${isOwner ? `
+      <div class="admin-section">
+        <h3>👥 Administratorlarni boshqarish</h3>
+        <div class="admin-row">
+          <input type="text" id="newAdminInput" placeholder="Telegram User ID" inputmode="numeric">
+          <button class="admin-file-label" id="addAdminBtn">Qo'shish</button>
+        </div>
+        <div id="adminListBox" style="margin-top:8px;"></div>
+        <div class="admin-note">Faqat EGASI administratorlar ro'yxatini boshqarishi mumkin.</div>
+      </div>
+      ` : ''}
+
+      <div class="admin-note">
+        Yuklangan rasmdagi yashil rang avtomatik olib tashlanadi (masalan, mashina rasmining orqasini yashil qilib bo'yasangiz, o'sha yashil qism shaffof bo'lib, qolgan qismi o'yinda ko'rinadi). Rasm — 2 MB gacha, musiqa — 4 MB gacha. Fayllar shu qurilmada saqlanadi va keyingi safar avtomatik qo'llanadi.
+      </div>
+      <div class="modal-buttons">
+        <button class="neon-btn" id="adminSaveBtn">Saqlash</button>
+        <button class="neon-btn red" id="adminCloseBtn">Yopish</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  let pending = { bg: undefined, player: undefined, zombie: undefined, music: undefined };
+
+  // Practical upload caps — localStorage is shared per-device/browser and
+  // only holds ~5-10MB total (all of it, not just this game), and base64
+  // encoding adds ~33% on top of the original file size. These limits
+  // keep uploads safely inside that budget with room to spare.
+  const MAX_IMAGE_MB = 2;
+  const MAX_AUDIO_MB = 4;
+  function tooLarge(file, maxMb){
+    return file.size > maxMb * 1024 * 1024;
+  }
+
+  function readFileAsDataURL(file, cb){
+    const reader = new FileReader();
+    reader.onload = () => cb(reader.result);
+    reader.readAsDataURL(file);
+  }
+  // reads an uploaded image, strips chroma-key green automatically, then
+  // shows the processed (transparent-green) preview
+  function handleImageUpload(file, previewEl, onProcessed){
+    if (tooLarge(file, MAX_IMAGE_MB)){
+      alert(`Rasm hajmi juda katta (${(file.size/1024/1024).toFixed(1)} MB). Iltimos, ${MAX_IMAGE_MB} MB dan kichik rasm yuklang.`);
+      return;
+    }
+    readFileAsDataURL(file, rawUrl => {
+      const img = new Image();
+      img.onload = () => {
+        chromaKeyGreen(img, (canvas, processedUrl) => {
+          previewEl.src = processedUrl;
+          previewEl.classList.add('show');
+          onProcessed(processedUrl);
+        });
+      };
+      img.src = rawUrl;
+    });
+  }
+
+  const bgPreview = overlay.querySelector('#bgPreview');
+  const playerPreview = overlay.querySelector('#playerPreview');
+  const zombiePreview = overlay.querySelector('#zombiePreview');
+  const musicPreview = overlay.querySelector('#musicPreview');
+
+  const savedBg = localStorage.getItem(ASSET_KEYS.bg);
+  if (savedBg){ bgPreview.src = savedBg; bgPreview.classList.add('show'); }
+  const savedPlayer = localStorage.getItem(ASSET_KEYS.player);
+  if (savedPlayer){ playerPreview.src = savedPlayer; playerPreview.classList.add('show'); }
+  const savedZombie = localStorage.getItem(ASSET_KEYS.zombie);
+  if (savedZombie){ zombiePreview.src = savedZombie; zombiePreview.classList.add('show'); }
+  const savedMusic = localStorage.getItem(ASSET_KEYS.music);
+  if (savedMusic){ musicPreview.src = savedMusic; musicPreview.classList.add('show'); }
+
+  if (isOwner){
+    const listBox = overlay.querySelector('#adminListBox');
+    function renderAdminList(){
+      const list = getAdminList();
+      listBox.innerHTML = '';
+      if (list.length === 0){
+        listBox.innerHTML = '<div class="admin-note" style="margin:0;">Hozircha qo\'shimcha administrator yo\'q.</div>';
+        return;
+      }
+      list.forEach(id => {
+        const row = document.createElement('div');
+        row.className = 'admin-id-row';
+        row.innerHTML = `<span>🆔 ${id}</span>`;
+        const removeBtn = document.createElement('button');
+        removeBtn.className = 'admin-clear-btn';
+        removeBtn.textContent = "O'chirish";
+        removeBtn.addEventListener('click', () => {
+          saveAdminList(getAdminList().filter(x => x !== id));
+          renderAdminList();
+        });
+        row.appendChild(removeBtn);
+        listBox.appendChild(row);
+      });
+    }
+    renderAdminList();
+
+    overlay.querySelector('#addAdminBtn').addEventListener('click', () => {
+      const input = overlay.querySelector('#newAdminInput');
+      const raw = input.value.trim();
+      if (!raw || !/^\d+$/.test(raw)){
+        alert("Iltimos, to'g'ri Telegram User ID kiriting (faqat raqamlar).");
+        return;
+      }
+      if (raw === String(OWNER_ID)){
+        alert("EGASI allaqachon to'liq huquqlarga ega.");
+        return;
+      }
+      const list = getAdminList();
+      if (!list.includes(raw)){ list.push(raw); saveAdminList(list); renderAdminList(); }
+      input.value = '';
+    });
+  }
+
+  overlay.querySelector('#bgFileInput').addEventListener('change', e => {
+    const file = e.target.files[0]; if (!file) return;
+    handleImageUpload(file, bgPreview, url => { pending.bg = url; });
+  });
+  overlay.querySelector('#playerFileInput').addEventListener('change', e => {
+    const file = e.target.files[0]; if (!file) return;
+    handleImageUpload(file, playerPreview, url => { pending.player = url; });
+  });
+  overlay.querySelector('#zombieFileInput').addEventListener('change', e => {
+    const file = e.target.files[0]; if (!file) return;
+    handleImageUpload(file, zombiePreview, url => { pending.zombie = url; });
+  });
+  overlay.querySelector('#musicFileInput').addEventListener('change', e => {
+    const file = e.target.files[0]; if (!file) return;
+    if (tooLarge(file, MAX_AUDIO_MB)){
+      alert(`Musiqa fayli juda katta (${(file.size/1024/1024).toFixed(1)} MB). Iltimos, ${MAX_AUDIO_MB} MB dan kichik fayl yuklang.`);
+      return;
+    }
+    readFileAsDataURL(file, url => {
+      pending.music = url; musicPreview.src = url; musicPreview.classList.add('show');
+    });
+  });
+
+  overlay.querySelector('#bgClearBtn').addEventListener('click', () => {
+    pending.bg = null; bgPreview.classList.remove('show'); bgPreview.src = '';
+  });
+  overlay.querySelector('#playerClearBtn').addEventListener('click', () => {
+    pending.player = null; playerPreview.classList.remove('show'); playerPreview.src = '';
+  });
+  overlay.querySelector('#zombieClearBtn').addEventListener('click', () => {
+    pending.zombie = null; zombiePreview.classList.remove('show'); zombiePreview.src = '';
+  });
+  overlay.querySelector('#musicClearBtn').addEventListener('click', () => {
+    pending.music = null; musicPreview.classList.remove('show'); musicPreview.src = '';
+  });
+
+  function closeAdminModal(){
+    overlay.classList.remove('active');
+    pending = { bg: undefined, player: undefined, zombie: undefined, music: undefined };
+  }
+  overlay.querySelector('#adminCloseBtn').addEventListener('click', closeAdminModal);
+
+  overlay.querySelector('#adminSaveBtn').addEventListener('click', () => {
+    try {
+      if (pending.bg === null){ localStorage.removeItem(ASSET_KEYS.bg); customBgImg = null; }
+      else if (pending.bg){ localStorage.setItem(ASSET_KEYS.bg, pending.bg); loadImageAsset(pending.bg, img => { customBgImg = img; }); }
+
+      if (pending.player === null){ localStorage.removeItem(ASSET_KEYS.player); customPlayerImg = null; }
+      else if (pending.player){ localStorage.setItem(ASSET_KEYS.player, pending.player); loadImageAsset(pending.player, img => { customPlayerImg = img; }); }
+
+      if (pending.zombie === null){ localStorage.removeItem(ASSET_KEYS.zombie); customZombieImg = null; }
+      else if (pending.zombie){ localStorage.setItem(ASSET_KEYS.zombie, pending.zombie); loadImageAsset(pending.zombie, img => { customZombieImg = img; }); }
+
+      if (pending.music === null){ localStorage.removeItem(ASSET_KEYS.music); bgMusicEl.removeAttribute('src'); }
+      else if (pending.music){ localStorage.setItem(ASSET_KEYS.music, pending.music); bgMusicEl.src = pending.music; }
+
+      closeAdminModal();
+    } catch (err){
+      alert("Saqlashda xatolik: fayl(lar) hajmi juda katta bo'lishi mumkin.");
+      console.error(err);
+    }
+  });
+
+  adminBtn.addEventListener('click', () => { overlay.classList.add('active'); });
+}
 
 (function bootstrap(){
   player = { x:0,y:0, radius:20, speed:230, hp:100, maxHp:100, angle:0, hitFlash:0 };
   bullets=[]; zombies=[]; particles=[]; floatTexts=[];
   score=0; coins=0; wave=1; ammo=ammoMax;
 })();
+checkTelegramAuth();
 </script>
 </body>
 </html>
