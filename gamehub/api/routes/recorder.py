@@ -40,10 +40,19 @@ _PAGE_TEMPLATE = """<!DOCTYPE html>
   #frameWrap {{
     position: absolute; top: 0; left: 0; right: 0; bottom: 84px;
     display: flex; align-items: center; justify-content: center;
-    background: #000;
+    background: #000; overflow: hidden;
   }}
+  /* The iframe's INTRINSIC size is fixed at exactly 640x360 (the same
+     resolution the final MP4 is encoded at). This makes the game's own
+     resize() logic lay out its canvas at a true 16:9 frame, so the
+     recording fills the whole 640x360 video with no black bars.
+     It is then visually enlarged with a CSS transform (scale) to stay
+     comfortably tappable on the admin's phone — the transform is purely
+     cosmetic and does not change the iframe's internal viewport size,
+     so captureStream() still records the untransformed 640x360 pixels. */
   iframe {{
-    width: 100%; height: 100%; border: 0; background: #000;
+    width: 640px; height: 360px; border: 0; background: #000;
+    transform-origin: center center; flex-shrink: 0;
   }}
   #bar {{
     position: absolute; left: 0; right: 0; bottom: 0; height: 84px;
@@ -94,6 +103,25 @@ var dotEl = document.getElementById('dot');
 var btnRecord = document.getElementById('btnRecord');
 var btnStop = document.getElementById('btnStop');
 var frame = document.getElementById('gameFrame');
+var frameWrap = document.getElementById('frameWrap');
+
+var RECORD_W = 640;
+var RECORD_H = 360;
+
+/* Scale the (fixed 640x360) iframe up visually to fill the available
+   space on the admin's phone, without changing its real internal
+   viewport — that stays exactly 640x360 so the recording is pixel-exact,
+   with no extra padding around the game. */
+function fitFrame() {{
+  var availW = frameWrap.clientWidth;
+  var availH = frameWrap.clientHeight;
+  var scale = Math.min(availW / RECORD_W, availH / RECORD_H);
+  frame.style.transform = 'scale(' + scale + ')';
+}}
+
+fitFrame();
+window.addEventListener('resize', fitFrame);
+window.addEventListener('orientationchange', fitFrame);
 
 var stream = null;
 var recorder = null;
