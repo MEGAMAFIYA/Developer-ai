@@ -79,6 +79,7 @@ from handlers.developer.modules.ai.states import (
 from handlers.developer.modules.ai import services
 from handlers.developer.modules.ai.action_log import log_action
 from services.project_provider import ProjectProviderError, get_project_provider
+from services.upload_service import mirror_runtime_write, mirror_runtime_delete
 
 logger = logging.getLogger(__name__)
 router = Router(name="dev:ai:phase5")
@@ -170,12 +171,17 @@ async def _save_game_file(
     commit_message: str,
 ) -> int:
     raw = content.encode("utf-8") if isinstance(content, str) else content
+    path = f"{_GAMES_DIR}/{html_file}"
     await get_project_provider().put_file(
-        f"{_GAMES_DIR}/{html_file}",
+        path,
         raw,
         commit_message,
         preserve_repository_root=True,
     )
+    # Mirror onto the locally-served copy too — the running server reads
+    # game files off disk, not GitHub, so without this the commit above
+    # would be real but invisible until the next Render deploy.
+    mirror_runtime_write(path, raw)
     return len(raw)
 
 
@@ -1739,6 +1745,7 @@ async def cb_asset_del_ok(
             sha=file.sha,
             preserve_repository_root=True,
         )
+        mirror_runtime_delete(file.path)  # keep the live server in sync too
 
         size = file.size
 
