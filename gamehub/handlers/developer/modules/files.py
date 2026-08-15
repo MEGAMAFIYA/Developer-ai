@@ -39,6 +39,7 @@ from handlers.developer.callbacks import (
 from handlers.developer.keyboards import back_keyboard
 from handlers.developer.modules.ai.action_log import log_action
 from services.project_provider import ProjectProviderError, get_project_provider
+from services.upload_service import mirror_runtime_write, mirror_runtime_delete
 
 logger = logging.getLogger(__name__)
 router = Router(name="dev:files")
@@ -257,6 +258,7 @@ async def cb_file_delete_ok(q: CallbackQuery, state: FSMContext) -> None:
         await get_project_provider().delete_file(
             filename, f"Delete {filename}", preserve_repository_root=True
         )
+        mirror_runtime_delete(filename)  # keep the live server in sync too
 
         # Keep the game registry in sync: hard-delete every DB record that
         # points to this HTML file, then remove any now-orphaned local image,
@@ -354,6 +356,7 @@ async def msg_file_upload(m: Message, state: FSMContext) -> None:
             f"Upload {filename}",
             preserve_repository_root=True,
         )
+        mirror_runtime_write(f"{_GAMES_DIR}/{filename}", raw)  # live immediately, not just on next deploy
         await log_action(m.from_user.id, "FILE_UPLOAD", filename,
                          f"size={len(raw)}")
 
