@@ -44,6 +44,7 @@ from handlers.developer.modules.ai.menu import ai_menu_keyboard, AI_MENU_TEXT
 from handlers.developer.modules.ai.action_log import log_action
 from services.project_provider import ProjectProviderError, get_project_provider
 from services.pdf_export import text_to_pdf_bytes
+from services.upload_service import mirror_runtime_write, mirror_runtime_delete
 
 logger = logging.getLogger(__name__)
 router = Router(name="dev:ai:file_tools")
@@ -330,6 +331,7 @@ async def cb_file_create_confirm(q: CallbackQuery, state: FSMContext) -> None:
         await get_project_provider().put_file(
             path, raw, f"Create {path}", preserve_repository_root=True
         )
+        mirror_runtime_write(path, raw)  # live immediately, not just on next deploy
         rel = path
         await q.message.edit_text(
             f"✅ Fayl yaratildi va GitHub'ga yuklandi: <code>{rel}</code>\n"
@@ -550,8 +552,9 @@ async def cb_file_edit_confirm(q: CallbackQuery, state: FSMContext) -> None:
     await q.answer()
     try:
         await get_project_provider().put_file(
-            path, raw, f"Edit {path}"
+            path, raw, f"Edit {path}", preserve_repository_root=True
         )
+        mirror_runtime_write(path, raw)  # live immediately, not just on next deploy
         rel = path
         await q.message.edit_text(
             f"✅ Fayl yangilandi va GitHub'ga yuklandi: <code>{rel}</code>\n"
@@ -631,6 +634,7 @@ async def cb_file_delete_confirm(q: CallbackQuery, state: FSMContext) -> None:
         await get_project_provider().delete_file(
             path, f"Delete {path}", preserve_repository_root=True
         )
+        mirror_runtime_delete(path)  # keep the live server in sync too
         rel    = path
         await q.message.edit_text(
             f"Fayl o'chirildi: <code>{rel}</code>\n"
