@@ -17,6 +17,7 @@ Safety rules
 
 from __future__ import annotations
 
+import base64
 import difflib
 import logging
 
@@ -25,6 +26,7 @@ from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import (
+    BufferedInputFile,
     CallbackQuery,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
@@ -36,16 +38,20 @@ from handlers.developer.modules.ai.callbacks import (
     AI_CANCEL, AI_MENU,
     AI_FILE_MANAGER,
     AI_FILE_CREATE, AI_FILE_READ, AI_FILE_EDIT, AI_FILE_DELETE,
-    AI_FILE_OK,
+    AI_FILE_OK, AI_FILE_PDF,
 )
 from handlers.developer.modules.ai.menu import ai_menu_keyboard, AI_MENU_TEXT
 from handlers.developer.modules.ai.action_log import log_action
 from services.project_provider import ProjectProviderError, get_project_provider
+from services.pdf_export import text_to_pdf_bytes
 
 logger = logging.getLogger(__name__)
 router = Router(name="dev:ai:file_tools")
 
 _TG_MAX     = 4096
+# Telegram bot API caps file downloads at 20MB; keep a safety margin under
+# the provider's own _MAX_FILE_BYTES (8MB) for GitHub Contents API writes.
+_MAX_UPLOAD_BYTES = 8 * 1024 * 1024
 
 
 # ── FSM States ────────────────────────────────────────────────────────────────
@@ -169,6 +175,53 @@ def _send_chunks(text: str, parse_mode: str | None = None):
     return [text[i: i + _TG_MAX] for i in range(0, max(len(text), 1), _TG_MAX)]
 
 
+async def _download_document(m: Message) -> tuple[bytes, str] | None:
+    """If the message carries a Telegram document, download it fully.
+
+    Returns (raw_bytes, original_filename) or None if there's no document
+    attached (the caller should then fall back to m.text). Works for ANY
+    file type — PDF, HTML, .py, images, zips, etc. — since Telegram just
+    hands back the raw bytes regardless of content.
+    """
+    doc = m.document
+    if doc is None:
+        return None
+    if doc.file_size and doc.file_size > _MAX_UPLOAD_BYTES:
+        raise ProjectProviderError(
+            f"Fayl juda katta ({doc.file_size} bayt). "
+            f"Chegara: {_MAX_UPLOAD_BYTES} bayt."
+        )
+    buf = await m.bot.download(doc, destination=None)
+    raw = buf.read() if hasattr(buf, "read") else bytes(buf)
+    return raw, (doc.file_name or "file")
+
+
+def _try_decode_text(raw: bytes) -> str | None:
+    """Return decoded text if `raw` is valid UTF-8, else None (binary)."""
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+
+
+async def _extract_incoming_content(m: Message) -> tuple[bytes, str | None, str] | None:
+    """Read the content to write from an incoming message.
+
+    Accepts either a plain text message (typed/pasted code) or an
+    uploaded Telegram document of ANY type (.pdf, .html, .py, images, ...).
+    Returns (raw_bytes, decoded_text_or_None, source_label), or None if
+    the message has neither text nor a document.
+    """
+    doc_result = await _download_document(m)
+    if doc_result is not None:
+        raw, filename = doc_result
+        return raw, _try_decode_text(raw), f"yuklangan fayl ({filename})"
+    if m.text:
+        raw = m.text.encode("utf-8")
+        return raw, m.text, "yozilgan matn"
+    return None
+
+
 # ════════════════════════════════════════════════════════════════════════════
 # 📂 Fayl yaratish
 # ════════════════════════════════════════════════════════════════════════════
@@ -220,20 +273,42 @@ async def msg_file_create_path(m: Message, state: FSMContext) -> None:
 async def msg_file_create_content(m: Message, state: FSMContext) -> None:
     if not await _guard_msg(m):
         return
-    content = m.text or ""
-    data    = await state.get_data()
-    path    = data["path"]
-    lines   = content.splitlines()
-    preview = "\n".join(lines[:30])
-    if len(lines) > 30:
-        preview += f"\n... +{len(lines) - 30} qator"
-    await state.update_data(content=content)
+    data = await state.get_data()
+    path = data["path"]
+    try:
+        extracted = await _extract_incoming_content(m)
+    except ProjectProviderError as exc:
+        await m.answer(f"⚠️ {exc}", reply_markup=_cancel_kb())
+        return
+    if extracted is None:
+        await m.answer(
+            "⚠️ Matn yozing yoki istalgan turdagi faylni (pdf, html, .py, rasm...) "
+            "hujjat sifatida yuboring.",
+            reply_markup=_cancel_kb(),
+        )
+        return
+    raw, text, source = extracted
+
+    await state.update_data(content_b64=base64.b64encode(raw).decode("ascii"))
     await state.set_state(FileCreateStates.confirming)
+
+    if text is not None:
+        lines = text.splitlines()
+        preview = "\n".join(lines[:30])
+        if len(lines) > 30:
+            preview += f"\n... +{len(lines) - 30} qator"
+        body = (
+            f"Qatorlar: {len(lines)}\n\n"
+            f"<pre>{preview[:800]}</pre>"
+        )
+    else:
+        body = f"Binar fayl — {len(raw)} bayt. (Matn ko'rinishida ko'rsatib bo'lmaydi.)"
+
     await m.answer(
         f"<b>Fayl yaratish — preview</b>\n\n"
         f"Fayl: <code>{path}</code>\n"
-        f"Qatorlar: {len(lines)}\n\n"
-        f"<pre>{preview[:800]}</pre>\n\n"
+        f"Manba: {source}\n\n"
+        f"{body}\n\n"
         "Tasdiqlaysizmi?",
         reply_markup=_confirm_kb(), parse_mode="HTML",
     )
@@ -248,20 +323,20 @@ async def cb_file_create_confirm(q: CallbackQuery, state: FSMContext) -> None:
         return
     data    = await state.get_data()
     path    = data["path"]
-    content = data["content"]
+    raw     = base64.b64decode(data["content_b64"])
     await state.clear()
     await q.answer()
     try:
         await get_project_provider().put_file(
-            path, content, f"Create {path}", preserve_repository_root=True
+            path, raw, f"Create {path}", preserve_repository_root=True
         )
         rel = path
         await q.message.edit_text(
-            f"Fayl yaratildi: <code>{rel}</code>\n"
-            f"Qatorlar: {len(content.splitlines())}",
+            f"✅ Fayl yaratildi va GitHub'ga yuklandi: <code>{rel}</code>\n"
+            f"Hajm: {len(raw)} bayt",
             reply_markup=_back_kb(), parse_mode="HTML",
         )
-        await log_action(q.from_user.id, "FILE_CREATE", str(rel), "ok")
+        await log_action(q.from_user.id, "FILE_CREATE", str(rel), "github_commit")
     except Exception as exc:
         await q.message.edit_text(f"Xato: <code>{exc}</code>",
                                   reply_markup=_back_kb(), parse_mode="HTML")
@@ -286,6 +361,13 @@ async def cb_file_read_start(q: CallbackQuery, state: FSMContext) -> None:
     )
 
 
+def _read_result_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📑 PDF qilib yuklash", callback_data=AI_FILE_PDF)],
+        [InlineKeyboardButton(text="⬅️ AI Menyuga qaytish", callback_data=AI_MENU)],
+    ])
+
+
 @router.message(FileReadStates.waiting_path)
 async def msg_file_read(m: Message, state: FSMContext) -> None:
     if not await _guard_msg(m):
@@ -306,18 +388,50 @@ async def msg_file_read(m: Message, state: FSMContext) -> None:
             path, preserve_repository_root=True
         )).content
         rel     = path
+        # Kept (without an active FSM state) purely so the "PDF qilib
+        # yuklash" button below knows which file to export afterwards.
+        await state.update_data(pdf_path=rel)
         header  = (f"<b>Fayl:</b> <code>{rel}</code>\n"
                    f"<b>Hajm:</b> {len(content)} bayt | "
                    f"{len(content.splitlines())} qator\n\n")
         chunks  = _send_chunks(content)
         for i, chunk in enumerate(chunks):
-            kb = _back_kb() if i == len(chunks) - 1 else None
+            kb = _read_result_kb() if i == len(chunks) - 1 else None
             text = (header if i == 0 else "") + f"<pre>{chunk}</pre>"
             await m.answer(text, reply_markup=kb, parse_mode="HTML")
         await log_action(m.from_user.id, "FILE_READ", str(rel), "ok")
     except Exception as exc:
         await m.answer(f"O'qishda xato: <code>{exc}</code>",
                        reply_markup=_back_kb(), parse_mode="HTML")
+
+
+@router.callback_query(lambda c: c.data == AI_FILE_PDF)
+async def cb_file_pdf_export(q: CallbackQuery, state: FSMContext) -> None:
+    if not await _guard_cb(q):
+        return
+    data = await state.get_data()
+    path = data.get("pdf_path")
+    if not path:
+        await q.answer("Avval «Faylni o'qish» orqali bir faylni oching.", show_alert=True)
+        return
+    await q.answer("PDF tayyorlanmoqda...")
+    try:
+        content = (await get_project_provider().get_file(
+            path, preserve_repository_root=True, force=True
+        )).content
+        pdf_bytes = text_to_pdf_bytes(content, title=path)
+        filename = path.rsplit("/", 1)[-1].rsplit(".", 1)[0] + ".pdf"
+        await q.message.answer_document(
+            BufferedInputFile(pdf_bytes, filename=filename),
+            caption=f"📑 <code>{path}</code>",
+            parse_mode="HTML",
+            reply_markup=_back_kb(),
+        )
+        await log_action(q.from_user.id, "FILE_PDF_EXPORT", path, "ok")
+    except Exception as exc:
+        await q.message.answer(f"PDF yaratishda xato: <code>{exc}</code>",
+                               reply_markup=_back_kb(), parse_mode="HTML")
+        await log_action(q.from_user.id, "FILE_PDF_EXPORT", path, f"error:{exc}")
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -378,24 +492,45 @@ async def msg_file_edit_path(m: Message, state: FSMContext) -> None:
 async def msg_file_edit_content(m: Message, state: FSMContext) -> None:
     if not await _guard_msg(m):
         return
-    new_content = m.text or ""
     data        = await state.get_data()
     path        = data["path"]
     old_content = data["old_content"]
 
-    diff = _diff_text(old_content, new_content, path.rsplit("/", 1)[-1])
-    diff_preview = diff[:1200]
-    if len(diff) > 1200:
-        diff_preview += "\n..."
+    try:
+        extracted = await _extract_incoming_content(m)
+    except ProjectProviderError as exc:
+        await m.answer(f"⚠️ {exc}", reply_markup=_cancel_kb())
+        return
+    if extracted is None:
+        await m.answer(
+            "⚠️ Yangi matn yozing yoki istalgan turdagi faylni (pdf, html, .py, rasm...) "
+            "hujjat sifatida yuboring.",
+            reply_markup=_cancel_kb(),
+        )
+        return
+    raw, new_text, source = extracted
 
-    await state.update_data(new_content=new_content)
+    await state.update_data(content_b64=base64.b64encode(raw).decode("ascii"))
     await state.set_state(FileEditStates.confirming)
+
+    if new_text is not None:
+        diff = _diff_text(old_content, new_text, path.rsplit("/", 1)[-1])
+        diff_preview = diff[:1200]
+        if len(diff) > 1200:
+            diff_preview += "\n..."
+        body = (
+            f"Eski: {len(old_content.splitlines())} qator  "
+            f"Yangi: {len(new_text.splitlines())} qator\n\n"
+            f"<pre>{diff_preview}</pre>"
+        )
+    else:
+        body = f"Binar fayl bilan almashtiriladi — {len(raw)} bayt. (Diff ko'rsatib bo'lmaydi.)"
+
     await m.answer(
-        f"<b>Faylni tahrirlash — diff</b>\n\n"
+        f"<b>Faylni tahrirlash — preview</b>\n\n"
         f"Fayl: <code>{path}</code>\n"
-        f"Eski: {len(old_content.splitlines())} qator  "
-        f"Yangi: {len(new_content.splitlines())} qator\n\n"
-        f"<pre>{diff_preview}</pre>\n\n"
+        f"Manba: {source}\n\n"
+        f"{body}\n\n"
         "GitHub commit yaratiladi. Tasdiqlaysizmi?",
         reply_markup=_confirm_kb(), parse_mode="HTML",
     )
@@ -408,19 +543,19 @@ async def msg_file_edit_content(m: Message, state: FSMContext) -> None:
 async def cb_file_edit_confirm(q: CallbackQuery, state: FSMContext) -> None:
     if not await _guard_cb(q):
         return
-    data        = await state.get_data()
-    path        = data["path"]
-    new_content = data["new_content"]
+    data = await state.get_data()
+    path = data["path"]
+    raw  = base64.b64decode(data["content_b64"])
     await state.clear()
     await q.answer()
     try:
         await get_project_provider().put_file(
-            path, new_content, f"Edit {path}"
+            path, raw, f"Edit {path}"
         )
         rel = path
         await q.message.edit_text(
-            f"Fayl yangilandi: <code>{rel}</code>\n"
-            "GitHub tarixida oldingi versiya saqlandi.",
+            f"✅ Fayl yangilandi va GitHub'ga yuklandi: <code>{rel}</code>\n"
+            f"Hajm: {len(raw)} bayt. Oldingi versiya GitHub tarixida saqlandi.",
             reply_markup=_back_kb(), parse_mode="HTML",
         )
         await log_action(q.from_user.id, "FILE_EDIT", str(rel), "github_commit")
