@@ -6,3 +6,4 @@ asyncpg==0.30.0
 python-dotenv==1.0.1
 pydantic-settings==2.6.1
 aiofiles==24.1.0
+reportlab==4.2.5
