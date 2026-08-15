@@ -414,10 +414,25 @@ class GitHubProjectProvider:
         await self.clear_cache()
         return json.loads(body)
 
-    async def rename_file(self, old_path: str, new_path: str, message: str) -> None:
-        old = await self.get_file(old_path, force=True)
-        await self.put_file(new_path, old.content, message)
-        await self.delete_file(old.path, message, sha=old.sha)
+    async def rename_file(
+        self,
+        old_path: str,
+        new_path: str,
+        message: str,
+        *,
+        preserve_repository_root: bool = False,
+    ) -> None:
+        old = await self.get_file(
+            old_path, force=True, preserve_repository_root=preserve_repository_root
+        )
+        await self.put_file(
+            new_path, old.content, message,
+            preserve_repository_root=preserve_repository_root,
+        )
+        await self.delete_file(
+            old.path, message, sha=old.sha,
+            preserve_repository_root=True,  # old.path is already the real path
+        )
 
     async def search_name(self, query: str, limit: int = 40) -> list[str]:
         q = query.casefold()
@@ -439,7 +454,12 @@ class GitHubProjectProvider:
             if extensions and posixpath.splitext(entry.path)[1].lower() not in extensions:
                 continue
             try:
-                file = await self.get_file(entry.path)
+                # entry.path is already the true repo path returned by
+                # tree() (e.g. "gamehub/webapp/games/x.html") — it must
+                # NOT be re-normalized/stripped, or files under gamehub/
+                # (i.e. virtually the whole live project) silently 404
+                # and get skipped here.
+                file = await self.get_file(entry.path, preserve_repository_root=True)
             except (FileNotFoundError, ProjectProviderError):
                 continue
             for line_number, line in enumerate(file.content.splitlines(), 1):
@@ -462,7 +482,9 @@ class GitHubProjectProvider:
             if entry.kind != "file":
                 continue
             try:
-                file = await self.get_file(entry.path)
+                # See note in search_text() above — entry.path already IS
+                # the real repo path; preserve it as-is.
+                file = await self.get_file(entry.path, preserve_repository_root=True)
             except (FileNotFoundError, ProjectProviderError):
                 continue
             for line_number, line in enumerate(file.content.splitlines(), 1):
@@ -479,7 +501,12 @@ class GitHubProjectProvider:
                 if entry.kind != "file":
                     continue
                 try:
-                    raw, _ = await self.get_file_bytes(entry.path)
+                    # entry.path already IS the real repo path (see notes
+                    # above) — without preserve_repository_root=True here,
+                    # every file under gamehub/ (i.e. almost the entire
+                    # project) would silently fail to fetch and be left
+                    # out of the backup archive.
+                    raw, _ = await self.get_file_bytes(entry.path, preserve_repository_root=True)
                 except (FileNotFoundError, ProjectProviderError):
                     continue
                 output.writestr(entry.path, raw)
