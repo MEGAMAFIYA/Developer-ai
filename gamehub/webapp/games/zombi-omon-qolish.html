@@ -274,7 +274,7 @@
 
   <div id="screen-menu" class="screen active">
     <h1 class="title neon-text">ZOMBI OMON QOLISH</h1>
-    <div class="subtitle">TO'LQINLARGA BARDOSH BERING VA HAYOT QOLING</div>
+    <div class="subtitle">ZOMBILARGA BARDOSH BERING VA HAYOT QOLING</div>
     <div class="menu-buttons">
       <button class="neon-btn" id="btn-start">O'yinni boshlash</button>
       <button class="neon-btn blue" id="btn-highscore">Eng yaxshi natija</button>
@@ -289,7 +289,7 @@
     <div id="hud">
       <div class="hud-top">
         <div class="hp-bar-container"><div id="hpBar" class="hp-bar"></div><span id="hpText">100/100</span></div>
-        <div class="wave-info">To'lqin: <span id="waveNum">1</span></div>
+        <div class="wave-info">O'ldirilgan: <span id="waveNum">0</span></div>
         <div class="score-info">Ochko: <span id="scoreNum">0</span></div>
         <div class="coin-info">🪙 <span id="coinNum">0</span></div>
       </div>
@@ -393,7 +393,7 @@
   <div id="overlay-gameover" class="overlay">
     <div class="modal">
       <h2 id="gameOverTitle">SIZ MAG'LUB BO'LDINGIZ</h2>
-      <div class="stat-line"><span>Yetgan to'lqin:</span><span id="finalWave">1</span></div>
+      <div class="stat-line"><span>O'ldirilgan zombilar:</span><span id="finalWave">0</span></div>
       <div class="stat-line"><span>Ochko:</span><span id="finalScore">0</span></div>
       <div class="stat-line"><span>Rekord:</span><span id="finalBest">0</span></div>
       <div class="modal-buttons">
@@ -461,10 +461,11 @@ function isAdminId(id){
 
 /* Admin-customizable assets (persisted in localStorage as processed,
    green-removed PNG data URLs — see chromaKeyGreen below) */
-const ASSET_KEYS = { bg: 'zb_bg_image', player: 'zb_player_image', zombie: 'zb_zombie_image', music: 'zb_music' };
+const ASSET_KEYS = { bg: 'zb_bg_image', player: 'zb_player_image', zombie: 'zb_zombie_image', boss: 'zb_boss_image', music: 'zb_music' };
 let customBgImg = null;      // Image, replaces the neon grid background when set
 let customPlayerImg = null;  // Image, replaces the procedural player circle when set
 let customZombieImg = null;  // Image, replaces the procedural zombie circle when set
+let customBossImg = null;    // Image, replaces the procedural boss look when set
 const bgMusicEl = document.getElementById('bgMusic');
 
 /* Automatically removes chroma-key green from an uploaded picture (so if
@@ -510,6 +511,8 @@ function loadSavedAssets(){
     if (pl){ loadImageAsset(pl, img => { customPlayerImg = img; }); }
     const zb = localStorage.getItem(ASSET_KEYS.zombie);
     if (zb){ loadImageAsset(zb, img => { customZombieImg = img; }); }
+    const boss = localStorage.getItem(ASSET_KEYS.boss);
+    if (boss){ loadImageAsset(boss, img => { customBossImg = img; }); }
     const music = localStorage.getItem(ASSET_KEYS.music);
     if (music){ bgMusicEl.src = music; }
   } catch (e) {
@@ -560,13 +563,105 @@ let gameState = 'menu'; // menu | playing | paused | shop | gameover
 let lastFrameTime = 0;
 
 let player, bullets, zombies, particles, floatTexts;
-let score, coins, wave;
-let waveInProgress, zombiesRemainingToSpawn, spawnTimer, spawnInterval;
-let waveBreakTimer = 0;
+let score, coins;
+let survivalTime = 0, zombieSpawnTimer = 0;
+let totalKills = 0, bossCount = 0, nextBossThreshold = 50;
 let ammo, ammoMax = 10;
 let reloading = false, reloadTimer = 0;
 const RELOAD_TIME = 1.5;
 let lastShotTime = -999;
+
+/* =========================================================================
+   WORLD MAP — 4x bigger than the screen, with grass + roads (walkable)
+   and trees / houses / rubble+burnt cars (blocking obstacles). Player and
+   zombies can only move across grass and roads.
+   ========================================================================= */
+const WORLD_W = 3200, WORLD_H = 2400; // ~4x the area of a typical single-screen map
+const ROAD_WIDTH = 100;
+let roadsH = [], roadsV = [], obstacles = [];
+const camera = { x:0, y:0 };
+
+function isOnRoad(x, y, pad){
+  pad = pad || 0;
+  for(const ry of roadsH){ if(Math.abs(y-ry) < ROAD_WIDTH/2 + pad) return true; }
+  for(const rx of roadsV){ if(Math.abs(x-rx) < ROAD_WIDTH/2 + pad) return true; }
+  return false;
+}
+
+function generateWorld(){
+  roadsH = []; roadsV = []; obstacles = [];
+  for(let y=300; y<WORLD_H-200; y+=520) roadsH.push(y + (Math.random()*40-20));
+  for(let x=300; x<WORLD_W-200; x+=520) roadsV.push(x + (Math.random()*40-20));
+
+  const cx = WORLD_W/2, cy = WORLD_H/2;
+  const types = ['tree','tree','tree','house','rubble','car'];
+  let attempts = 0;
+  while(obstacles.length < 130 && attempts < 3000){
+    attempts++;
+    const x = 80 + Math.random()*(WORLD_W-160);
+    const y = 80 + Math.random()*(WORLD_H-160);
+    if(Math.hypot(x-cx,y-cy) < 260) continue; // keep spawn area clear
+    if(isOnRoad(x,y,40)) continue;
+
+    const type = types[Math.floor(Math.random()*types.length)];
+    let obs;
+    if(type==='tree'){
+      obs = { type:'tree', x, y, r: 14+Math.random()*8 };
+    } else if(type==='house'){
+      obs = { type:'house', x, y, w: 90+Math.random()*40, h: 70+Math.random()*30 };
+    } else if(type==='rubble'){
+      obs = { type:'rubble', x, y, w: 50+Math.random()*30, h: 40+Math.random()*24 };
+    } else {
+      obs = { type:'car', x, y, w: 62, h: 34, angle: Math.random()*Math.PI*2 };
+    }
+    // keep some spacing from other obstacles so nothing overlaps badly
+    const halfSize = obs.r || Math.max(obs.w,obs.h)/2;
+    let tooClose = false;
+    for(const o of obstacles){
+      const oh = o.r || Math.max(o.w,o.h)/2;
+      if(Math.hypot(x-o.x,y-o.y) < halfSize+oh+18){ tooClose = true; break; }
+    }
+    if(tooClose) continue;
+    obstacles.push(obs);
+  }
+}
+
+// true if a circle at (x,y) with the given radius would overlap a blocking obstacle
+function collidesObstacle(x, y, radius){
+  for(const o of obstacles){
+    if(o.type === 'tree'){
+      const dx=x-o.x, dy=y-o.y;
+      if(dx*dx+dy*dy < (radius+o.r)*(radius+o.r)) return true;
+    } else {
+      const hw = o.w/2 + radius, hh = o.h/2 + radius;
+      if(Math.abs(x-o.x) < hw && Math.abs(y-o.y) < hh) return true;
+    }
+  }
+  return false;
+}
+
+// moves an {x,y,radius} entity by (dx,dy), resolving each axis separately so
+// it slides along obstacles/world edges instead of just stopping dead
+// moves an {x,y,radius} entity by (dx,dy), resolving each axis separately so
+// it slides along obstacles/world edges instead of just stopping dead.
+// Clamping (rather than rejecting) the target position also lets zombies
+// that spawn just outside the world bounds actually walk in, instead of
+// getting stuck forever right at the edge.
+function tryMove(entity, dx, dy){
+  const nx = Math.max(entity.radius, Math.min(WORLD_W-entity.radius, entity.x + dx));
+  if(!collidesObstacle(nx, entity.y, entity.radius)){
+    entity.x = nx;
+  }
+  const ny = Math.max(entity.radius, Math.min(WORLD_H-entity.radius, entity.y + dy));
+  if(!collidesObstacle(entity.x, ny, entity.radius)){
+    entity.y = ny;
+  }
+}
+
+function updateCamera(){
+  camera.x = WORLD_W <= W ? -(WORLD_W-W)/2 : Math.max(0, Math.min(WORLD_W-W, player.x - W/2));
+  camera.y = WORLD_H <= H ? -(WORLD_H-H)/2 : Math.max(0, Math.min(WORLD_H-H, player.y - H/2));
+}
 
 let upgrades = { damageLevel:1, rateLevel:1 };
 const BASE_DAMAGE = 26, DAMAGE_PER_LEVEL = 9;
@@ -577,51 +672,86 @@ let shootHeld = false;
 const joystick = { active:false, dx:0, dy:0, touchId:null };
 
 function initGame(){
-  player = { x:W/2, y:H/2, radius:20, speed:230, hp:100, maxHp:100, angle:0, hitFlash:0 };
+  generateWorld();
+  player = { x:WORLD_W/2, y:WORLD_H/2, radius:20, speed:230, hp:100, maxHp:100, angle:0, hitFlash:0 };
+  updateCamera();
   bullets = [];
   zombies = [];
   particles = [];
   floatTexts = [];
-  score = 0; coins = 0; wave = 0;
+  score = 0; coins = 0;
+  survivalTime = 0; zombieSpawnTimer = 0;
+  totalKills = 0; bossCount = 0; nextBossThreshold = 50;
   ammo = ammoMax;
   reloading = false; reloadTimer = 0;
   upgrades = { damageLevel:1, rateLevel:1 };
-  waveInProgress = false;
-  waveBreakTimer = 0.6;
+  // start with 10 zombies already on the map
+  for(let i=0;i<10;i++) spawnZombie();
   updateHUD();
 }
 
-function startNextWave(){
-  wave++;
-  zombiesRemainingToSpawn = 4 + wave * 2;
-  spawnTimer = 0;
-  spawnInterval = Math.max(0.35, 1.1 - wave * 0.04);
-  waveInProgress = true;
-  sndWave();
-  addFloatText(W/2, H/2 - 60, "TO'LQIN " + wave, '#00ff9d', 1.6, 22);
+/* Target number of ordinary zombies alive at once: starts at 10, and
+   gains +1 every 10 seconds survived (10s -> 11, 30s -> 13, ...). Whenever
+   a zombie dies it's counted out of this total, so the very next check
+   spawns a replacement — keeping the pressure constant and growing. */
+function targetConcurrentZombies(){
+  return 10 + Math.floor(survivalTime/10);
 }
 
 function spawnZombie(){
+  // zombies spawn from any side of the whole (4x bigger) map
   const side = Math.floor(Math.random()*4);
   let x,y;
-  if(side===0){ x=-40; y=Math.random()*H; }
-  else if(side===1){ x=W+40; y=Math.random()*H; }
-  else if(side===2){ x=Math.random()*W; y=-40; }
-  else { x=Math.random()*W; y=H+40; }
+  const margin = 60;
+  if(side===0){ x=-margin; y=Math.random()*WORLD_H; }
+  else if(side===1){ x=WORLD_W+margin; y=Math.random()*WORLD_H; }
+  else if(side===2){ x=Math.random()*WORLD_W; y=-margin; }
+  else { x=Math.random()*WORLD_W; y=WORLD_H+margin; }
 
-  const isFast = wave >= 3 && Math.random() < 0.25;
-  const baseHp = 42 + wave * 9;
+  const isFast = Math.random() < 0.2;
+  const baseHp = 55;
   zombies.push({
+    type:'normal',
     x, y,
     radius: isFast ? 16 : 20,
-    speed: isFast ? (95 + wave*2.5) : (55 + wave*3),
+    speed: isFast ? 100 : 60,
     hp: isFast ? baseHp*0.55 : baseHp,
     maxHp: isFast ? baseHp*0.55 : baseHp,
-    dmg: 6 + wave*0.6,
+    dmg: 8,
     attackCooldown: 0,
     isFast,
     hitFlash:0
   });
+}
+
+/* Boss zombies: first one at 50 total kills, next at 150 (50+100), then
+   every +50 kills after that. Each boss is 2x as strong (hp & damage) as
+   the one before it. */
+const BASE_BOSS_HP = 900, BASE_BOSS_DMG = 34, BASE_BOSS_SPEED = 42, BASE_BOSS_RADIUS = 44;
+function spawnBoss(){
+  const side = Math.floor(Math.random()*4);
+  let x,y;
+  const margin = 80;
+  if(side===0){ x=-margin; y=Math.random()*WORLD_H; }
+  else if(side===1){ x=WORLD_W+margin; y=Math.random()*WORLD_H; }
+  else if(side===2){ x=Math.random()*WORLD_W; y=-margin; }
+  else { x=Math.random()*WORLD_W; y=WORLD_H+margin; }
+
+  const mult = Math.pow(2, bossCount); // boss #1 = 1x, #2 = 2x, #3 = 4x, ...
+  const hp = BASE_BOSS_HP * mult;
+  zombies.push({
+    type:'boss',
+    x, y,
+    radius: BASE_BOSS_RADIUS,
+    speed: BASE_BOSS_SPEED,
+    hp, maxHp: hp,
+    dmg: BASE_BOSS_DMG * mult,
+    attackCooldown: 0,
+    isFast:false,
+    hitFlash:0
+  });
+  sndWave();
+  addFloatText(player.x, player.y - 70, '☠️ BOSS KELDI!', '#ff2e63', 2.0, 24);
 }
 
 function addParticles(x,y,color,count=10){
@@ -641,7 +771,7 @@ function addFloatText(x,y,text,color,life=1,size=14){
 function updateHUD(){
   document.getElementById('hpBar').style.width = Math.max(0,(player.hp/player.maxHp*100)) + '%';
   document.getElementById('hpText').textContent = Math.max(0,Math.round(player.hp)) + '/' + player.maxHp;
-  document.getElementById('waveNum').textContent = wave;
+  document.getElementById('waveNum').textContent = totalKills;
   document.getElementById('scoreNum').textContent = score;
   document.getElementById('coinNum').textContent = coins;
   document.getElementById('ammoNum').textContent = ammo;
@@ -704,13 +834,22 @@ function startReload(){
 }
 
 function killZombie(z, index){
-  addParticles(z.x, z.y, '#ffe600', 14);
-  const earnedCoins = 1 + Math.floor(Math.random()*3) + Math.floor(wave/3);
+  addParticles(z.x, z.y, z.type==='boss' ? '#ff2e63' : '#ffe600', z.type==='boss' ? 30 : 14);
+  const earnedCoins = z.type==='boss' ? (40 + bossCount*20) : (1 + Math.floor(Math.random()*3));
   coins += earnedCoins;
-  score += 10 * wave;
+  score += z.type==='boss' ? 500*(bossCount) : 10;
   addFloatText(z.x, z.y-10, '+'+earnedCoins+' 🪙', '#ffe600', 0.9, 14);
   sndZombieDie();
   zombies.splice(index,1);
+
+  if(z.type !== 'boss'){
+    totalKills++;
+    if(totalKills >= nextBossThreshold){
+      spawnBoss();
+      bossCount++;
+      nextBossThreshold += (bossCount===1 ? 100 : 50);
+    }
+  }
   updateHUD();
 }
 
@@ -738,13 +877,11 @@ function update(dt){
   const len = Math.hypot(mvx,mvy);
   if(len > 0.05){
     mvx/=len; mvy/=len;
-    player.x += mvx*player.speed*dt;
-    player.y += mvy*player.speed*dt;
+    tryMove(player, mvx*player.speed*dt, mvy*player.speed*dt);
     player.angle = Math.atan2(mvy,mvx);
   }
-  player.x = Math.max(player.radius, Math.min(W-player.radius, player.x));
-  player.y = Math.max(player.radius, Math.min(H-player.radius, player.y));
   if(player.hitFlash>0) player.hitFlash -= dt;
+  updateCamera();
 
   if(reloading){
     reloadTimer += dt;
@@ -757,33 +894,27 @@ function update(dt){
     tryShoot(performance.now()/1000);
   }
 
-  if(!waveInProgress){
-    waveBreakTimer -= dt;
-    if(waveBreakTimer <= 0) startNextWave();
-  } else {
-    if(zombiesRemainingToSpawn > 0){
-      spawnTimer -= dt;
-      if(spawnTimer <= 0){
-        spawnZombie();
-        zombiesRemainingToSpawn--;
-        spawnTimer = spawnInterval;
-      }
-    }
-    if(zombiesRemainingToSpawn <= 0 && zombies.length === 0){
-      waveInProgress = false;
-      waveBreakTimer = 2.2;
-      const bonus = 15 + wave*3;
-      coins += bonus;
-      score += 25*wave;
-      addFloatText(W/2, H/2-20, "TO'LQIN TUGADI! +"+bonus+" 🪙", '#00d9ff', 1.8, 20);
-      updateHUD();
+  // difficulty now runs purely on zombie counts/timers — the old
+  // level/"to'lqin" system has been removed
+  survivalTime += dt;
+
+  // keep the number of ordinary zombies alive topped up to the current
+  // target (10 to start, +1 every 10s) — a kill or a rising target both
+  // get refilled here, so replacements appear immediately
+  const aliveNormal = zombies.reduce((n,z)=> n + (z.type!=='boss' ? 1 : 0), 0);
+  const target = targetConcurrentZombies();
+  if(aliveNormal < target){
+    zombieSpawnTimer -= dt;
+    if(zombieSpawnTimer <= 0){
+      spawnZombie();
+      zombieSpawnTimer = 0.35; // small stagger so replacements don't all pop in one frame
     }
   }
 
   for(let i=bullets.length-1;i>=0;i--){
     const b = bullets[i];
     b.x += b.vx*dt; b.y += b.vy*dt; b.life -= dt;
-    if(b.life<=0 || b.x<-20||b.x>W+20||b.y<-20||b.y>H+20){ bullets.splice(i,1); continue; }
+    if(b.life<=0 || b.x<-20||b.x>WORLD_W+20||b.y<-20||b.y>WORLD_H+20){ bullets.splice(i,1); continue; }
     for(let j=zombies.length-1;j>=0;j--){
       const z = zombies[j];
       const dx=z.x-b.x, dy=z.y-b.y;
@@ -803,8 +934,7 @@ function update(dt){
     const z = zombies[i];
     const dx = player.x - z.x, dy = player.y - z.y;
     const d = Math.hypot(dx,dy) || 1;
-    z.x += (dx/d)*z.speed*dt;
-    z.y += (dy/d)*z.speed*dt;
+    tryMove(z, (dx/d)*z.speed*dt, (dy/d)*z.speed*dt);
     if(z.hitFlash>0) z.hitFlash -= dt;
     if(z.attackCooldown>0) z.attackCooldown -= dt;
 
@@ -828,28 +958,159 @@ function update(dt){
   }
 }
 
-function drawGrid(){
+let customBgPattern = null, customBgPatternSrc = null;
+
+function drawWorldBackground(){
   if(customBgImg){
-    drawCustomBackground();
+    if(customBgPatternSrc !== customBgImg.src){
+      customBgPattern = ctx.createPattern(customBgImg, 'repeat');
+      customBgPatternSrc = customBgImg.src;
+    }
+    ctx.fillStyle = customBgPattern;
+    ctx.fillRect(camera.x, camera.y, W, H);
     return;
   }
+  // grassy field, only the currently visible strip is filled/textured
+  const g = ctx.createLinearGradient(0,camera.y,0,camera.y+H);
+  g.addColorStop(0,'#0d2b16'); g.addColorStop(1,'#123a1c');
+  ctx.fillStyle = g;
+  ctx.fillRect(camera.x, camera.y, W, H);
+
+  // deterministic grass tufts (hashed from world position so they don't
+  // flicker or re-randomize every frame)
+  ctx.strokeStyle = 'rgba(0,255,157,0.07)';
+  ctx.lineWidth = 1.4;
+  const step = 44;
+  const startX = Math.floor(camera.x/step)*step, startY = Math.floor(camera.y/step)*step;
+  for(let x=startX; x<camera.x+W+step; x+=step){
+    for(let y=startY; y<camera.y+H+step; y+=step){
+      const h = Math.abs(Math.sin(x*12.9898 + y*78.233) * 43758.5453) % 1;
+      if(h > 0.55){
+        ctx.beginPath();
+        ctx.moveTo(x, y+5);
+        ctx.quadraticCurveTo(x+4, y-4, x+8, y+5);
+        ctx.stroke();
+      }
+    }
+  }
+}
+
+function drawRoads(){
+  ctx.fillStyle = '#2b2b34';
+  roadsH.forEach(ry => ctx.fillRect(0, ry-ROAD_WIDTH/2, WORLD_W, ROAD_WIDTH));
+  roadsV.forEach(rx => ctx.fillRect(rx-ROAD_WIDTH/2, 0, ROAD_WIDTH, WORLD_H));
+  ctx.strokeStyle = 'rgba(255,230,0,0.3)';
+  ctx.lineWidth = 3;
+  ctx.setLineDash([22,18]);
+  roadsH.forEach(ry => { ctx.beginPath(); ctx.moveTo(0,ry); ctx.lineTo(WORLD_W,ry); ctx.stroke(); });
+  roadsV.forEach(rx => { ctx.beginPath(); ctx.moveTo(rx,0); ctx.lineTo(rx,WORLD_H); ctx.stroke(); });
+  ctx.setLineDash([]);
+}
+
+function drawTreeObstacle(o){
   ctx.save();
-  ctx.strokeStyle = 'rgba(0,255,157,0.06)';
-  ctx.lineWidth = 1;
-  const step = 50;
-  for(let x=0;x<W;x+=step){ ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,H); ctx.stroke(); }
-  for(let y=0;y<H;y+=step){ ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke(); }
+  ctx.translate(o.x,o.y);
+  ctx.fillStyle = 'rgba(0,0,0,0.35)';
+  ctx.beginPath(); ctx.ellipse(2,o.r*0.7,o.r*0.9,o.r*0.35,0,0,6.283); ctx.fill();
+  ctx.fillStyle = '#5b3a20';
+  ctx.fillRect(-4,0,8,o.r*0.9);
+  const g = ctx.createRadialGradient(-o.r*0.3,-o.r*0.3,2,0,0,o.r*1.3);
+  g.addColorStop(0,'#2f7d3a'); g.addColorStop(1,'#144a1e');
+  ctx.fillStyle = g;
+  ctx.beginPath(); ctx.arc(0,-o.r*0.2,o.r*1.15,0,6.283); ctx.fill();
   ctx.restore();
 }
 
-function drawCustomBackground(){
-  const img = customBgImg;
-  const iw = img.naturalWidth || img.width || 1, ih = img.naturalHeight || img.height || 1;
-  const canvasRatio = W / H, imgRatio = iw / ih;
-  let dw, dh, dx, dy;
-  if(imgRatio > canvasRatio){ dh = H; dw = H * imgRatio; dx = (W - dw) / 2; dy = 0; }
-  else { dw = W; dh = W / imgRatio; dx = 0; dy = (H - dh) / 2; }
-  ctx.drawImage(img, dx, dy, dw, dh);
+function drawHouseObstacle(o){
+  // top-down view: only the rooftop is visible (gable roof, seen from above)
+  ctx.save();
+  ctx.translate(o.x,o.y);
+  ctx.fillStyle = 'rgba(0,0,0,0.32)';
+  ctx.fillRect(-o.w/2+3,-o.h/2+5,o.w,o.h);
+
+  const roofG = ctx.createLinearGradient(-o.w/2,0,o.w/2,0);
+  roofG.addColorStop(0,   '#8a4a34');
+  roofG.addColorStop(0.5, '#6b3624');
+  roofG.addColorStop(1,   '#8a4a34');
+  ctx.fillStyle = roofG;
+  ctx.fillRect(-o.w/2,-o.h/2,o.w,o.h);
+  ctx.strokeStyle = 'rgba(0,0,0,0.35)'; ctx.lineWidth = 2;
+  ctx.strokeRect(-o.w/2,-o.h/2,o.w,o.h);
+
+  // ridge line down the middle where the two roof slopes meet
+  ctx.strokeStyle = 'rgba(0,0,0,0.45)'; ctx.lineWidth = 2.4;
+  ctx.beginPath(); ctx.moveTo(0,-o.h/2+3); ctx.lineTo(0,o.h/2-3); ctx.stroke();
+
+  // shingle texture rows across each slope
+  ctx.strokeStyle = 'rgba(0,0,0,0.16)'; ctx.lineWidth = 1;
+  for(let yy=-o.h/2+7; yy<o.h/2-3; yy+=8){
+    ctx.beginPath(); ctx.moveTo(-o.w/2+3,yy); ctx.lineTo(o.w/2-3,yy); ctx.stroke();
+  }
+
+  // small chimney
+  ctx.fillStyle = '#3a3a3a';
+  ctx.fillRect(o.w*0.2, -o.h*0.18, 8, 10);
+  ctx.strokeStyle = 'rgba(0,0,0,0.4)'; ctx.lineWidth = 1;
+  ctx.strokeRect(o.w*0.2, -o.h*0.18, 8, 10);
+  ctx.restore();
+}
+
+function drawRubbleObstacle(o){
+  ctx.save();
+  ctx.translate(o.x,o.y);
+  ctx.fillStyle = 'rgba(0,0,0,0.3)';
+  ctx.fillRect(-o.w/2+2,-o.h/2+4,o.w,o.h);
+  ctx.fillStyle = '#5a5a5f';
+  ctx.beginPath();
+  ctx.moveTo(-o.w/2,-o.h/2+6); ctx.lineTo(-o.w/2+10,-o.h/2); ctx.lineTo(o.w/2-8,-o.h/2+4);
+  ctx.lineTo(o.w/2,-o.h/2+14); ctx.lineTo(o.w/2-4,o.h/2); ctx.lineTo(-o.w/2+6,o.h/2-4);
+  ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = 'rgba(0,0,0,0.35)'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(-o.w/4,-o.h/3); ctx.lineTo(o.w/6,o.h/4); ctx.stroke();
+  ctx.fillStyle = '#3a3a3e';
+  ctx.beginPath(); ctx.arc(-o.w*0.15,-o.h*0.1,4,0,6.283); ctx.fill();
+  ctx.restore();
+}
+
+function drawBurntCarObstacle(o){
+  ctx.save();
+  ctx.translate(o.x,o.y);
+  ctx.rotate(o.angle||0);
+  ctx.fillStyle = 'rgba(0,0,0,0.3)';
+  ctx.fillRect(-o.w/2+2,-o.h/2+4,o.w,o.h);
+  // scorched chassis
+  ctx.fillStyle = '#1c1a18';
+  ctx.beginPath();
+  ctx.moveTo(-o.w/2,-o.h/2+6); ctx.lineTo(-o.w/2+10,-o.h/2); ctx.lineTo(o.w/2-10,-o.h/2);
+  ctx.lineTo(o.w/2,-o.h/2+6); ctx.lineTo(o.w/2,o.h/2-4); ctx.lineTo(-o.w/2,o.h/2-4);
+  ctx.closePath(); ctx.fill();
+  ctx.fillStyle = '#0e0d0c';
+  ctx.fillRect(-o.w*0.28,-o.h/2+3,o.w*0.4,o.h-6);
+  // rust/char streaks
+  ctx.fillStyle = 'rgba(120,50,20,0.35)';
+  ctx.fillRect(-o.w/2+4,-o.h/2+2,6,o.h-4);
+  ctx.fillRect(o.w/2-10,-o.h/2+2,6,o.h-4);
+  // wheels
+  ctx.fillStyle = '#050505';
+  ctx.beginPath(); ctx.arc(-o.w*0.32,-o.h/2,5,0,6.283); ctx.fill();
+  ctx.beginPath(); ctx.arc(o.w*0.32,-o.h/2,5,0,6.283); ctx.fill();
+  ctx.beginPath(); ctx.arc(-o.w*0.32,o.h/2,5,0,6.283); ctx.fill();
+  ctx.beginPath(); ctx.arc(o.w*0.32,o.h/2,5,0,6.283); ctx.fill();
+  // faint embers
+  ctx.fillStyle = 'rgba(255,120,40,0.5)';
+  ctx.beginPath(); ctx.arc(0,-2,2.4,0,6.283); ctx.fill();
+  ctx.restore();
+}
+
+function drawObstacles(){
+  const pad = 120;
+  for(const o of obstacles){
+    if(o.x < camera.x-pad || o.x > camera.x+W+pad || o.y < camera.y-pad || o.y > camera.y+H+pad) continue;
+    if(o.type==='tree') drawTreeObstacle(o);
+    else if(o.type==='house') drawHouseObstacle(o);
+    else if(o.type==='rubble') drawRubbleObstacle(o);
+    else drawBurntCarObstacle(o);
+  }
 }
 
 function drawPlayer(){
@@ -905,6 +1166,10 @@ function drawPlayer(){
 }
 
 function drawZombie(z){
+  if(z.type === 'boss'){
+    drawBoss(z);
+    return;
+  }
   if(customZombieImg){
     const size = z.radius * 2.6;
     ctx.save();
@@ -969,6 +1234,64 @@ function drawZombie(z){
   ctx.restore();
 }
 
+function drawBoss(z){
+  if(customBossImg){
+    const size = z.radius * 2.8;
+    ctx.save();
+    ctx.translate(z.x, z.y);
+    const dx = player.x - z.x;
+    ctx.scale(dx < 0 ? -1 : 1, 1);
+    ctx.drawImage(customBossImg, -size/2, -size/2, size, size);
+    ctx.restore();
+  } else {
+    ctx.save();
+    ctx.translate(z.x,z.y);
+    ctx.beginPath();
+    ctx.fillStyle = '#4a0d1a';
+    ctx.arc(0,0,z.radius,0,Math.PI*2);
+    ctx.fill();
+    ctx.lineWidth = 5;
+    ctx.strokeStyle = '#ff2e63';
+    ctx.shadowColor = '#ff2e63';
+    ctx.shadowBlur = 22;
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    // spikes
+    ctx.fillStyle = '#ff2e63';
+    for(let a=0;a<8;a++){
+      const ang = a*(Math.PI/4);
+      const bx = Math.cos(ang)*z.radius, by = Math.sin(ang)*z.radius;
+      const tx = Math.cos(ang)*(z.radius+12), ty = Math.sin(ang)*(z.radius+12);
+      const px = Math.cos(ang+0.25)*(z.radius-4), py = Math.sin(ang+0.25)*(z.radius-4);
+      const qx = Math.cos(ang-0.25)*(z.radius-4), qy = Math.sin(ang-0.25)*(z.radius-4);
+      ctx.beginPath(); ctx.moveTo(tx,ty); ctx.lineTo(px,py); ctx.lineTo(qx,qy); ctx.closePath(); ctx.fill();
+    }
+    ctx.fillStyle = '#ffe600';
+    ctx.beginPath(); ctx.arc(-z.radius*0.35,-z.radius*0.1,4,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(z.radius*0.35,-z.radius*0.1,4,0,Math.PI*2); ctx.fill();
+    ctx.restore();
+  }
+
+  if(z.hitFlash>0){
+    ctx.save();
+    ctx.globalAlpha = Math.min(0.6, z.hitFlash*3);
+    ctx.beginPath();
+    ctx.fillStyle = '#ffffff';
+    ctx.arc(z.x,z.y,z.radius+8,0,Math.PI*2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  const barW = z.radius*2.4;
+  ctx.save();
+  ctx.translate(z.x - barW/2, z.y - z.radius - 18);
+  ctx.fillStyle = 'rgba(0,0,0,0.55)';
+  ctx.fillRect(0,0,barW,7);
+  ctx.fillStyle = '#ff2e63';
+  ctx.fillRect(0,0, barW * Math.max(0,z.hp/z.maxHp), 7);
+  ctx.restore();
+}
+
 function drawBullet(b){
   ctx.save();
   ctx.beginPath();
@@ -1007,12 +1330,17 @@ function drawFloatTexts(){
 
 function draw(){
   ctx.clearRect(0,0,W,H);
-  drawGrid();
+  ctx.save();
+  ctx.translate(-camera.x, -camera.y);
+  drawWorldBackground();
+  drawRoads();
+  drawObstacles();
   drawParticles();
   for(const b of bullets) drawBullet(b);
   for(const z of zombies) drawZombie(z);
   drawPlayer();
   drawFloatTexts();
+  ctx.restore();
 }
 
 function loop(ts){
@@ -1039,7 +1367,7 @@ function endGame(){
     bestScore = score;
     localStorage.setItem(LS_BEST, String(bestScore));
   }
-  document.getElementById('finalWave').textContent = wave;
+  document.getElementById('finalWave').textContent = totalKills;
   document.getElementById('finalScore').textContent = score;
   document.getElementById('finalBest').textContent = bestScore;
   openOverlay('overlay-gameover');
@@ -1311,6 +1639,15 @@ function buildAdminUI(user, isOwner){
       </div>
 
       <div class="admin-section">
+        <h3>☠️ Boss ko'rinishi</h3>
+        <div class="admin-row">
+          <label class="admin-file-label">Fayl tanlash<input type="file" accept="image/*" id="bossFileInput" style="display:none;"></label>
+          <img id="bossPreview" class="admin-preview" alt="Boss">
+          <button class="admin-clear-btn" id="bossClearBtn">Tozalash</button>
+        </div>
+      </div>
+
+      <div class="admin-section">
         <h3>🎵 Fon musiqasi</h3>
         <div class="admin-row">
           <label class="admin-file-label">Fayl tanlash<input type="file" accept="audio/*" id="musicFileInput" style="display:none;"></label>
@@ -1332,7 +1669,7 @@ function buildAdminUI(user, isOwner){
       ` : ''}
 
       <div class="admin-note">
-        Yuklangan rasmdagi yashil rang avtomatik olib tashlanadi (masalan, mashina rasmining orqasini yashil qilib bo'yasangiz, o'sha yashil qism shaffof bo'lib, qolgan qismi o'yinda ko'rinadi). Rasm — 2 MB gacha, musiqa — 4 MB gacha. Fayllar shu qurilmada saqlanadi va keyingi safar avtomatik qo'llanadi.
+        Yuklangan rasmdagi yashil rang avtomatik olib tashlanadi (masalan, mashina rasmining orqasini yashil qilib bo'yasangiz, o'sha yashil qism shaffof bo'lib, qolgan qismi o'yinda ko'rinadi). Fayllar shu qurilmada saqlanadi va keyingi safar avtomatik qo'llanadi.
       </div>
       <div class="modal-buttons">
         <button class="neon-btn" id="adminSaveBtn">Saqlash</button>
@@ -1342,17 +1679,7 @@ function buildAdminUI(user, isOwner){
   `;
   document.body.appendChild(overlay);
 
-  let pending = { bg: undefined, player: undefined, zombie: undefined, music: undefined };
-
-  // Practical upload caps — localStorage is shared per-device/browser and
-  // only holds ~5-10MB total (all of it, not just this game), and base64
-  // encoding adds ~33% on top of the original file size. These limits
-  // keep uploads safely inside that budget with room to spare.
-  const MAX_IMAGE_MB = 2;
-  const MAX_AUDIO_MB = 4;
-  function tooLarge(file, maxMb){
-    return file.size > maxMb * 1024 * 1024;
-  }
+  let pending = { bg: undefined, player: undefined, zombie: undefined, boss: undefined, music: undefined };
 
   function readFileAsDataURL(file, cb){
     const reader = new FileReader();
@@ -1360,12 +1687,8 @@ function buildAdminUI(user, isOwner){
     reader.readAsDataURL(file);
   }
   // reads an uploaded image, strips chroma-key green automatically, then
-  // shows the processed (transparent-green) preview
+  // shows the processed (transparent-green) preview — no size limit
   function handleImageUpload(file, previewEl, onProcessed){
-    if (tooLarge(file, MAX_IMAGE_MB)){
-      alert(`Rasm hajmi juda katta (${(file.size/1024/1024).toFixed(1)} MB). Iltimos, ${MAX_IMAGE_MB} MB dan kichik rasm yuklang.`);
-      return;
-    }
     readFileAsDataURL(file, rawUrl => {
       const img = new Image();
       img.onload = () => {
@@ -1382,6 +1705,7 @@ function buildAdminUI(user, isOwner){
   const bgPreview = overlay.querySelector('#bgPreview');
   const playerPreview = overlay.querySelector('#playerPreview');
   const zombiePreview = overlay.querySelector('#zombiePreview');
+  const bossPreview = overlay.querySelector('#bossPreview');
   const musicPreview = overlay.querySelector('#musicPreview');
 
   const savedBg = localStorage.getItem(ASSET_KEYS.bg);
@@ -1390,6 +1714,8 @@ function buildAdminUI(user, isOwner){
   if (savedPlayer){ playerPreview.src = savedPlayer; playerPreview.classList.add('show'); }
   const savedZombie = localStorage.getItem(ASSET_KEYS.zombie);
   if (savedZombie){ zombiePreview.src = savedZombie; zombiePreview.classList.add('show'); }
+  const savedBoss = localStorage.getItem(ASSET_KEYS.boss);
+  if (savedBoss){ bossPreview.src = savedBoss; bossPreview.classList.add('show'); }
   const savedMusic = localStorage.getItem(ASSET_KEYS.music);
   if (savedMusic){ musicPreview.src = savedMusic; musicPreview.classList.add('show'); }
 
@@ -1448,12 +1774,12 @@ function buildAdminUI(user, isOwner){
     const file = e.target.files[0]; if (!file) return;
     handleImageUpload(file, zombiePreview, url => { pending.zombie = url; });
   });
+  overlay.querySelector('#bossFileInput').addEventListener('change', e => {
+    const file = e.target.files[0]; if (!file) return;
+    handleImageUpload(file, bossPreview, url => { pending.boss = url; });
+  });
   overlay.querySelector('#musicFileInput').addEventListener('change', e => {
     const file = e.target.files[0]; if (!file) return;
-    if (tooLarge(file, MAX_AUDIO_MB)){
-      alert(`Musiqa fayli juda katta (${(file.size/1024/1024).toFixed(1)} MB). Iltimos, ${MAX_AUDIO_MB} MB dan kichik fayl yuklang.`);
-      return;
-    }
     readFileAsDataURL(file, url => {
       pending.music = url; musicPreview.src = url; musicPreview.classList.add('show');
     });
@@ -1468,13 +1794,16 @@ function buildAdminUI(user, isOwner){
   overlay.querySelector('#zombieClearBtn').addEventListener('click', () => {
     pending.zombie = null; zombiePreview.classList.remove('show'); zombiePreview.src = '';
   });
+  overlay.querySelector('#bossClearBtn').addEventListener('click', () => {
+    pending.boss = null; bossPreview.classList.remove('show'); bossPreview.src = '';
+  });
   overlay.querySelector('#musicClearBtn').addEventListener('click', () => {
     pending.music = null; musicPreview.classList.remove('show'); musicPreview.src = '';
   });
 
   function closeAdminModal(){
     overlay.classList.remove('active');
-    pending = { bg: undefined, player: undefined, zombie: undefined, music: undefined };
+    pending = { bg: undefined, player: undefined, zombie: undefined, boss: undefined, music: undefined };
   }
   overlay.querySelector('#adminCloseBtn').addEventListener('click', closeAdminModal);
 
@@ -1488,6 +1817,9 @@ function buildAdminUI(user, isOwner){
 
       if (pending.zombie === null){ localStorage.removeItem(ASSET_KEYS.zombie); customZombieImg = null; }
       else if (pending.zombie){ localStorage.setItem(ASSET_KEYS.zombie, pending.zombie); loadImageAsset(pending.zombie, img => { customZombieImg = img; }); }
+
+      if (pending.boss === null){ localStorage.removeItem(ASSET_KEYS.boss); customBossImg = null; }
+      else if (pending.boss){ localStorage.setItem(ASSET_KEYS.boss, pending.boss); loadImageAsset(pending.boss, img => { customBossImg = img; }); }
 
       if (pending.music === null){ localStorage.removeItem(ASSET_KEYS.music); bgMusicEl.removeAttribute('src'); }
       else if (pending.music){ localStorage.setItem(ASSET_KEYS.music, pending.music); bgMusicEl.src = pending.music; }
@@ -1505,7 +1837,7 @@ function buildAdminUI(user, isOwner){
 (function bootstrap(){
   player = { x:0,y:0, radius:20, speed:230, hp:100, maxHp:100, angle:0, hitFlash:0 };
   bullets=[]; zombies=[]; particles=[]; floatTexts=[];
-  score=0; coins=0; wave=1; ammo=ammoMax;
+  score=0; coins=0; ammo=ammoMax;
 })();
 checkTelegramAuth();
 </script>
