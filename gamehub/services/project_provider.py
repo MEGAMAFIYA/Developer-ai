@@ -294,11 +294,41 @@ class GitHubProjectProvider:
         *,
         preserve_repository_root: bool = False,
     ) -> tuple[bytes, str]:
-        file = await self.get_file(
+        """Fetch a file's exact raw bytes (binary-safe).
+
+        Unlike ``get_file()``, this never round-trips through UTF-8 text —
+        it re-fetches the raw base64 payload straight from the GitHub API,
+        so PDFs, images and other binary assets come back byte-for-byte
+        intact instead of being corrupted by a lossy text decode/re-encode.
+        """
+        normalized = self._safe_path(
             path,
             preserve_repository_root=preserve_repository_root,
         )
-        return file.content.encode("utf-8"), file.sha
+        session, settings = await self._session()
+        try:
+            status, body = await self._request(
+                session,
+                "GET",
+                self._url(settings, f"contents/{normalized}"),
+                params={"ref": settings["branch"]},
+            )
+        finally:
+            await session.close()
+        if status == 404:
+            raise FileNotFoundError(normalized)
+        if status != 200:
+            raise ProjectProviderError(f"GitHub fayl HTTP {status}: {body[:400]}")
+        try:
+            payload = json.loads(body)
+            encoded = payload.get("content", "").replace("\n", "")
+            raw = base64.b64decode(encoded) if encoded else b""
+            if len(raw) > _MAX_FILE_BYTES:
+                raise ProjectProviderError("Fayl hajmi ruxsat etilgan chegaradan katta.")
+            sha = payload["sha"]
+        except (KeyError, ValueError, TypeError) as exc:
+            raise ProjectProviderError(f"GitHub fayl javobi noto'g'ri: {exc}") from exc
+        return raw, sha
 
     async def put_file(
         self,
