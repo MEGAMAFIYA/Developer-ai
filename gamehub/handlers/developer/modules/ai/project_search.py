@@ -33,6 +33,22 @@ def _display_path(path: str) -> str:
     return path.removeprefix("gamehub/")
 
 
+def _resolve(path_hint: str) -> str:
+    """Map a user-typed path hint (with or without a leading ``gamehub/``)
+    to the real repository path under ``gamehub/`` — the tree that's
+    actually deployed and served (see file_tools.py's own ``_resolve`` for
+    the identical convention). Without this, a hint like
+    "webapp/games/x.html" would resolve to the unused repository-root
+    ``webapp/`` tree instead of the live ``gamehub/webapp/`` one.
+    """
+    provider = get_project_provider()
+    try:
+        rel = provider.normalize_path(path_hint)
+    except ProjectProviderError:
+        return "gamehub"
+    return rel if (rel == "gamehub" or rel.startswith("gamehub/")) else f"gamehub/{rel}"
+
+
 async def _failure(exc: Exception) -> ProjectResult:
     return ProjectResult(False, f"❌ <b>GitHub loyiha xatosi:</b> <code>{_esc(str(exc))}</code>")
 
@@ -40,9 +56,10 @@ async def _failure(exc: Exception) -> ProjectResult:
 async def list_files(folder_hint: str) -> ProjectResult:
     try:
         provider = get_project_provider()
-        entries = await provider.list_files(folder_hint.strip())
+        folder = _resolve(folder_hint) if folder_hint.strip() else ""
+        entries = await provider.list_files(folder, preserve_repository_root=True)
         files = [entry for entry in entries if entry.kind == "file"]
-        label = folder_hint.strip().strip("/") or "repository"
+        label = folder.strip("/") or "repository"
         if not files:
             return ProjectResult(True, f"📁 <b>{_esc(label)}/</b> — fayl topilmadi.")
         lines = [f"📁 <b>{_esc(label)}/</b> — {len(files)} ta fayl\n"]
@@ -55,17 +72,20 @@ async def list_files(folder_hint: str) -> ProjectResult:
 async def open_file(path_hint: str) -> ProjectResult:
     try:
         provider = get_project_provider()
-        path = path_hint.strip()
+        path = _resolve(path_hint.strip())
         try:
-            file = await provider.get_file(path)
+            file = await provider.get_file(path, preserve_repository_root=True)
         except FileNotFoundError:
-            matches = await provider.search_name(PurePosixPath(path).name, limit=5)
+            matches = await provider.search_name(PurePosixPath(path_hint).name, limit=5)
             if len(matches) != 1:
                 return ProjectResult(
                     False,
                     f"❌ <b>Fayl topilmadi:</b> <code>{_esc(path_hint)}</code>",
                 )
-            file = await provider.get_file(matches[0])
+            # matches[0] already comes back as a real repo path from
+            # tree() — pass it through as-is (preserve_repository_root=True)
+            # instead of stripping a "gamehub/" prefix it may carry.
+            file = await provider.get_file(matches[0], preserve_repository_root=True)
         raw = file.content
         display = raw[:_MAX_FILE_CHARS]
         header = (
