@@ -93,7 +93,7 @@ async def _context(max_chars: int = 6000) -> str:
         if total >= max_chars:
             break
         try:
-            text = (await provider.get_file(entry.path)).content[:2000]
+            text = (await provider.get_file(entry.path, preserve_repository_root=True)).content[:2000]
         except Exception:
             continue
         chunks.append(f"### {entry.path}\n```python\n{text}\n```")
@@ -145,7 +145,7 @@ async def cb_proj_test(q: CallbackQuery, state: FSMContext) -> None:
     errors: list[str] = []
     for entry in entries:
         try:
-            compile((await get_project_provider().get_file(entry.path)).content, entry.path, "exec")
+            compile((await get_project_provider().get_file(entry.path, preserve_repository_root=True)).content, entry.path, "exec")
             ok_count += 1
         except Exception as exc:
             errors.append(f"{entry.path}: {exc}")
