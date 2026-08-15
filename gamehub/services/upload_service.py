@@ -151,6 +151,57 @@ def save_html_bytes(
     return dest
 
 
+def mirror_runtime_write(repo_path: str, content: bytes) -> Path | None:
+    """Mirror a GitHub commit onto the locally-served copy, if applicable.
+
+    ``gamehub/api/app.py`` serves games (and ``/webapp/...`` static assets)
+    straight off local disk — it never reads GitHub at request time. So a
+    GitHub-only write (Developer/AI file tools) would be real and permanent,
+    but invisible on the *running* bot until the next Render deploy pulls a
+    fresh checkout.
+
+    This mirrors any write that lands under the live ``gamehub/webapp/``
+    tree onto the same local path save_html_bytes()/save_image_bytes() use,
+    so the change is visible immediately. Returns the local path written,
+    or None if ``repo_path`` falls outside the served webapp tree (e.g. a
+    Python source file — those only ever need the GitHub commit).
+    """
+    prefix = "gamehub/webapp/"
+    normalized = repo_path.strip().lstrip("/")
+    if not normalized.startswith(prefix):
+        return None
+    rel = normalized[len(prefix):]
+    if not rel or ".." in rel.split("/"):
+        return None
+    dest = WEBAPP_DIR / rel
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_bytes(content)
+    logger.info("Runtime mirror write: %s -> %s", repo_path, dest)
+    return dest
+
+
+def mirror_runtime_delete(repo_path: str) -> Path | None:
+    """Delete the locally-served mirror of a GitHub-deleted file, if any.
+
+    Counterpart to mirror_runtime_write() — see its docstring for why this
+    is needed. Returns the local path removed, or None if there was
+    nothing to remove (outside the served tree, or already absent).
+    """
+    prefix = "gamehub/webapp/"
+    normalized = repo_path.strip().lstrip("/")
+    if not normalized.startswith(prefix):
+        return None
+    rel = normalized[len(prefix):]
+    if not rel or ".." in rel.split("/"):
+        return None
+    dest = WEBAPP_DIR / rel
+    if dest.exists():
+        dest.unlink()
+        logger.info("Runtime mirror delete: %s -> %s", repo_path, dest)
+        return dest
+    return None
+
+
 def save_image_bytes(
     slug: str,
     ext: str,
