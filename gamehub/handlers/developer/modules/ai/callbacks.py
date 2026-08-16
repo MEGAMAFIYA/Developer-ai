@@ -43,6 +43,7 @@ AI_FILE_EDIT   = "ai:file:edit"     # ✏️ Faylni tahrirlash
 AI_FILE_DELETE = "ai:file:delete"   # 🗑 Faylni o'chirish
 AI_FILE_OK     = "ai:file:ok"       # ✅ confirm write/delete
 AI_FILE_PDF    = "ai:file:pdf"      # 📑 last-read faylni PDF qilib yuklash
+AI_EDIT_SAVE   = "ai:edit:save"     # 💾 "Kodni tahrirlash" natijasini fayl manbasiga GitHub orqali saqlash
 
 # ── Phase 4 — GitHub Tools (github_tools.py) ──────────────────────────────────
 AI_GH_CLONE  = "ai:gh:clone"        # 🌐 GitHub Clone
@@ -143,6 +144,7 @@ ALL_AI_CALLBACKS = (
     # Phase 4 — File Tools
     AI_FILE_CREATE, AI_FILE_READ, AI_FILE_EDIT, AI_FILE_DELETE, AI_FILE_OK,
     AI_FILE_PDF,
+    AI_EDIT_SAVE,
     # Phase 4 — GitHub Tools
     AI_GH_CLONE, AI_GH_COMMIT, AI_GH_PUSH, AI_GH_PULL, AI_GH_OK,
     # Phase 4 — Database Tools
