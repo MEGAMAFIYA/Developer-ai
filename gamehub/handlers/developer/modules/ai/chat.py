@@ -54,6 +54,7 @@ from handlers.developer.modules.ai.callbacks import (
     AI_CHAT,
     AI_WRITE_CODE,
     AI_EDIT_CODE,
+    AI_EDIT_SAVE,
     AI_ANALYZE_CODE,
     AI_CREATE_GAME,
     AI_IMPROVE_GAME,
@@ -74,12 +75,26 @@ from handlers.developer.modules.ai.states import (
 )
 from handlers.developer.modules.ai import services
 from handlers.developer.modules.ai.action_log import log_action
+from services.project_provider import get_project_provider, ProjectProviderError
+from services.upload_service import mirror_runtime_write
 
 logger = logging.getLogger(__name__)
 router = Router(name="dev:ai:chat")
 
 # ── Telegram limits ───────────────────────────────────────────────────────────
 _TG_MAX = 4096
+
+
+def _strip_code_fence(text: str) -> str:
+    """Drop a single wrapping ```lang ... ``` markdown fence, if present.
+
+    AI code responses are instructed to return "faqat kod" inside a markdown
+    block; when saving that straight to a project file we don't want the
+    ``` fence lines ending up inside the source file.
+    """
+    stripped = text.strip()
+    m = re.match(r"^```[a-zA-Z0-9_+-]*\r?\n(.*?)\r?\n```\s*$", stripped, re.S)
+    return m.group(1) if m else stripped
 
 # ── All FSM states in this file (for the /cancel filter) ─────────────────────
 _ALL_CHAT_STATES = StateFilter(
@@ -588,8 +603,12 @@ async def cb_edit_code_start(query: CallbackQuery, state: FSMContext) -> None:
     await query.answer()
     await query.message.edit_text(
         "✏️ <b>Kodni tahrirlash — 1/2</b>\n\n"
-        "Tahrirlash kerak bo'lgan kodni yuboring.\n\n"
-        "<i>Butun fayl yoki kerakli qism bo'lishi mumkin.</i>",
+        "Tahrirlash kerak bo'lgan kodni yuboring — <b>ikki usuldan biri bilan</b>:\n\n"
+        "• Kodni to'g'ridan-to'g'ri matn qilib joylashtiring (butun fayl yoki qism), yoki\n"
+        "• Loyihadagi fayl yo'lini yozing — masalan:\n"
+        "  <code>webapp/games/zombie-survival.html</code>\n"
+        "  — men uni GitHub'dan avtomatik o'qib olaman, va tayyor bo'lgach "
+        "to'g'ridan-to'g'ri o'sha faylga qaytarib saqlashni taklif qilaman.",
         reply_markup=_cancel_kb(),
         parse_mode="HTML",
     )
@@ -599,14 +618,42 @@ async def cb_edit_code_start(query: CallbackQuery, state: FSMContext) -> None:
 async def msg_edit_code_receive(message: Message, state: FSMContext) -> None:
     if not await _guard_msg(message):
         return
-    code = message.text or ""
-    if not code.strip():
-        await message.answer("⚠️ Kod bo'sh. Iltimos kodni yuboring.")
+    raw = (message.text or "").strip()
+    if not raw:
+        await message.answer("⚠️ Kod yoki fayl yo'li bo'sh. Iltimos yuboring.")
         return
-    await state.update_data(code=code)
+
+    source_path: str | None = None
+    code = raw
+    # A short, single-line message that ends in a file extension is very
+    # unlikely to be pasted source code — try reading it as a project file
+    # path first. If nothing matches, silently fall back to treating the
+    # whole message as literal pasted code (original behaviour).
+    last_segment = raw.rsplit("/", 1)[-1]
+    looks_like_path = (
+        "\n" not in raw and len(raw) < 200
+        and "." in last_segment and " " not in last_segment
+    )
+    if looks_like_path:
+        try:
+            provider = get_project_provider()
+            resolved = raw if raw.startswith("gamehub/") else f"gamehub/{raw}"
+            file = await provider.get_file(resolved, preserve_repository_root=True)
+            code = file.content
+            source_path = file.path
+        except (FileNotFoundError, ProjectProviderError):
+            pass  # not a real path — treat the message as pasted code as-is
+
+    await state.update_data(code=code, source_path=source_path)
     await state.set_state(AIEditCodeStates.waiting_instruction)
+    note = (
+        f"📂 Fayldan olindi: <code>{source_path}</code> "
+        f"({len(code.splitlines())} qator)\n\n"
+        if source_path else ""
+    )
     await message.answer(
         "✏️ <b>Kodni tahrirlash — 2/2</b>\n\n"
+        f"{note}"
         "Nima o'zgartirish kerakligini yozing.\n\n"
         "<i>Misol: «Tezlikni 2 barobarga oshir»</i>\n"
         "<i>Misol: «Chap tomondagi panelni olib tashla»</i>",
@@ -619,15 +666,88 @@ async def msg_edit_code_receive(message: Message, state: FSMContext) -> None:
 async def msg_edit_code_instruct(message: Message, state: FSMContext) -> None:
     if not await _guard_msg(message):
         return
-    data = await state.get_data()
-    code = data.get("code", "")
+    data        = await state.get_data()
+    code        = data.get("code", "")
+    source_path = data.get("source_path")
     instruction = message.text or ""
-    await _process(
-        message, state,
-        "Kodni tahrirlash",
-        services.ai_edit_code(code, instruction),
-        "AI_EDIT_CODE",
+    await state.clear()
+
+    sent = await message.answer(
+        "⏳ <b>Kodni tahrirlash</b> — AI javob tayyorlamoqda…", parse_mode="HTML"
     )
+    result = await services.ai_edit_code(code, instruction)
+
+    if not result.ok:
+        err_msg = result.error or "Noma'lum xato"
+        await sent.edit_text(
+            f"❌ <b>Xato</b>\n\n<code>{err_msg}</code>",
+            reply_markup=_result_kb(), parse_mode="HTML",
+        )
+        await log_action(message.from_user.id, "AI_EDIT_CODE_ERROR", "Kodni tahrirlash", err_msg[:200])
+        return
+
+    text = result.content
+    kb = _result_kb()
+    if source_path:
+        # Stash the target path + raw AI output so the save button (below)
+        # can write it straight back to GitHub without asking the user to
+        # copy-paste anything.
+        await state.update_data(edit_save_path=source_path, edit_save_content=text)
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="💾 GitHub'ga saqlash", callback_data=AI_EDIT_SAVE)],
+            *_result_kb().inline_keyboard,
+        ])
+
+    if len(text) <= _TG_MAX:
+        try:
+            await sent.edit_text(text, reply_markup=kb, parse_mode="HTML")
+        except TelegramBadRequest:
+            await sent.edit_text(text, reply_markup=kb, parse_mode=None)
+    else:
+        await sent.delete()
+        await _send_long(message, text)
+        if source_path:
+            await message.answer(
+                f"📂 Manba: <code>{source_path}</code>\n"
+                "Natija uzun bo'lgani uchun yuqoridagi xabarlarda ko'rsatildi.",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="💾 GitHub'ga saqlash", callback_data=AI_EDIT_SAVE)],
+                ]),
+                parse_mode="HTML",
+            )
+    await log_action(message.from_user.id, "AI_EDIT_CODE", "Kodni tahrirlash", "ok")
+
+
+@router.callback_query(lambda c: c.data == AI_EDIT_SAVE)
+async def cb_edit_code_save(query: CallbackQuery, state: FSMContext) -> None:
+    if not await _guard_cb(query):
+        return
+    data     = await state.get_data()
+    path     = data.get("edit_save_path")
+    raw_text = data.get("edit_save_content")
+    if not path or raw_text is None:
+        await query.answer(
+            "Bu tugma eskirgan — «Kodni tahrirlash»ni qaytadan boshlang.",
+            show_alert=True,
+        )
+        return
+    await query.answer("Saqlanmoqda...")
+    code = _strip_code_fence(raw_text)
+    raw  = code.encode("utf-8")
+    try:
+        await get_project_provider().put_file(
+            path, raw, f"AI edit: {path}", preserve_repository_root=True
+        )
+        mirror_runtime_write(path, raw)  # live immediately, not just on next deploy
+        await query.message.answer(
+            f"✅ Saqlandi va GitHub'ga yuklandi: <code>{path}</code>\n"
+            f"Hajm: {len(raw)} bayt",
+            parse_mode="HTML",
+        )
+        await log_action(query.from_user.id, "AI_EDIT_CODE_SAVE", path, "github_commit")
+    except Exception as exc:
+        await query.message.answer(f"❌ Saqlashda xato: <code>{exc}</code>", parse_mode="HTML")
+        await log_action(query.from_user.id, "AI_EDIT_CODE_SAVE", path, f"error:{exc}")
 
 
 # ── 🔍 Kodni tahlil qilish ────────────────────────────────────────────────────
