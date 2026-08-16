@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import base64
 import difflib
+import html as html_lib
 import logging
 
 from aiogram import Router
@@ -53,6 +54,22 @@ _TG_MAX     = 4096
 # Telegram bot API caps file downloads at 20MB; keep a safety margin under
 # the provider's own _MAX_FILE_BYTES (8MB) for GitHub Contents API writes.
 _MAX_UPLOAD_BYTES = 8 * 1024 * 1024
+
+# Extensions that must stay valid UTF-8 source text. If the path being
+# created/edited has one of these, refusing a non-decodable upload (e.g. a
+# PDF someone exported via "PDF qilib yuklash" and then re-sent thinking
+# it'd be converted back to code) prevents silently corrupting the file
+# with binary garbage.
+_TEXT_EXTENSIONS = {
+    ".py", ".js", ".jsx", ".ts", ".tsx", ".html", ".htm", ".css",
+    ".json", ".md", ".txt", ".yml", ".yaml", ".xml", ".svg", ".csv",
+    ".ini", ".cfg", ".toml", ".sql", ".sh",
+}
+
+
+def _is_text_path(path: str) -> bool:
+    dot = path.rfind(".")
+    return dot != -1 and path[dot:].lower() in _TEXT_EXTENSIONS
 
 
 # ── FSM States ────────────────────────────────────────────────────────────────
@@ -290,6 +307,18 @@ async def msg_file_create_content(m: Message, state: FSMContext) -> None:
         return
     raw, text, source = extracted
 
+    if text is None and _is_text_path(path):
+        await m.answer(
+            f"⚠️ <code>{path}</code> — matnli manba fayl (kod). Siz yuborgan fayl "
+            "matn sifatida o'qilmadi (masalan, PDF yoki boshqa binar format) — "
+            "uni shu holicha yozish faylni <b>buzib qo'yadi</b>.\n\n"
+            "Iltimos, kodni to'g'ridan-to'g'ri matn qilib yozing/joylashtiring, "
+            "yoki .py/.html/.js kabi matn fayl sifatida yuboring "
+            "(PDF eksport faqat o'qish uchun, qayta yuklash uchun emas).",
+            reply_markup=_cancel_kb(), parse_mode="HTML",
+        )
+        return
+
     await state.update_data(content_b64=base64.b64encode(raw).decode("ascii"))
     await state.set_state(FileCreateStates.confirming)
 
@@ -300,7 +329,7 @@ async def msg_file_create_content(m: Message, state: FSMContext) -> None:
             preview += f"\n... +{len(lines) - 30} qator"
         body = (
             f"Qatorlar: {len(lines)}\n\n"
-            f"<pre>{preview[:800]}</pre>"
+            f"<pre>{html_lib.escape(preview[:800])}</pre>"
         )
     else:
         body = f"Binar fayl — {len(raw)} bayt. (Matn ko'rinishida ko'rsatib bo'lmaydi.)"
@@ -399,7 +428,7 @@ async def msg_file_read(m: Message, state: FSMContext) -> None:
         chunks  = _send_chunks(content)
         for i, chunk in enumerate(chunks):
             kb = _read_result_kb() if i == len(chunks) - 1 else None
-            text = (header if i == 0 else "") + f"<pre>{chunk}</pre>"
+            text = (header if i == 0 else "") + f"<pre>{html_lib.escape(chunk)}</pre>"
             await m.answer(text, reply_markup=kb, parse_mode="HTML")
         await log_action(m.from_user.id, "FILE_READ", str(rel), "ok")
     except Exception as exc:
@@ -481,7 +510,7 @@ async def msg_file_edit_path(m: Message, state: FSMContext) -> None:
         await m.answer(
             f"Fayl: <code>{rel}</code>\n"
             f"Joriy kontent ({len(old_content.splitlines())} qator):\n"
-            f"<pre>{preview[:600]}</pre>\n\n"
+            f"<pre>{html_lib.escape(preview[:600])}</pre>\n\n"
             "Yangi kontent yuboring (to'liq fayl):",
             reply_markup=_cancel_kb(), parse_mode="HTML",
         )
@@ -512,6 +541,18 @@ async def msg_file_edit_content(m: Message, state: FSMContext) -> None:
         return
     raw, new_text, source = extracted
 
+    if new_text is None and _is_text_path(path):
+        await m.answer(
+            f"⚠️ <code>{path}</code> — matnli manba fayl (kod). Siz yuborgan fayl "
+            "matn sifatida o'qilmadi (masalan, PDF yoki boshqa binar format) — "
+            "uni shu holicha yozish faylni <b>buzib qo'yadi</b>.\n\n"
+            "Iltimos, kodni to'g'ridan-to'g'ri matn qilib yozing/joylashtiring, "
+            "yoki .py/.html/.js kabi matn fayl sifatida yuboring "
+            "(PDF eksport faqat o'qish uchun, qayta yuklash uchun emas).",
+            reply_markup=_cancel_kb(), parse_mode="HTML",
+        )
+        return
+
     await state.update_data(content_b64=base64.b64encode(raw).decode("ascii"))
     await state.set_state(FileEditStates.confirming)
 
@@ -523,7 +564,7 @@ async def msg_file_edit_content(m: Message, state: FSMContext) -> None:
         body = (
             f"Eski: {len(old_content.splitlines())} qator  "
             f"Yangi: {len(new_text.splitlines())} qator\n\n"
-            f"<pre>{diff_preview}</pre>"
+            f"<pre>{html_lib.escape(diff_preview)}</pre>"
         )
     else:
         body = f"Binar fayl bilan almashtiriladi — {len(raw)} bayt. (Diff ko'rsatib bo'lmaydi.)"
