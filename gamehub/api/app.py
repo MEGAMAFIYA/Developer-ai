@@ -3,8 +3,8 @@
 import logging
 from pathlib import Path
 
-from fastapi import FastAPI
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi import FastAPI, Request
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -38,9 +38,47 @@ if WEBAPP_DIR.exists():
     app.mount("/webapp", StaticFiles(directory=str(WEBAPP_DIR), html=True), name="webapp")
 
 
+def _parse_start_param(start_param: str) -> tuple[str, str]:
+    """Split a `slug__chatId` start param into (slug, chat_id).
+
+    Mirrors the logic that used to live client-side in index.html's JS.
+    """
+
+    start_param = (start_param or "").strip()
+    if not start_param:
+        return "", ""
+
+    idx = start_param.rfind("__")
+    if idx > -1:
+        return start_param[:idx], start_param[idx + 2:]
+
+    return start_param, ""
+
+
 @app.get("/")
-async def serve_landing():
-    """Landing page for the BotFather-registered Mini App root URL."""
+async def serve_landing(request: Request):
+    """Landing page for the BotFather-registered Mini App root URL.
+
+    Telegram appends the `startapp` value straight to this URL as the
+    `tgWebAppStartParam` query parameter (in addition to putting it in
+    initData). When it's present we can redirect the browser directly
+    to the game page in one hop — the old behaviour served a blank
+    "Yuklanmoqda..." page that waited for the Telegram SDK to load
+    from telegram.org before doing this same redirect client-side,
+    which made every game feel slow to open. `index.html` is kept as
+    a fallback for the rare case a client doesn't attach the param to
+    the URL.
+    """
+
+    start_param = request.query_params.get("tgWebAppStartParam", "")
+    slug, chat_id = _parse_start_param(start_param)
+
+    if slug and all(c.isalnum() or c in "-_" for c in slug):
+        target = f"/games/{slug}"
+        if chat_id:
+            target += f"?cid={chat_id}"
+        return RedirectResponse(url=target, status_code=302)
+
     landing_file = WEBAPP_DIR / "index.html"
 
     if landing_file.exists():
