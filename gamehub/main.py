@@ -11,9 +11,12 @@ Both SIGTERM (sent by Render/Docker on deploy/scale-down) and SIGINT
 
 Logging
 ───────
-When RENDER=true (set by render.yaml) only stdout is used — Render
-streams it to its log viewer.  In all other environments a rotating
-file handler is added alongside stdout.
+stdout is always logged (Render streams it to its own log viewer), AND a
+rotating app.log file is always written too — the Developer › 📜 Loglar
+menu (view/search/download/clear logs) reads that exact file, so it must
+exist in every environment, Render included. Render's disk is ephemeral
+across deploys, but that's fine here: this feature is about the CURRENT
+running instance's recent activity, not permanent history.
 """
 
 import asyncio
@@ -38,20 +41,17 @@ from api.app import app as fastapi_app
 
 # ── Logging setup ─────────────────────────────────────────────────────────────
 _LOG_FMT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
-_handlers: list[logging.Handler] = [logging.StreamHandler(sys.stdout)]
-
-# File handler only in non-container environments
-if not os.getenv("RENDER"):
-    _LOG_DIR = Path(__file__).resolve().parent / "logs"
-    _LOG_DIR.mkdir(exist_ok=True)
-    _handlers.append(
-        RotatingFileHandler(
-            _LOG_DIR / "app.log",
-            maxBytes=5 * 1024 * 1024,
-            backupCount=3,
-            encoding="utf-8",
-        )
-    )
+_LOG_DIR = Path(__file__).resolve().parent / "logs"
+_LOG_DIR.mkdir(exist_ok=True)
+_handlers: list[logging.Handler] = [
+    logging.StreamHandler(sys.stdout),
+    RotatingFileHandler(
+        _LOG_DIR / "app.log",
+        maxBytes=5 * 1024 * 1024,
+        backupCount=3,
+        encoding="utf-8",
+    ),
+]
 
 logging.basicConfig(level=logging.INFO, format=_LOG_FMT, handlers=_handlers)
 logger = logging.getLogger(__name__)
@@ -126,11 +126,6 @@ async def main() -> None:
                     "message",
                     "callback_query",
                     "inline_query",
-                    # Needed so we get notified which game was picked
-                    # from the @Kichik_oyinlar_bot inline list, so we
-                    # can upgrade that message from text to the real
-                    # photo/GIF/video (see handlers/inline.py).
-                    "chosen_inline_result",
                 ],
             ),
             name="bot-polling",
