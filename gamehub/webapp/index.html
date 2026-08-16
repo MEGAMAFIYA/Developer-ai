@@ -4,7 +4,6 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Mini o'yinlar</title>
-<script src="https://telegram.org/js/telegram-web-app.js"></script>
 <style>
   html, body {
     margin:0; padding:0; width:100%; height:100%;
@@ -19,23 +18,11 @@
 <script>
 'use strict';
 
-const tg = (window.Telegram && window.Telegram.WebApp)
-  ? window.Telegram.WebApp
-  : null;
-
-if (tg) {
-  try {
-    tg.ready();
-    tg.expand();
-  } catch(e) {}
-}
-
-const msgEl = document.getElementById('msg');
-
-const startParam =
-  tg && tg.initDataUnsafe
-    ? (tg.initDataUnsafe.start_param || '')
-    : '';
+// NOTE: in normal use this page is never even reached — the server
+// (`serve_landing` in api/app.py) already 302-redirects requests that
+// carry `tgWebAppStartParam` straight to the game page. Everything
+// below is only a fallback for the rare client that doesn't attach
+// that param to the URL.
 
 function redirectToGame(slug, chatId) {
   const url =
@@ -48,20 +35,55 @@ function redirectToGame(slug, chatId) {
   window.location.replace(url);
 }
 
-if (startParam) {
+function handleStartParam(startParam) {
+  if (!startParam) return false;
+
   const idx = startParam.lastIndexOf('__');
 
   if (idx > -1) {
-    const slug = startParam.slice(0, idx);
-    const chatId = startParam.slice(idx + 2);
-
-    redirectToGame(slug, chatId);
+    redirectToGame(startParam.slice(0, idx), startParam.slice(idx + 2));
   } else {
     redirectToGame(startParam, '');
   }
-} else {
-  msgEl.textContent =
-    "O'ynash uchun botdagi 'O'ynash' tugmasidan foydalaning.";
+
+  return true;
+}
+
+const msgEl = document.getElementById('msg');
+
+// Fast path: read the start param straight from the URL query string —
+// no need to wait for the (external, network-dependent) Telegram SDK
+// script just to make this redirect decision.
+const queryStartParam = new URLSearchParams(window.location.search).get('tgWebAppStartParam');
+
+if (!handleStartParam(queryStartParam)) {
+  // Fallback: load the SDK only if the query string didn't have it,
+  // and check initData instead.
+  const script = document.createElement('script');
+  script.src = 'https://telegram.org/js/telegram-web-app.js';
+
+  script.onload = function () {
+    const tg = window.Telegram && window.Telegram.WebApp;
+
+    if (tg) {
+      try { tg.ready(); tg.expand(); } catch (e) {}
+    }
+
+    const sdkStartParam =
+      tg && tg.initDataUnsafe ? (tg.initDataUnsafe.start_param || '') : '';
+
+    if (!handleStartParam(sdkStartParam)) {
+      msgEl.textContent =
+        "O'ynash uchun botdagi 'O'ynash' tugmasidan foydalaning.";
+    }
+  };
+
+  script.onerror = function () {
+    msgEl.textContent =
+      "O'ynash uchun botdagi 'O'ynash' tugmasidan foydalaning.";
+  };
+
+  document.head.appendChild(script);
 }
 </script>
 </body>
