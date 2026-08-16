@@ -1,1284 +1,1367 @@
-"""
-Rasm chizish o'yini moduli — Teskari Tezlik boti uchun.
-aiogram 3.x + FastAPI. Mavjud arxitekturaga mos, modular.
-"""
-
-import os
-import json
-import random
-import uuid
-import hmac
-import hashlib
-import logging
-import pathlib
-import io
-import asyncio
-from datetime import datetime
-from urllib.parse import parse_qs, quote
-
-from aiogram import Bot, Dispatcher, Router, types, F
-from aiogram.filters import Command
-from aiogram.types import (
-    InlineKeyboardMarkup, InlineKeyboardButton,
-    BotCommand, BufferedInputFile
-)
-
-log = logging.getLogger(__name__)
-
-# ── Modul darajasida bot havolasi (setup() tomonidan o'rnatiladi) ─────────────
-_bot: Bot | None = None
-_bot_username: str | None = None   # startup'da to'ldiriladi
-_mini_app_short_name = os.getenv("TELEGRAM_MINI_APP_SHORT_NAME", "draw").strip("/")
-
-# ─── ASYNC TAYMERLAR (xotirada, restart'da tozalanadi) ───────────────────────
-_pending_cancel_tasks: dict[int, asyncio.Task] = {}   # "waiting" taymeri
-_pending_answer_tasks: dict[int, asyncio.Task] = {}   # "submitted" faolsizlik taymeri
-
-# ─── FAYLLAR ──────────────────────────────────────────────────────────────────
-WORDS_FILE       = "rasm_sozlar.json"
-DRAW_STATE_FILE  = "drawing_game_states.json"
-DRAW_LIKES_FILE  = "drawing_likes.json"
-DRAW_SCORES_FILE = "drawing_star_scores.json"
-
-# ─── JSON YORDAMCHILAR ────────────────────────────────────────────────────────
-def _load(path):
-    if os.path.exists(path):
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return {}
-
-def _save(path, data):
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-
-# ─── SO'ZLAR BAZASI ───────────────────────────────────────────────────────────
-def _get_all_words():
-    db = _load(WORDS_FILE)
-    words = []
-    for cat_data in db.values():
-        for level_words in cat_data.get("qiyinlik", {}).values():
-            words.extend(level_words)
-    return words
-
-def _random_word(exclude: list = None):
-    all_words = _get_all_words()
-    exclude   = exclude or []
-    available = [w for w in all_words if w not in exclude]
-    if not available:
-        available = all_words
-    return random.choice(available)
-
-def _random_words(n: int, exclude: list = None) -> list:
-    """n ta noyob so'z qaytaradi"""
-    all_words = _get_all_words()
-    exclude   = exclude or []
-    available = [w for w in all_words if w not in exclude]
-    if not available:
-        available = all_words
-    n = min(n, len(available))
-    return random.sample(available, n)
-
-# ─── HOLAT BOSHQARUVI ─────────────────────────────────────────────────────────
-def _get_state(chat_id):
-    return _load(DRAW_STATE_FILE).get(str(chat_id))
-
-def _set_state(chat_id, data):
-    states = _load(DRAW_STATE_FILE)
-    if data is None:
-        states.pop(str(chat_id), None)
-    else:
-        states[str(chat_id)] = data
-    _save(DRAW_STATE_FILE, states)
-
-def _clear_state(chat_id):
-    _set_state(chat_id, None)
-
-# ─── LAYK TIZIMI ──────────────────────────────────────────────────────────────
-def _add_like(message_id, chat_id, liker_id, drawer_id):
-    likes = _load(DRAW_LIKES_FILE)
-    key   = f"{chat_id}_{message_id}"
-    entry = likes.get(key, {"likers": [], "drawer_id": str(drawer_id)})
-    entry["drawer_id"] = str(drawer_id)
-    if str(liker_id) not in entry["likers"]:
-        entry["likers"].append(str(liker_id))
-        likes[key] = entry
-        _save(DRAW_LIKES_FILE, likes)
-        return True
-    return False
-
-# ─── YULDUZ BALL TIZIMI ───────────────────────────────────────────────────────
-def _add_star(chat_id, user_id, amount: int = 1):
-    scores = _load(DRAW_SCORES_FILE)
-    cid    = str(chat_id)
-    uid    = str(user_id)
-    if cid not in scores:
-        scores[cid] = {}
-    scores[cid][uid] = scores[cid].get(uid, 0) + amount
-    _save(DRAW_SCORES_FILE, scores)
-    return scores[cid][uid]
-
-# ─── TELEGRAM initData HMAC TEKSHIRUVI ───────────────────────────────────────
-def _verify_init_data(init_data: str, bot_token: str) -> dict | None:
-    try:
-        parsed = {k: v[0] for k, v in parse_qs(init_data, keep_blank_values=True).items()}
-        received_hash = parsed.pop("hash", None)
-        if not received_hash:
-            return None
-        data_check = "\n".join(f"{k}={v}" for k, v in sorted(parsed.items()))
-        secret     = hmac.new(b"WebAppData", bot_token.encode(), hashlib.sha256).digest()
-        computed   = hmac.new(secret, data_check.encode(), hashlib.sha256).hexdigest()
-        if hmac.compare_digest(computed, received_hash):
-            return parsed
-        return None
-    except Exception as e:
-        log.warning("initData verify error: %s", e)
-        return None
-
-def _user_id_from_init_data(init_data: str) -> str | None:
-    bot_token = os.getenv("API_TOKEN", "")
-    verified  = _verify_init_data(init_data, bot_token) if init_data else None
-    if not verified:
-        return None
-    try:
-        user_json = verified.get("user", "{}")
-        u = json.loads(user_json)
-        return str(u.get("id"))
-    except Exception:
-        return None
-
-# ─── URL YORDAMCHISI ──────────────────────────────────────────────────────────
-def _base_url() -> str:
-    url = os.getenv("RENDER_EXTERNAL_URL", "").strip().rstrip("/")
-    if url:
-        return url
-    dev = os.getenv("REPLIT_DEV_DOMAIN", "").strip()
-    return f"https://{dev}" if dev else ""
-
-def _mini_app_url(session_id: str, chat_id: int) -> str:
-    """Telegram Mini App direct link with the game session in startapp."""
-    bot_username = _bot_username or ""
-    start_param  = f"{session_id}__{chat_id}"
-    return (
-        f"https://t.me/{bot_username}/{_mini_app_short_name}"
-        f"?startapp={quote(start_param, safe='')}"
-    )
-
-# ─── KLAVIATURALAR ───────────────────────────────────────────────────────────
-
-def _selection_keyboard(chat_id: int, session_id: str) -> InlineKeyboardMarkup:
-    """So'z tanlash klaviaturasi — /rasm va yangi o'yinda ishlatiladi"""
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="◀️ Oldingi",  callback_data=f"draw_prev:{chat_id}:{session_id}"),
-            InlineKeyboardButton(text="👀 Ko'rish",  callback_data=f"draw_see:{chat_id}:{session_id}"),
-            InlineKeyboardButton(text="▶️ Keyingi",  callback_data=f"draw_next:{chat_id}:{session_id}"),
-        ],
-        [InlineKeyboardButton(text="✍️ O'z so'zimni kiritish",
-                              callback_data=f"draw_custom:{chat_id}:{session_id}")],
-        [InlineKeyboardButton(text="ℹ️ Qanday chizish kerak?",
-                              callback_data=f"draw_help:{chat_id}")],
-        [InlineKeyboardButton(text="✅ Shu so'zni tanladim — Chizishni boshlash",
-                              callback_data=f"draw_start:{chat_id}:{session_id}")],
-        [InlineKeyboardButton(text="❌ Rad etish",
-                              callback_data=f"draw_decline:{chat_id}:{session_id}")],
-    ])
-
-def _waiting_keyboard(chat_id: int) -> InlineKeyboardMarkup:
-    """Chizuvchi rasm chizayotganda guruhda ko'rinadigan klaviatura"""
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="❌ Chizishni rad etish",
-                              callback_data=f"draw_decline:{chat_id}")],
-    ])
-
-# ─── 2 DAQIQALIK BEKOR QILISH TAYMERI ────────────────────────────────────────
-
-async def _cancel_game_timeout(chat_id: int, session_id: str):
-    """2 daqiqa ichida chizish boshlanmasa o'yinni avtomatik bekor qiladi."""
-    try:
-        await asyncio.sleep(120)
-    except asyncio.CancelledError:
-        return
-
-    state = _get_state(chat_id)
-    # Holat o'zgargan bo'lsa (preview kelgan, submit bo'lgan) — hech narsa qilmaymiz
-    if not state or state.get("session_id") != session_id or state.get("status") != "waiting":
-        return
-
-    _pending_cancel_tasks.pop(chat_id, None)
-    _clear_state(chat_id)
-
-    log.info("Timeout: chat=%s session=%s — o'yin bekor qilindi", chat_id, session_id)
-
-    if _bot:
-        try:
-            await _bot.send_message(
-                chat_id,
-                "⏰ <b>Vaqt tugadi!</b>\n\n"
-                "Chizuvchi 2 daqiqa ichida chizishni boshlamadi.\n"
-                "O'yin bekor qilindi. Yangi o'yin uchun /rasm yozing!",
-                parse_mode="HTML",
-            )
-        except Exception as e:
-            log.warning("timeout msg error: %s", e)
-
-
-def _start_cancel_timer(chat_id: int, session_id: str):
-    """2 daqiqalik bekor qilish taymerini ishga tushiradi."""
-    _stop_cancel_timer(chat_id)
-    try:
-        loop = asyncio.get_event_loop()
-        task = loop.create_task(_cancel_game_timeout(chat_id, session_id))
-        _pending_cancel_tasks[chat_id] = task
-    except RuntimeError:
-        pass   # event loop yo'q — ishlatilmaydi
-
-
-def _stop_cancel_timer(chat_id: int):
-    """Ishlab turgan bekor qilish taymerini to'xtatadi."""
-    task = _pending_cancel_tasks.pop(chat_id, None)
-    if task and not task.done():
-        task.cancel()
-
-
-# ─── 2 DAQIQALIK FAOLSIZLIK TAYMERI (submitted holat) ────────────────────────
-
-async def _answer_game_timeout(chat_id: int, session_id: str):
-    """Rasm yuborilgandan keyin 2 daqiqa ichida javob topilmasa o'yinni tugatadi."""
-    try:
-        await asyncio.sleep(120)
-    except asyncio.CancelledError:
-        return
-
-    state = _get_state(chat_id)
-    if not state or state.get("session_id") != session_id or state.get("status") != "submitted":
-        return
-
-    _pending_answer_tasks.pop(chat_id, None)
-    word        = state.get("word", "?")
-    drawer_name = state.get("drawer_name", "Chizuvchi")
-    _clear_state(chat_id)
-
-    log.info("Answer timeout: chat=%s — o'yin tugadi, so'z=%s", chat_id, word)
-
-    if _bot:
-        try:
-            await _bot.send_message(
-                chat_id,
-                f"⏰ <b>Vaqt tugadi!</b>\n\n"
-                f"2 daqiqa ichida hech kim so'zni topa olmadi.\n"
-                f"🎨 Chizuvchi: <b>{drawer_name}</b>\n"
-                f"📝 So'z: <b>{word}</b>\n\n"
-                f"Yangi o'yin uchun /rasm yozing!",
-                parse_mode="HTML",
-            )
-        except Exception as e:
-            log.warning("answer timeout msg error: %s", e)
-
-
-def _start_answer_timer(chat_id: int, session_id: str):
-    """Rasm yuborilgandan keyin 2 daqiqalik faolsizlik taymerini ishga tushiradi."""
-    _stop_answer_timer(chat_id)
-    try:
-        loop = asyncio.get_event_loop()
-        task = loop.create_task(_answer_game_timeout(chat_id, session_id))
-        _pending_answer_tasks[chat_id] = task
-    except RuntimeError:
-        pass
-
-
-def _stop_answer_timer(chat_id: int):
-    """Faolsizlik taymerini to'xtatadi (to'g'ri javob yoki admin /stop)."""
-    task = _pending_answer_tasks.pop(chat_id, None)
-    if task and not task.done():
-        task.cancel()
-
-
-# ─── ADMIN: O'YINNI MAJBURAN TO'XTATISH ──────────────────────────────────────
-
-async def stop_game(chat_id: int) -> dict:
-    """
-    Admin /stop buyrug'i uchun. Har qanday faol rasm o'yinini tugatadi.
-    Returns: {"stopped": bool, "word": str|None, "status": str}
-    """
-    state = _get_state(chat_id)
-    if not state:
-        return {"stopped": False, "word": None, "status": "no_game"}
-
-    word   = state.get("word")
-    status = state.get("status", "")
-
-    _stop_cancel_timer(chat_id)
-    _stop_answer_timer(chat_id)
-    _clear_state(chat_id)
-
-    log.info("Admin stop: chat=%s status=%s word=%s", chat_id, status, word)
-    return {"stopped": True, "word": word, "status": status}
-
-def _draw_start_keyboard(chat_id: int, session_id: str) -> InlineKeyboardMarkup:
-    """
-    "✅ Shu so'zni tanladim" bosilgandan keyin guruhda ko'rinadigan klaviatura.
-    URL tugma: bitta bosish → Telegram Mini App to'g'ridan-to'g'ri ochiladi.
-    startapp format: {session_id}__{chat_id}
-    """
-    mini_app_url = _mini_app_url(session_id, chat_id)
-
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(
-            text = "🎨 Chizishni boshlash",
-            url  = mini_app_url,
-        )],
-        [InlineKeyboardButton(
-            text          = "❌ Chizishni rad etish",
-            callback_data = f"draw_decline:{chat_id}:{session_id}",
-        )],
-    ])
-
-
-async def handle_draw_deeplink(user_id: int, start_param: str, bot: Bot) -> bool:
-    """
-    main.py /start handleri tomonidan chaqiriladi.
-    start_param = 'd{32hexchars}_{abs_chat_id}' formatida bo'ladi.
-    Agar to'g'ri bo'lsa, foydalanuvchining lichkasiga Mini App direct-link xabari yuboradi.
-    Qaytaradi: True — muvaffaqiyatli, False — tegishli emas yoki xato.
-    """
-    if not (start_param.startswith("d") and "_" in start_param):
-        return False
-
-    body = start_param[1:]  # 'd' prefiksini olib tashlash
-    sep  = body.index("_")
-    sid_hex = body[:sep]
-    abs_cid = body[sep + 1:]
-
-    if len(sid_hex) != 32 or not sid_hex.isalnum() or not abs_cid.isdigit():
-        return False
-
-    # UUID ni tiklash: 8-4-4-4-12
-    s = sid_hex
-    session_id = f"{s[0:8]}-{s[8:12]}-{s[12:16]}-{s[16:20]}-{s[20:32]}"
-    chat_id    = -int(abs_cid)   # guruh chat_id manfiy
-
-    state = _get_state(chat_id)
-    if not state or state.get("session_id") != session_id:
-        await bot.send_message(
-            user_id,
-            "❌ O'yin sessiyasi topilmadi yoki muddati o'tgan.\n"
-            "Guruhda /rasm bilan yangi o'yin boshlang.",
-        )
-        return True
-
-    if str(user_id) != state.get("drawer_id"):
-        await bot.send_message(
-            user_id,
-            "❌ Siz bu o'yinda chizuvchi emassiz.",
-        )
-        return True
-
-    if state.get("status") not in ("waiting",):
-        await bot.send_message(
-            user_id,
-            "⚠️ O'yin holati noto'g'ri. Guruhda qaytadan urinib ko'ring.",
-        )
-        return True
-
-    mini_app_url = _mini_app_url(session_id, chat_id)
-
-    await bot.send_message(
-        user_id,
-        f"🎨 <b>So'zingiz tayyor!</b>\n\n"
-        f"Quyidagi tugmani bosib rasm chizishni boshlang 👇",
-        parse_mode  = "HTML",
-        reply_markup = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(
-                text    = "🎨 Rasm chizishni boshlash",
-                url     = mini_app_url,
-            )]
-        ]),
-    )
-    return True
-
-def _submitted_keyboard(chat_id: int, message_id: int, drawer_id) -> InlineKeyboardMarkup:
-    """Rasm guruhga yuborilgandan keyin ko'rinadigan klaviatura"""
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="👍 Layk",
-                                 callback_data=f"draw_like:{chat_id}:{message_id}:{drawer_id}"),
-            InlineKeyboardButton(text="✋ Chizishni xohlayman!",
-                                 callback_data=f"draw_want:{chat_id}"),
-        ],
-        [InlineKeyboardButton(text="❌ Chizishni rad etish",
-                              callback_data=f"draw_decline:{chat_id}")],
-    ])
-
-def _answered_keyboard(chat_id: int, message_id: int, drawer_id) -> InlineKeyboardMarkup:
-    """To'g'ri javob topilgandan keyin rasm xabarida ko'rinadigan klaviatura"""
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="👍 Layk",
-                                 callback_data=f"draw_like:{chat_id}:{message_id}:{drawer_id}"),
-        ],
-    ])
-
-# ─── ROUTER ───────────────────────────────────────────────────────────────────
-rasm_router = Router()
-
-# ─── /rasm KOMANDASI ──────────────────────────────────────────────────────────
-@rasm_router.message(Command("rasm"))
-async def cmd_rasm(message: types.Message, bot: Bot):
-    chat_id    = message.chat.id
-    user       = message.from_user
-
-    # ── Bir vaqtda bitta o'yin ───────────────────────────────────────────────
-    existing = _get_state(chat_id)
-    if existing and existing.get("status") in ("selecting", "waiting", "submitted",
-                                                "custom_word_pending"):
-        drawer_name = existing.get("drawer_name", "Noma'lum")
-        status      = existing.get("status", "")
-        status_text = {
-            "selecting":          "so'z tanlayapti",
-            "custom_word_pending":"o'z so'zini kiritayapti",
-            "waiting":            "rasm chizayapti",
-            "submitted":          "rasm yuborildi, javob kutilmoqda",
-        }.get(status, status)
-        await message.answer(
-            f"⚠️ Guruhda allaqachon faol o'yin bor!\n\n"
-            f"🖊️ Chizuvchi: <b>{drawer_name}</b> — {status_text}.\n\n"
-            f"O'yin tugagandan so'ng yangi o'yin boshlash mumkin.",
-            parse_mode="HTML",
-        )
-        return
-
-    session_id = str(uuid.uuid4())
-
-    # 3 ta so'z tayyorla
-    candidates = _random_words(3)
-    if not candidates:
-        await message.answer("❌ So'zlar bazasi bo'sh. Iltimos, keyinroq urinib ko'ring.")
-        return
-    word = candidates[0]
-
-    _set_state(chat_id, {
-        "session_id":         session_id,
-        "drawer_id":          str(user.id),
-        "drawer_name":        user.full_name,
-        "word":               word,
-        "word_candidates":    candidates,
-        "word_idx":           0,
-        "status":             "selecting",
-        "game_message_id":    None,
-        "drawing_message_id": None,
-        "preview_message_id": None,
-        "used_words":         candidates[:],
-        "custom_word":        False,
-        "want_queue":         [],
-        "chat_id":            chat_id,
-    })
-
-    kb   = _selection_keyboard(chat_id, session_id)
-    sent = await message.answer(
-        f"🎨 <b>Rasm chizish o'yini!</b>\n\n"
-        f"🖊️ <b>Chizuvchi:</b> {user.full_name}\n\n"
-        f"📝 <b>So'z tanlang:</b>",
-        reply_markup=kb,
-        parse_mode="HTML",
-    )
-    state = _get_state(chat_id)
-    if state:
-        state["game_message_id"] = sent.message_id
-        _set_state(chat_id, state)
-
-# ─── ℹ️ QANDAY CHIZISH KERAK ─────────────────────────────────────────────────
-@rasm_router.callback_query(F.data.startswith("draw_help:"))
-async def cb_draw_help(query: types.CallbackQuery):
-    await query.answer(
-        "ℹ️ Rasm chizish qoidalari:\n\n"
-        "1️⃣ So'z tanlang (◀️ ▶️ tugmalari bilan)\n"
-        "2️⃣ 👀 Ko'rish orqali so'zingizni ko'ring\n"
-        "3️⃣ ✅ Boshlash tugmasini bosing\n"
-        "4️⃣ Telegram ichida ochilgan oynada so'zni chizing\n"
-        "5️⃣ 📤 Yuborish ni bosing\n"
-        "6️⃣ Boshqalar rasmga qarab so'zni topadi!\n\n"
-        "💡 So'zni yozib bo'lmaydi!",
-        show_alert=True,
-    )
-
-# ─── 👀 SO'ZNI KO'RISH ────────────────────────────────────────────────────────
-@rasm_router.callback_query(F.data.startswith("draw_see:"))
-async def cb_draw_see(query: types.CallbackQuery):
-    parts      = query.data.split(":")
-    chat_id    = int(parts[1])
-    session_id = parts[2]
-
-    state = _get_state(chat_id)
-    if not state or state.get("session_id") != session_id:
-        await query.answer("❌ Sessiya topilmadi.", show_alert=True)
-        return
-    if str(query.from_user.id) != state.get("drawer_id"):
-        await query.answer("❌ Faqat chizuvchi so'zni ko'ra oladi.", show_alert=True)
-        return
-
-    word = state.get("word", "?")
-    await query.answer(f"🎨 Sizning so'zingiz:\n\n✏️ {word}", show_alert=True)
-
-# ─── ◀️ OLDINGI SO'Z ──────────────────────────────────────────────────────────
-@rasm_router.callback_query(F.data.startswith("draw_prev:"))
-async def cb_draw_prev(query: types.CallbackQuery):
-    parts      = query.data.split(":")
-    chat_id    = int(parts[1])
-    session_id = parts[2]
-
-    state = _get_state(chat_id)
-    if not state or state.get("session_id") != session_id:
-        await query.answer("❌ Sessiya topilmadi.", show_alert=True)
-        return
-    if str(query.from_user.id) != state.get("drawer_id"):
-        await query.answer("❌ Faqat chizuvchi so'z tanlaydi.", show_alert=True)
-        return
-    if state.get("status") not in ("selecting", "custom_word_pending"):
-        await query.answer("❌ So'z allaqachon tanlangan.", show_alert=True)
-        return
-
-    candidates = state.get("word_candidates", [])
-    idx        = state.get("word_idx", 0)
-
-    if idx <= 0:
-        await query.answer("◀️ Bu birinchi so'z! ▶️ Keyingi ni bosing.", show_alert=True)
-        return
-
-    idx -= 1
-    state["word_idx"] = idx
-    state["word"]     = candidates[idx]
-    _set_state(chat_id, state)
-
-    await query.answer(f"◀️ So'z:\n\n✏️ {candidates[idx]}", show_alert=True)
-
-# ─── ▶️ KEYINGI SO'Z ──────────────────────────────────────────────────────────
-@rasm_router.callback_query(F.data.startswith("draw_next:"))
-async def cb_draw_next(query: types.CallbackQuery):
-    parts      = query.data.split(":")
-    chat_id    = int(parts[1])
-    session_id = parts[2]
-
-    state = _get_state(chat_id)
-    if not state or state.get("session_id") != session_id:
-        await query.answer("❌ Sessiya topilmadi.", show_alert=True)
-        return
-    if str(query.from_user.id) != state.get("drawer_id"):
-        await query.answer("❌ Faqat chizuvchi so'z tanlaydi.", show_alert=True)
-        return
-    if state.get("status") not in ("selecting", "custom_word_pending"):
-        await query.answer("❌ So'z allaqachon tanlangan.", show_alert=True)
-        return
-
-    candidates = state.get("word_candidates", [])
-    idx        = state.get("word_idx", 0)
-    used       = state.get("used_words", [])
-
-    idx += 1
-    if idx >= len(candidates):
-        # Yangi so'z generatsiya qil
-        new_word = _random_word(exclude=used)
-        candidates.append(new_word)
-        used.append(new_word)
-        state["word_candidates"] = candidates
-        state["used_words"]      = used
-
-    state["word_idx"] = idx
-    state["word"]     = candidates[idx]
-    _set_state(chat_id, state)
-
-    await query.answer(f"▶️ So'z:\n\n✏️ {candidates[idx]}", show_alert=True)
-
-# ─── ✍️ O'Z SO'ZIMNI KIRITISH ─────────────────────────────────────────────────
-@rasm_router.callback_query(F.data.startswith("draw_custom:"))
-async def cb_draw_custom(query: types.CallbackQuery, bot: Bot):
-    parts      = query.data.split(":")
-    chat_id    = int(parts[1])
-    session_id = parts[2]
-
-    state = _get_state(chat_id)
-    if not state or state.get("session_id") != session_id:
-        await query.answer("❌ Sessiya topilmadi.", show_alert=True)
-        return
-    if str(query.from_user.id) != state.get("drawer_id"):
-        await query.answer("❌ Faqat chizuvchi o'z so'zini kirita oladi.", show_alert=True)
-        return
-
-    state["status"]      = "custom_word_pending"
-    state["custom_word"] = True
-    _set_state(chat_id, state)
-
-    try:
-        await bot.send_message(
-            query.from_user.id,
-            "✍️ Chizmoqchi bo'lgan so'zingizni yozing:\n\n"
-            "Masalan: Ferrari, Ajdarho, Eiffel minorasi\n\n"
-            "(Guruhga qaytib, chizishni boshlang)",
-        )
-        await query.answer("✅ Shaxsiy chatga xabar yubordik!")
-    except Exception:
-        await query.answer(
-            "⚠️ Avval botga /start yuboring, so'ng qaytadan urinib ko'ring.",
-            show_alert=True,
-        )
-
-# ─── ✅ SO'ZNI TANLADIM — CHIZISHNI BOSHLASH ─────────────────────────────────
-@rasm_router.callback_query(F.data.startswith("draw_start:"))
-async def cb_draw_start(query: types.CallbackQuery, bot: Bot):
-    parts      = query.data.split(":")
-    chat_id    = int(parts[1])
-    session_id = parts[2]
-
-    state = _get_state(chat_id)
-    if not state or state.get("session_id") != session_id:
-        await query.answer("❌ Sessiya topilmadi.", show_alert=True)
-        return
-    if str(query.from_user.id) != state.get("drawer_id"):
-        await query.answer("❌ Faqat chizuvchi boshlaydi.", show_alert=True)
-        return
-    if state.get("status") not in ("selecting", "custom_word_pending"):
-        await query.answer("❌ O'yin allaqachon boshlangan.", show_alert=True)
-        return
-
-    word = state.get("word", "?")
-    state["status"] = "waiting"
-    _set_state(chat_id, state)
-
-    # 2 daqiqalik bekor qilish taymerini ishga tushir
-    _start_cancel_timer(chat_id, session_id)
-
-    # Guruh xabarini yangilash — URL tugma, bitta bosish → Mini App ochiladi
-    group_kb    = _draw_start_keyboard(chat_id, session_id)
-    game_msg_id = state.get("game_message_id")
-    if game_msg_id:
-        try:
-            await bot.edit_message_text(
-                chat_id      = chat_id,
-                message_id   = game_msg_id,
-                text         = (
-                    f"🎨 <b>Rasm chizish o'yini!</b>\n\n"
-                    f"🖊️ <b>Chizuvchi:</b> {state['drawer_name']}\n\n"
-                    f"⏳ <b>Chizuvchi rasm chizmoqda...</b>\n"
-                    f"Rasm yuborilgandan so'ng so'zni topishga harakat qiling! 🤔"
-                ),
-                reply_markup = group_kb,
-                parse_mode   = "HTML",
-            )
-        except Exception as e:
-            log.warning("edit group msg error: %s", e)
-
-    await query.answer("✅ Boshlang!")
-
-# ─── 👍 LAYK ──────────────────────────────────────────────────────────────────
-@rasm_router.callback_query(F.data.startswith("draw_like:"))
-async def cb_draw_like(query: types.CallbackQuery, bot: Bot):
-    parts      = query.data.split(":")
-    chat_id    = int(parts[1])
-    message_id = int(parts[2])
-    drawer_id  = int(parts[3])
-    liker      = query.from_user
-
-    if liker.id == drawer_id:
-        await query.answer("❌ O'z rasmingizga layk bosa olmaysiz.", show_alert=True)
-        return
-
-    added = _add_like(message_id, chat_id, liker.id, drawer_id)
-    if not added:
-        await query.answer("❌ Siz allaqachon bu rasmga layk berdingiz.", show_alert=True)
-        return
-
-    total_stars = _add_star(chat_id, drawer_id)
-    await bot.send_message(
-        chat_id,
-        f"👍 <b>{liker.full_name}</b> rasmni baholadi. +1⭐\n"
-        f"🌟 Chizuvchining umumiy yulduzlari: {total_stars}⭐",
-        parse_mode="HTML",
-    )
-    await query.answer("👍 Layk qabul qilindi!")
-
-# ─── ✋ CHIZISHNI XOHLAYMAN ───────────────────────────────────────────────────
-@rasm_router.callback_query(F.data.startswith("draw_want:"))
-async def cb_draw_want(query: types.CallbackQuery):
-    chat_id = int(query.data.split(":")[1])
-    user    = query.from_user
-    state   = _get_state(chat_id)
-
-    if not state:
-        await query.answer("Hozircha o'yin yo'q. /rasm bilan boshlang!")
-        return
-    if str(user.id) == state.get("drawer_id"):
-        await query.answer("Siz hozir chizuvchisiz!", show_alert=True)
-        return
-
-    queue = state.get("want_queue", [])
-    uid   = str(user.id)
-    if uid not in [q["id"] for q in queue]:
-        queue.append({"id": uid, "name": user.full_name})
-        state["want_queue"] = queue
-        _set_state(chat_id, state)
-        await query.answer(f"✋ Navbatga qo'shildingiz! ({len(queue)}-o'rinda)", show_alert=True)
-    else:
-        await query.answer("Siz allaqachon navbatdasiz!", show_alert=True)
-
-# ─── ❌ CHIZISHNI RAD ETISH ───────────────────────────────────────────────────
-@rasm_router.callback_query(F.data.startswith("draw_decline:"))
-async def cb_draw_decline(query: types.CallbackQuery, bot: Bot):
-    chat_id = int(query.data.split(":")[1])
-    user    = query.from_user
-    state   = _get_state(chat_id)
-
-    if not state:
-        await query.answer("O'yin topilmadi.", show_alert=True)
-        return
-    if str(user.id) != state.get("drawer_id"):
-        await query.answer("❌ Faqat chizuvchi rad eta oladi.", show_alert=True)
-        return
-
-    # Barcha taymerlarni to'xtat
-    _stop_cancel_timer(chat_id)
-    _stop_answer_timer(chat_id)
-
-    want_queue = state.get("want_queue", [])
-    used_words = state.get("used_words", [])
-    _clear_state(chat_id)
-
-    if want_queue:
-        # Navbatdagi o'yinchi chizuvchi bo'ladi
-        nxt        = want_queue.pop(0)
-        session_id = str(uuid.uuid4())
-        candidates = _random_words(3, exclude=used_words)
-        if not candidates:
-            candidates = _random_words(3)
-
-        new_state = {
-            "session_id":         session_id,
-            "drawer_id":          nxt["id"],
-            "drawer_name":        nxt["name"],
-            "word":               candidates[0],
-            "word_candidates":    candidates,
-            "word_idx":           0,
-            "status":             "selecting",
-            "game_message_id":    None,
-            "drawing_message_id": None,
-            "used_words":         used_words + candidates,
-            "custom_word":        False,
-            "want_queue":         want_queue,
-            "chat_id":            chat_id,
-        }
-        _set_state(chat_id, new_state)
-
-        kb   = _selection_keyboard(chat_id, session_id)
-        sent = await bot.send_message(
-            chat_id,
-            f"🎨 <b>Yangi o'yin!</b>\n\n"
-            f"🖊️ <b>Chizuvchi:</b> {nxt['name']}\n\n"
-            f"📝 So'z tanlang va chizishni boshlang!",
-            reply_markup = kb,
-            parse_mode   = "HTML",
-        )
-        new_state["game_message_id"] = sent.message_id
-        _set_state(chat_id, new_state)
-        await query.answer("✅ O'yin o'tkazildi!")
-    else:
-        await bot.send_message(
-            chat_id,
-            "❌ Chizuvchi o'yindan chiqdi.\n\nYangi o'yin uchun /rasm buyrug'ini yozing!"
-        )
-        await query.answer("✅ O'yindan chiqdingiz.")
-
-# ─── ⏳🎨 YANGI O'YIN ──────────────────────────────────────────────────────────
-@rasm_router.callback_query(F.data.startswith("draw_restart:"))
-async def cb_draw_restart(query: types.CallbackQuery, bot: Bot):
-    chat_id = int(query.data.split(":")[1])
-    state   = _get_state(chat_id)
-
-    # Faqat "answered" holatda ishlaydi — qayta bosilishdan himoya
-    if not state or state.get("status") != "answered":
-        await query.answer("✅ O'yin allaqachon boshlangan yoki tugagan.", show_alert=False)
-        return
-
-    want_queue = state.get("want_queue", [])
-    used_words = state.get("used_words", [])
-
-    # Tugmani darhol bloklash uchun statusni o'zgartir (race condition himoyasi)
-    state["status"] = "restarting"
-    _set_state(chat_id, state)
-
-    # Natija xabaridagi tugmani o'chirib qo'y
-    try:
-        await bot.edit_message_reply_markup(
-            chat_id      = chat_id,
-            message_id   = query.message.message_id,
-            reply_markup = InlineKeyboardMarkup(inline_keyboard=[]),
-        )
-    except Exception:
-        pass
-
-    _clear_state(chat_id)
-
-    user = query.from_user
-    if want_queue:
-        nxt         = want_queue.pop(0)
-        drawer_id   = nxt["id"]
-        drawer_name = nxt["name"]
-    else:
-        drawer_id   = str(user.id)
-        drawer_name = user.full_name
-
-    session_id = str(uuid.uuid4())
-    candidates = _random_words(3, exclude=used_words)
-    if not candidates:
-        candidates = _random_words(3)
-
-    new_state = {
-        "session_id":         session_id,
-        "drawer_id":          drawer_id,
-        "drawer_name":        drawer_name,
-        "word":               candidates[0],
-        "word_candidates":    candidates,
-        "word_idx":           0,
-        "status":             "selecting",
-        "game_message_id":    None,
-        "drawing_message_id": None,
-        "used_words":         used_words + candidates,
-        "custom_word":        False,
-        "want_queue":         want_queue,
-        "chat_id":            chat_id,
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>🎨 Rasm Chizish</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+:root {
+  --bg:#fff; --txt:#222; --btn:#2ea6ff; --btn-txt:#fff;
+  --panel:#f2f2f7; --border:rgba(0,0,0,.12);
+  --act-border:#2ea6ff; --act-bg:#e3f2fd;
+}
+body {
+  background:var(--bg); color:var(--txt);
+  font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+  display:flex; flex-direction:column; height:100vh;
+  overflow:hidden; user-select:none; -webkit-user-select:none;
+}
+
+/* ── TOPBAR ── */
+#topbar {
+  display:flex; align-items:center; gap:5px;
+  padding:5px 8px; background:var(--panel);
+  border-bottom:1px solid var(--border); flex-shrink:0;
+}
+#topbar button {
+  border:none; border-radius:8px; padding:7px 10px;
+  font-size:12px; font-weight:700; cursor:pointer;
+  white-space:nowrap; transition:opacity .15s;
+}
+#topbar button:active { opacity:.7; }
+#btn-see  { background:#ffd600; color:#222; }
+#btn-send { background:var(--btn); color:var(--btn-txt); margin-left:auto; padding:7px 14px; }
+
+/* ── WORD OVERLAY ── */
+#word-overlay {
+  display:none; position:fixed; inset:0;
+  background:rgba(0,0,0,.65); z-index:999;
+  align-items:center; justify-content:center;
+  flex-direction:column; gap:16px;
+}
+#word-overlay.show { display:flex; }
+#word-box {
+  background:#fff; border-radius:16px; padding:24px 32px;
+  text-align:center; box-shadow:0 8px 32px rgba(0,0,0,.3); max-width:90vw;
+}
+#word-box .lbl  { font-size:13px; color:#888; margin-bottom:8px; }
+#word-box .word { font-size:28px; font-weight:800; color:#1a1a2e; }
+#word-box .hint { font-size:12px; color:#aaa; margin-top:8px; }
+#btn-close-word {
+  background:#fff; border:none; border-radius:12px;
+  padding:10px 28px; font-size:15px; font-weight:700;
+  cursor:pointer; box-shadow:0 4px 16px rgba(0,0,0,.2);
+}
+
+/* ── CANVAS ── */
+#canvas-wrap {
+  flex:1; position:relative; overflow:hidden; background:#fff;
+  will-change:transform;
+}
+#canvas-wrap canvas {
+  position:absolute; inset:0; width:100%; height:100%;
+  display:block; touch-action:none;
+}
+#bg-canvas  { z-index:1; }
+#obj-canvas { z-index:2; background:transparent; }
+
+/* ── TOOLBAR ── */
+#toolbar {
+  background:var(--panel); border-top:1px solid var(--border);
+  flex-shrink:0; padding-bottom:env(safe-area-inset-bottom,2px);
+}
+
+/* Mode tabs */
+#mode-tabs { display:flex; border-bottom:1px solid var(--border); }
+.mode-tab {
+  flex:1; padding:7px 4px; text-align:center;
+  font-size:12px; font-weight:700; cursor:pointer;
+  border:none; background:none; color:#888;
+  border-bottom:3px solid transparent;
+  transition:color .15s, border-color .15s;
+}
+.mode-tab.active { color:var(--act-border); border-bottom-color:var(--act-border); }
+
+/* Panel sections */
+.tb-panel { display:none; flex-direction:column; gap:4px; padding:5px 6px 2px; }
+.tb-panel.visible { display:flex; }
+
+.tool-row {
+  display:flex; align-items:center; gap:4px;
+  justify-content:center; flex-wrap:wrap;
+}
+
+/* Shape scroll row */
+#shape-scroll {
+  display:flex; gap:4px; overflow-x:auto; padding:2px 0;
+  scrollbar-width:none;
+}
+#shape-scroll::-webkit-scrollbar { display:none; }
+
+/* Tool button */
+.tool-btn {
+  border:2px solid transparent; border-radius:9px;
+  min-width:40px; height:40px; font-size:18px;
+  background:#fff; cursor:pointer; flex-shrink:0;
+  display:flex; align-items:center; justify-content:center;
+  transition:border-color .12s, background .12s;
+  box-shadow:0 1px 3px rgba(0,0,0,.12); padding:0 4px;
+}
+.tool-btn.active { border-color:var(--act-border); background:var(--act-bg); }
+.tool-btn:active { opacity:.7; }
+
+/* Shape button */
+.sh-btn {
+  border:2px solid transparent; border-radius:8px;
+  width:44px; height:34px; font-size:15px;
+  background:#fff; cursor:pointer; flex-shrink:0;
+  display:flex; align-items:center; justify-content:center;
+  box-shadow:0 1px 3px rgba(0,0,0,.1);
+  transition:border-color .12s, background .12s;
+}
+.sh-btn.active { border-color:var(--act-border); background:var(--act-bg); }
+.sh-btn:active { opacity:.7; }
+
+/* Size + color row */
+#size-row {
+  display:flex; align-items:center; gap:5px;
+  padding:3px 6px 1px; flex-wrap:nowrap; overflow-x:auto;
+  scrollbar-width:none;
+}
+#size-row::-webkit-scrollbar { display:none; }
+#size-slider {
+  width:90px; min-width:60px;
+  height:4px; accent-color:var(--btn); cursor:pointer; flex-shrink:0;
+}
+#size-dot {
+  width:22px; height:22px; border-radius:50%; background:#333;
+  display:flex; align-items:center; justify-content:center; flex-shrink:0;
+}
+#size-inner { border-radius:50%; background:#333; transition:all .1s; }
+.clr-sep { width:1px; height:22px; background:var(--border); flex-shrink:0; }
+.color-swatch {
+  width:26px; height:26px; border-radius:50%;
+  border:3px solid transparent; cursor:pointer; flex-shrink:0;
+  transition:border-color .1s, transform .1s;
+  box-shadow:0 1px 3px rgba(0,0,0,.2);
+}
+.color-swatch:active { transform:scale(.85); }
+.color-swatch.active { border-color:#111; transform:scale(1.15); }
+#cpick-btn {
+  width:26px; height:26px; border-radius:50%; flex-shrink:0; cursor:pointer;
+  border:3px solid #ccc;
+  background:conic-gradient(red,yellow,lime,cyan,blue,magenta,red);
+  box-shadow:0 1px 3px rgba(0,0,0,.2);
+}
+#cpick-input { position:absolute; left:-9999px; opacity:0; width:1px; height:1px; }
+
+/* Fill button */
+#fill-btn {
+  font-size:11px; padding:2px 7px; height:26px;
+  border:2px solid #ccc; border-radius:6px;
+  background:#fff; cursor:pointer; font-weight:700;
+  flex-shrink:0; color:#555; white-space:nowrap;
+}
+#fill-btn.on { border-color:var(--btn); color:var(--btn); background:var(--act-bg); }
+
+/* Action row */
+#action-row {
+  display:flex; gap:4px; padding:2px 6px 4px;
+  justify-content:flex-end; align-items:center;
+}
+.act-btn {
+  border:none; border-radius:8px; padding:5px 9px;
+  font-size:12px; cursor:pointer; font-weight:700;
+  transition:opacity .15s; white-space:nowrap;
+}
+.act-btn:active { opacity:.7; }
+#btn-undo  { background:#e3f2fd; color:#1565c0; }
+#btn-redo  { background:#e8f5e9; color:#2e7d32; }
+#btn-del   { background:#fce4ec; color:#c62828; }
+#btn-clear { background:#fff3e0; color:#e65100; }
+#sel-info  { font-size:11px; color:#888; flex:1; }
+
+/* Toast */
+#toast {
+  position:fixed; bottom:90px; left:50%; transform:translateX(-50%);
+  background:rgba(0,0,0,.78); color:#fff;
+  border-radius:20px; padding:8px 18px;
+  font-size:13px; font-weight:600; opacity:0;
+  transition:opacity .3s; pointer-events:none; z-index:1000;
+  white-space:nowrap;
+}
+#toast.show { opacity:1; }
+
+/* Loading */
+#loading {
+  position:fixed; inset:0; background:rgba(255,255,255,.93);
+  display:flex; align-items:center; justify-content:center;
+  flex-direction:column; gap:12px; z-index:2000; font-size:15px; color:#666;
+}
+.spinner {
+  width:36px; height:36px; border:4px solid #ddd;
+  border-top-color:var(--btn); border-radius:50%;
+  animation:spin .8s linear infinite;
+}
+@keyframes spin { to { transform:rotate(360deg); } }
+</style>
+</head>
+<body>
+
+<div id="loading"><div class="spinner"></div><span>Yuklanmoqda...</span></div>
+
+<!-- WORD OVERLAY -->
+<div id="word-overlay">
+  <div id="word-box">
+    <div class="lbl">🎨 Siz chizishingiz kerak:</div>
+    <div class="word" id="current-word">...</div>
+    <div class="hint">Bu so'zni chizing — yozib bo'lmaydi!</div>
+  </div>
+  <button id="btn-close-word">✅ Tushundim, chizishni boshlayman</button>
+</div>
+
+<!-- TOP BAR -->
+<div id="topbar">
+  <button id="btn-see">👀 So'zni ko'rish</button>
+  <button id="btn-send">📤 Yuborish</button>
+</div>
+
+<!-- CANVAS -->
+<div id="canvas-wrap">
+  <canvas id="bg-canvas"></canvas>
+  <canvas id="obj-canvas"></canvas>
+</div>
+
+<!-- TOOLBAR -->
+<div id="toolbar">
+
+  <div id="mode-tabs">
+    <button class="mode-tab active" data-mode="free">✏️ Erkin chizish</button>
+    <button class="mode-tab" data-mode="shape">🔷 Shakllar</button>
+  </div>
+
+  <!-- FREE DRAW panel -->
+  <div class="tb-panel visible" id="pan-free">
+    <div class="tool-row">
+      <button class="tool-btn active" data-ftool="pen"    title="Qalam">✏️</button>
+      <button class="tool-btn"        data-ftool="brush"  title="Mo'yqalam">🖌️</button>
+      <button class="tool-btn"        data-ftool="spray"  title="Sprey">💨</button>
+      <button class="tool-btn"        data-ftool="eraser" title="O'chirg'ich">🧽</button>
+      <div style="width:1px;height:30px;background:var(--border);margin:0 2px;flex-shrink:0"></div>
+      <button class="tool-btn"        data-ftool="line"   title="Chiziq" style="font-size:16px">─</button>
+      <button class="tool-btn"        data-ftool="arrow"  title="Strelka" style="font-size:16px">→</button>
+      <button class="tool-btn"        data-ftool="rect"   title="To'rtburchak">▭</button>
+      <button class="tool-btn"        data-ftool="ellipse" title="Ellips">⬭</button>
+    </div>
+  </div>
+
+  <!-- SHAPE panel -->
+  <div class="tb-panel" id="pan-shape">
+    <div id="shape-scroll">
+      <button class="sh-btn active" data-shape="rect">▭</button>
+      <button class="sh-btn" data-shape="square">◻</button>
+      <button class="sh-btn" data-shape="roundrect">▢</button>
+      <button class="sh-btn" data-shape="ellipse">⬭</button>
+      <button class="sh-btn" data-shape="circle">⚪</button>
+      <button class="sh-btn" data-shape="triangle">▲</button>
+      <button class="sh-btn" data-shape="rtriangle">◺</button>
+      <button class="sh-btn" data-shape="diamond">◆</button>
+      <button class="sh-btn" data-shape="pentagon">⬠</button>
+      <button class="sh-btn" data-shape="hexagon">⬡</button>
+      <button class="sh-btn" data-shape="octagon">⯃</button>
+      <button class="sh-btn" data-shape="star5">⭐</button>
+      <button class="sh-btn" data-shape="star4">✦</button>
+      <button class="sh-btn" data-shape="star6">✡</button>
+      <button class="sh-btn" data-shape="heart">❤️</button>
+      <button class="sh-btn" data-shape="cloud">☁️</button>
+      <button class="sh-btn" data-shape="lightning">⚡</button>
+      <button class="sh-btn" data-shape="arrow">➡️</button>
+      <button class="sh-btn" data-shape="dblarrow" style="font-size:12px">⟺</button>
+      <button class="sh-btn" data-shape="curvarrow" style="font-size:13px">↩</button>
+      <button class="sh-btn" data-shape="plus">➕</button>
+      <button class="sh-btn" data-shape="minus">➖</button>
+      <button class="sh-btn" data-shape="cross" style="font-size:13px">✕</button>
+      <button class="sh-btn" data-shape="line" style="font-size:16px">─</button>
+      <button class="sh-btn" data-shape="moon">🌙</button>
+      <button class="sh-btn" data-shape="sun">☀️</button>
+      <button class="sh-btn" data-shape="speech">💬</button>
+      <button class="sh-btn" data-shape="bang">💥</button>
+      <button class="sh-btn" data-shape="cylinder" style="font-size:12px">⌀</button>
+      <button class="sh-btn" data-shape="parallelogram" style="font-size:11px">▱</button>
+      <button class="sh-btn" data-shape="trapezoid" style="font-size:11px">⏢</button>
+    </div>
+    <div class="tool-row" style="gap:8px;padding:1px 0">
+      <button class="tool-btn active" id="btn-sdraw"   style="font-size:12px;min-width:56px" title="Yangi shakl chiz">✏️ Chiz</button>
+      <button class="tool-btn"        id="btn-sselect" style="font-size:12px;min-width:60px" title="Shaklni tanlash">🖱️ Tanlash</button>
+      <button id="fill-btn">▣ To'ldir</button>
+    </div>
+  </div>
+
+  <!-- SIZE + COLOR (always) -->
+  <div id="size-row">
+    <span style="font-size:13px;flex-shrink:0">📏</span>
+    <input type="range" id="size-slider" min="1" max="40" value="5">
+    <div id="size-dot"><div id="size-inner" style="width:5px;height:5px"></div></div>
+    <div class="clr-sep"></div>
+    <div class="color-swatch active" data-color="#000000" style="background:#000"></div>
+    <div class="color-swatch"        data-color="#ffffff" style="background:#fff;box-shadow:0 0 0 1px #ccc inset"></div>
+    <div class="color-swatch"        data-color="#e53935" style="background:#e53935"></div>
+    <div class="color-swatch"        data-color="#fb8c00" style="background:#fb8c00"></div>
+    <div class="color-swatch"        data-color="#fdd835" style="background:#fdd835"></div>
+    <div class="color-swatch"        data-color="#43a047" style="background:#43a047"></div>
+    <div class="color-swatch"        data-color="#1e88e5" style="background:#1e88e5"></div>
+    <div class="color-swatch"        data-color="#8e24aa" style="background:#8e24aa"></div>
+    <div class="color-swatch"        data-color="#795548" style="background:#795548"></div>
+    <div class="color-swatch"        data-color="#546e7a" style="background:#546e7a"></div>
+    <div id="cpick-btn" title="Boshqa rang"></div>
+    <input type="color" id="cpick-input" value="#000000">
+  </div>
+
+  <!-- ACTION ROW -->
+  <div id="action-row">
+    <span id="sel-info"></span>
+    <button class="act-btn" id="btn-undo">↩️ Bekor</button>
+    <button class="act-btn" id="btn-redo">↪️ Qayta</button>
+    <button class="act-btn" id="btn-del">✕ O'chir</button>
+    <button class="act-btn" id="btn-clear">🗑️ Tozala</button>
+  </div>
+
+</div><!-- /toolbar -->
+
+<div id="toast"></div>
+
+<script>
+(function(){
+'use strict';
+
+const tg = window.Telegram?.WebApp;
+if (tg) { tg.ready(); tg.expand(); }
+
+const params = new URLSearchParams(location.search);
+
+// Telegram Mini App direct link:
+// t.me/bot/draw?startapp=SESSION__CHATID
+// Telegram bu qiymatni initDataUnsafe.start_param ichida ham qaytaradi.
+let SESSION  = params.get('session')  || '';
+let CHAT_ID  = params.get('chat_id') || '';
+
+if ((!SESSION || !CHAT_ID) && tg) {
+  const sp = tg.initDataUnsafe?.start_param || params.get('startapp') || '';
+  if (sp.includes('__')) {
+    const idx  = sp.indexOf('__');
+    SESSION  = sp.slice(0, idx);
+    CHAT_ID  = sp.slice(idx + 2);
+  }
+}
+
+const INIT_DATA = tg ? tg.initData : '';
+
+// ─── CANVAS SETUP ────────────────────────────────────────────────────────
+const wrap   = document.getElementById('canvas-wrap');
+const bgC    = document.getElementById('bg-canvas');
+const objC   = document.getElementById('obj-canvas');
+const bgCtx  = bgC.getContext('2d');
+const objCtx = objC.getContext('2d');
+let W, H;
+
+function resize() {
+  W = bgC.width = objC.width  = wrap.clientWidth;
+  H = bgC.height = objC.height = wrap.clientHeight;
+  // restore latest bg snapshot (resize clears canvas)
+  if (histIdx >= 0) {
+    bgCtx.putImageData(hist[histIdx].bg, 0, 0);
+  } else {
+    bgCtx.fillStyle = '#fff';
+    bgCtx.fillRect(0, 0, W, H);
+  }
+  renderObjs();
+  // Resize paytida zoom holatini tozalash (layout o'zgargani uchun)
+  zScale = 1; zTx = 0; zTy = 0; pinch = null;
+  applyTransform();
+  wrapBaseRect = wrap.getBoundingClientRect();
+}
+window.addEventListener('resize', resize);
+
+// ─── PINCH-ZOOM / PAN (2 barmoq bilan kattalashtirish-kichraytirish) ──────
+let zScale = 1, zTx = 0, zTy = 0;
+let pinch  = null;              // {dist0, mid0, scale0, tx0, ty0, local0x, local0y}
+let wrapBaseRect = null;        // wrap'ning transformsiz holatdagi ekran pozitsiyasi
+const Z_MIN = 1, Z_MAX = 4;
+
+function applyTransform() {
+  wrap.style.transformOrigin = '0 0';
+  wrap.style.transform = `translate(${zTx}px, ${zTy}px) scale(${zScale})`;
+}
+
+function touchDist(t0, t1) {
+  return Math.hypot(t1.clientX - t0.clientX, t1.clientY - t0.clientY);
+}
+function touchMid(t0, t1) {
+  return { x: (t0.clientX + t1.clientX) / 2, y: (t0.clientY + t1.clientY) / 2 };
+}
+
+function clampPan() {
+  const minTx = -(wrap.clientWidth  * (zScale - 1));
+  const minTy = -(wrap.clientHeight * (zScale - 1));
+  zTx = Math.min(0, Math.max(minTx, zTx));
+  zTy = Math.min(0, Math.max(minTy, zTy));
+}
+
+wrap.addEventListener('touchstart', (e) => {
+  if (e.touches.length >= 2) {
+    // 2-barmoq boshlanganda — davom etayotgan chizishni bekor qilamiz
+    if (painting) freePointerUp(e);
+    if (drag)     shapePointerUp(e);
+
+    const [t0, t1] = e.touches;
+    const dist0 = touchDist(t0, t1);
+    const mid0  = touchMid(t0, t1);
+    pinch = {
+      dist0, mid0, scale0: zScale, tx0: zTx, ty0: zTy,
+      local0x: (mid0.x - wrapBaseRect.left - zTx) / zScale,
+      local0y: (mid0.y - wrapBaseRect.top  - zTy) / zScale,
+    };
+    e.preventDefault();
+    e.stopPropagation();
+  }
+}, { capture: true, passive: false });
+
+wrap.addEventListener('touchmove', (e) => {
+  if (pinch && e.touches.length >= 2) {
+    e.preventDefault();
+    e.stopPropagation();
+    const [t0, t1] = e.touches;
+    const dist = touchDist(t0, t1);
+    const mid  = touchMid(t0, t1);
+
+    let newScale = pinch.scale0 * (dist / pinch.dist0);
+    newScale = Math.min(Z_MAX, Math.max(Z_MIN, newScale));
+
+    // Barmoqlar orasidagi nuqta ekranda bir joyda qolishi uchun hisoblanadi
+    zScale = newScale;
+    zTx = mid.x - wrapBaseRect.left - newScale * pinch.local0x;
+    zTy = mid.y - wrapBaseRect.top  - newScale * pinch.local0y;
+    clampPan();
+    applyTransform();
+  }
+}, { capture: true, passive: false });
+
+function _pinchEnd(e) {
+  if (e.touches.length < 2 && pinch) {
+    pinch = null;
+    if (zScale < 1.03) {          // deyarli asl holatga qaytgan bo'lsa — to'liq reset
+      zScale = 1; zTx = 0; zTy = 0;
+    } else {
+      clampPan();
     }
-    _set_state(chat_id, new_state)
-
-    kb   = _selection_keyboard(chat_id, session_id)
-    sent = await bot.send_message(
-        chat_id,
-        f"🎨 <b>Yangi o'yin boshlanadi!</b>\n\n"
-        f"🖊️ <b>Chizuvchi:</b> {drawer_name}\n\n"
-        f"📝 So'z tanlang va chizishni boshlang!",
-        reply_markup = kb,
-        parse_mode   = "HTML",
-    )
-    new_state["game_message_id"] = sent.message_id
-    _set_state(chat_id, new_state)
-    await query.answer("✅ Yangi o'yin boshlandi!")
-
-# ─── GURUHDA RASM JAVOB TEKSHIRUVI ───────────────────────────────────────────
-async def check_drawing_answer(message: types.Message, bot: Bot) -> bool:
-    """
-    Guruhda yuborilgan xabarni rasm o'yini uchun tekshiradi.
-    To'g'ri javob bo'lsa True qaytaradi.
-    """
-    chat_id = message.chat.id
-    state   = _get_state(chat_id)
-
-    if not state or state.get("status") != "submitted":
-        return False
-
-    user = message.from_user
-    if str(user.id) == state.get("drawer_id"):
-        return False
-
-    user_answer  = (message.text or "").strip().lower()
-    correct_word = state.get("word", "").strip().lower()
-
-    if user_answer != correct_word:
-        return False
-
-    # ✅ To'g'ri javob! — faolsizlik taymerini to'xtat
-    _stop_answer_timer(chat_id)
-
-    drawer_name = state.get("drawer_name", "Chizuvchi")
-    drawer_id   = state.get("drawer_id")
-    word        = state.get("word")
-    draw_msg_id = state.get("drawing_message_id", 0)
-
-    state["status"]    = "answered"
-    state["winner_id"] = str(user.id)
-    _set_state(chat_id, state)
-
-    # +4 yulduz: javob topganga ham, chizuvchiga ham
-    winner_stars = _add_star(chat_id, user.id,  amount=4)
-    drawer_stars = _add_star(chat_id, drawer_id, amount=4)
-
-    # Rasm xabarining klaviaturasini yangilash (layk + xohlayman)
-    if draw_msg_id:
-        try:
-            ans_kb = _answered_keyboard(chat_id, draw_msg_id, drawer_id)
-            await bot.edit_message_reply_markup(
-                chat_id      = chat_id,
-                message_id   = draw_msg_id,
-                reply_markup = ans_kb,
-            )
-        except Exception as e:
-            log.warning("edit answered keyboard error: %s", e)
-
-    # Natija xabari + "Yangi o'yin boshlash" tugmasi
-    result_kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(
-            text          = "🆕 Yangi o'yin boshlash",
-            callback_data = f"draw_restart:{chat_id}",
-        )],
-    ])
-    await message.answer(
-        f"🎯 <b>To'g'ri javob!</b>\n\n"
-        f"🖼️ So'z: <b>{word}</b>\n"
-        f"🏆 Topdi: <b>{user.full_name}</b> +4🌟\n"
-        f"🎨 Chizgan: <b>{drawer_name}</b> +4🌟",
-        parse_mode   = "HTML",
-        reply_markup = result_kb,
-    )
-    return True
-
-# ─── SHAXSIY CHATDA SO'Z QABUL QILISH ────────────────────────────────────────
-async def handle_private_custom_word(message: types.Message) -> bool:
-    """
-    Foydalanuvchi shaxsiy chatda o'z so'zini yuborsa,
-    tegishli guruh sessiyasini yangilaydi.
-    """
-    if message.chat.type != "private":
-        return False
-
-    user_id = str(message.from_user.id)
-    states  = _load(DRAW_STATE_FILE)
-
-    found_chat = None
-    for cid, st in states.items():
-        if (
-            st.get("drawer_id") == user_id
-            and st.get("status") == "custom_word_pending"
-        ):
-            found_chat = cid
-            break
-
-    if not found_chat:
-        return False
-
-    custom_word = (message.text or "").strip()
-    if not custom_word or len(custom_word) > 50:
-        await message.answer("❌ So'z juda uzun yoki bo'sh. Qaytadan yuboring.")
-        return True
-
-    state = states[found_chat]
-    used  = state.get("used_words", [])
-    if custom_word not in used:
-        used.append(custom_word)
-    state.update({
-        "word":        custom_word,
-        "status":      "waiting",
-        "custom_word": True,
-        "used_words":  used,
-    })
-    chat_id_int = int(found_chat)
-    _set_state(chat_id_int, state)
-
-    # 2 daqiqalik bekor qilish taymerini ishga tushir
-    session_id = state.get("session_id")
-    _start_cancel_timer(chat_id_int, session_id)
-
-    # Guruh xabarini yangilash — URL tugma, bitta bosish → Mini App ochiladi
-    group_kb   = _draw_start_keyboard(chat_id_int, session_id)
-
-    await message.answer(
-        f"✅ So'zingiz qabul qilindi: <b>{custom_word}</b>\n\n"
-        f"Guruhga qayting va \"🎨 Chizishni boshlash\" tugmasini bosing.",
-        parse_mode = "HTML",
-    )
-
-    if _bot and state.get("game_message_id"):
-        try:
-            await _bot.edit_message_text(
-                chat_id      = chat_id_int,
-                message_id   = state["game_message_id"],
-                text         = (
-                    f"🎨 <b>Rasm chizish o'yini!</b>\n\n"
-                    f"🖊️ <b>Chizuvchi:</b> {state['drawer_name']}\n\n"
-                    f"⏳ <b>Chizuvchi rasm chizmoqda...</b>\n"
-                    f"Rasm yuborilgandan so'ng so'zni topishga harakat qiling! 🤔"
-                ),
-                reply_markup = group_kb,
-                parse_mode   = "HTML",
-            )
-        except Exception as e:
-            log.warning("edit group msg (custom word) error: %s", e)
-
-    return True
-
-# ─── FASTAPI ENDPOINTLAR ──────────────────────────────────────────────────────
-async def _api_draw_word(request):
-    from fastapi.responses import JSONResponse
-    params     = request.query_params
-    session_id = params.get("session")
-    chat_id    = params.get("chat_id")
-    init_data  = params.get("init_data", "")
-
-    if not session_id or not chat_id:
-        return JSONResponse({"error": "missing params"}, status_code=400)
-
-    state = _get_state(int(chat_id))
-    if not state or state.get("session_id") != session_id:
-        return JSONResponse({"error": "session not found"}, status_code=404)
-
-    # Faqat chizuvchi so'zni ko'ra oladi
-    user_id = _user_id_from_init_data(init_data)
-    if user_id and user_id != state.get("drawer_id"):
-        return JSONResponse({"error": "forbidden"}, status_code=403)
-
-    return JSONResponse({
-        "word":      state.get("word", ""),
-        "status":    state.get("status"),
-        "drawer_id": state.get("drawer_id"),
-    })
-
-async def _api_draw_submit(request):
-    from fastapi.responses import JSONResponse
-    import base64
-
-    try:
-        body = await request.json()
-    except Exception:
-        return JSONResponse({"error": "invalid json"}, status_code=400)
-
-    session_id = body.get("session_id")
-    chat_id    = body.get("chat_id")
-    init_data  = body.get("init_data", "")
-    image_b64  = body.get("image_base64", "")
-
-    if not session_id or not chat_id or not image_b64:
-        return JSONResponse({"error": "missing fields"}, status_code=400)
-
-    chat_id = int(chat_id)
-    state   = _get_state(chat_id)
-    if not state or state.get("session_id") != session_id:
-        return JSONResponse({"error": "session not found"}, status_code=404)
-
-    if state.get("status") not in ("waiting", "selecting"):
-        return JSONResponse({"error": "game not in drawing state"}, status_code=409)
-
-    # Foydalanuvchi tekshiruvi (majburiy emas, lekin xavfsizlik uchun)
-    user_id = _user_id_from_init_data(init_data)
-    if user_id and user_id != state.get("drawer_id"):
-        return JSONResponse({"error": "forbidden"}, status_code=403)
-
-    try:
-        if "," in image_b64:
-            image_b64 = image_b64.split(",", 1)[1]
-        image_bytes = base64.b64decode(image_b64)
-    except Exception as e:
-        return JSONResponse({"error": f"image decode error: {e}"}, status_code=400)
-
-    if not image_bytes or len(image_bytes) < 100:
-        return JSONResponse({"error": "image too small or empty"}, status_code=400)
-
-    if not _bot:
-        return JSONResponse({"error": "bot not ready"}, status_code=503)
-
-    # Yakuniy submit — taymerlarni to'xtat
-    _stop_cancel_timer(chat_id)
-
-    drawer_name    = state.get("drawer_name", "Chizuvchi")
-    drawer_id      = state.get("drawer_id")
-    session_id     = state.get("session_id")
-    preview_msg_id = state.get("preview_message_id")
-
-    try:
-        from aiogram.types import InputMediaPhoto
-
-        photo = BufferedInputFile(image_bytes, filename="drawing.png")
-
-        final_caption = (
-            f"🎨 <b>{drawer_name}</b> rasm chizdi!\n\n"
-            "🤔 Bu nima? Rasmga qarab so'zni toping va yozing!"
-        )
-
-        final_msg_id = None
-
-        # Preview xabar mavjud bo'lsa — uni yakuniy rasmga aylantir
-        if preview_msg_id:
-            try:
-                media = InputMediaPhoto(
-                    media      = photo,
-                    caption    = final_caption,
-                    parse_mode = "HTML",
-                )
-                await _bot.edit_message_media(
-                    chat_id    = chat_id,
-                    message_id = preview_msg_id,
-                    media      = media,
-                )
-                await _bot.edit_message_reply_markup(
-                    chat_id      = chat_id,
-                    message_id   = preview_msg_id,
-                    reply_markup = _submitted_keyboard(chat_id, preview_msg_id, drawer_id),
-                )
-                final_msg_id = preview_msg_id
-            except Exception as e:
-                log.warning("preview → final edit error: %s — yangi xabar yuboriladi", e)
-                preview_msg_id = None
-
-        if not final_msg_id:
-            # Yangi rasm xabari yuborish
-            ph_kb = _submitted_keyboard(chat_id, 0, drawer_id)
-            sent  = await _bot.send_photo(
-                chat_id,
-                photo        = photo,
-                caption      = final_caption,
-                reply_markup = ph_kb,
-                parse_mode   = "HTML",
-            )
-            real_kb = _submitted_keyboard(chat_id, sent.message_id, drawer_id)
-            try:
-                await _bot.edit_message_reply_markup(
-                    chat_id      = chat_id,
-                    message_id   = sent.message_id,
-                    reply_markup = real_kb,
-                )
-            except Exception as e:
-                log.warning("edit markup error: %s", e)
-            final_msg_id = sent.message_id
-
-        state["status"]             = "submitted"
-        state["drawing_message_id"] = final_msg_id
-        _set_state(chat_id, state)
-
-        # 2 daqiqalik faolsizlik taymerini ishga tushir
-        _start_answer_timer(chat_id, state.get("session_id", ""))
-
-        log.info("Drawing submitted: chat=%s msg=%s", chat_id, final_msg_id)
-        return JSONResponse({"ok": True, "message_id": final_msg_id})
-
-    except Exception as e:
-        log.error("draw submit error: %s", e)
-        return JSONResponse({"error": str(e)}, status_code=500)
-
-async def _api_draw_preview(request):
-    """
-    Har 30 soniyada frontenddan chaqiriladi.
-    Joriy kanvas holatini guruhga yuboradi yoki oldingi preview xabarini yangilaydi.
-    Birinchi preview kelganda 2 daqiqalik taymer bekor qilinadi.
-    """
-    from fastapi.responses import JSONResponse
-    from aiogram.types import InputMediaPhoto
-    import base64
-
-    try:
-        body = await request.json()
-    except Exception:
-        return JSONResponse({"error": "invalid json"}, status_code=400)
-
-    session_id = body.get("session_id")
-    chat_id    = body.get("chat_id")
-    init_data  = body.get("init_data", "")
-    image_b64  = body.get("image_base64", "")
-
-    if not session_id or not chat_id or not image_b64:
-        return JSONResponse({"error": "missing fields"}, status_code=400)
-
-    chat_id = int(chat_id)
-    state   = _get_state(chat_id)
-
-    if not state or state.get("session_id") != session_id:
-        return JSONResponse({"status": "session_not_found"})
-
-    # Faqat "waiting" holatda ishlaydi
-    current_status = state.get("status", "")
-    if current_status != "waiting":
-        return JSONResponse({"status": current_status})
-
-    # Foydalanuvchi tekshiruvi
-    user_id = _user_id_from_init_data(init_data)
-    if user_id and user_id != state.get("drawer_id"):
-        return JSONResponse({"error": "forbidden"}, status_code=403)
-
-    # Birinchi preview — 2 daqiqalik taymer bekor qilinadi
-    _stop_cancel_timer(chat_id)
-
-    try:
-        if "," in image_b64:
-            image_b64 = image_b64.split(",", 1)[1]
-        image_bytes = base64.b64decode(image_b64)
-    except Exception as e:
-        return JSONResponse({"error": f"image decode error: {e}"}, status_code=400)
-
-    if not image_bytes or len(image_bytes) < 100:
-        return JSONResponse({"error": "image too small"}, status_code=400)
-
-    if not _bot:
-        return JSONResponse({"error": "bot not ready"}, status_code=503)
-
-    drawer_name    = state.get("drawer_name", "Chizuvchi")
-    preview_msg_id = state.get("preview_message_id")
-
-    preview_caption = (
-        f"🎨 <b>{drawer_name}</b> chizmoqda...\n"
-        f"⏱️ Har 30 soniyada yangilanadi"
-    )
-
-    try:
-        photo = BufferedInputFile(image_bytes, filename="preview.png")
-
-        if preview_msg_id:
-            # Mavjud rasmni yangilash
-            try:
-                media = InputMediaPhoto(
-                    media      = photo,
-                    caption    = preview_caption,
-                    parse_mode = "HTML",
-                )
-                await _bot.edit_message_media(
-                    chat_id    = chat_id,
-                    message_id = preview_msg_id,
-                    media      = media,
-                )
-                return JSONResponse({"ok": True, "status": "waiting"})
-            except Exception as e:
-                log.warning("edit preview media error: %s — yangi xabar yuboriladi", e)
-                # Edit muvaffaqiyatsiz bo'lsa yangi yuboramiz
-                state["preview_message_id"] = None
-                _set_state(chat_id, state)
-                preview_msg_id = None
-
-        # Yangi preview xabar yuborish
-        sent = await _bot.send_photo(
-            chat_id,
-            photo      = photo,
-            caption    = preview_caption,
-            parse_mode = "HTML",
-        )
-        state["preview_message_id"] = sent.message_id
-        _set_state(chat_id, state)
-        log.info("Preview sent: chat=%s msg=%s", chat_id, sent.message_id)
-        return JSONResponse({"ok": True, "status": "waiting"})
-
-    except Exception as e:
-        log.error("draw preview error: %s", e)
-        return JSONResponse({"error": str(e)}, status_code=500)
-
-
-async def _serve_draw(request):
-    from fastapi.responses import FileResponse
-    return FileResponse("static/draw.html")
-
-# ─── SETUP ────────────────────────────────────────────────────────────────────
-async def setup_fastapi(bot: Bot, app):
-    """
-    main.py startup() ichidan chaqiriladi (async).
-    """
-    global _bot, _bot_username
-    _bot = bot
-
-    # Bot username — Mini App URL uchun kerak
-    try:
-        me = await bot.get_me()
-        _bot_username = me.username
-        log.info("✅ Bot username: @%s", _bot_username)
-    except Exception as e:
-        log.warning("Bot username olinmadi: %s", e)
-
-    app.add_route("/api/draw/word",    _api_draw_word,    methods=["GET"])
-    app.add_route("/api/draw/submit",  _api_draw_submit,  methods=["POST"])
-    app.add_route("/api/draw/preview", _api_draw_preview, methods=["POST"])
-    app.add_route("/draw",             _serve_draw,       methods=["GET"])
-
-    pathlib.Path("static").mkdir(exist_ok=True)
-    log.info("✅ rasm_oyini FastAPI endpointlari sozlandi")
-
-# Eskiga muvofiqlash uchun
-async def setup(bot: Bot, app, dp: Dispatcher):
-    await setup_fastapi(bot=bot, app=app)
+    applyTransform();
+  }
+}
+wrap.addEventListener('touchend',    _pinchEnd, { capture: true });
+wrap.addEventListener('touchcancel', _pinchEnd, { capture: true });
+
+// ─── STATE ───────────────────────────────────────────────────────────────
+let mode      = 'free';        // 'free' | 'shape'
+let freeTool  = 'pen';         // pen brush spray eraser line arrow rect ellipse
+let shapeTool = 'draw';        // 'draw' | 'select'
+let shapeType = 'rect';
+let color     = '#000000';
+let lw        = 5;             // line width
+let fillOn    = false;
+let currentWord = null;
+
+// Shape objects
+let objs       = [];           // [{id,type,x,y,w,h,color,lw,fill}]
+let selId      = null;
+
+// Drag state
+let drag      = false;
+let dragMode  = null;          // 'move'|'resize-tl'|'resize-tr'|'resize-bl'|'resize-br'|'draw'
+let dragBase  = null;          // snapshot of dragged obj at drag start
+let dragP0    = null;          // pointer at drag start
+
+// Freehand
+let painting  = false;
+let freeSnap  = null;          // ImageData snapshot for shape preview
+let sx=0, sy=0;                // stroke start
+
+// ─── HISTORY ─────────────────────────────────────────────────────────────
+const MAX_H = 40;
+let hist    = [];              // [{bg: ImageData, objs: [...]}]
+let histIdx = -1;
+
+function pushSnap() {
+  hist = hist.slice(0, histIdx + 1);
+  hist.push({ bg: bgCtx.getImageData(0, 0, W, H), objs: JSON.parse(JSON.stringify(objs)) });
+  if (hist.length > MAX_H) hist.shift();
+  histIdx = hist.length - 1;
+}
+
+function applyHist(idx) {
+  if (idx < 0 || idx >= hist.length) return;
+  const s = hist[idx];
+  bgCtx.putImageData(s.bg, 0, 0);
+  objs = JSON.parse(JSON.stringify(s.objs));
+  selId = null;
+  histIdx = idx;
+  renderObjs();
+  updSelInfo();
+}
+
+function doUndo() { applyHist(histIdx - 1); }
+function doRedo() { applyHist(histIdx + 1); }
+
+// ─── OBJECT RENDERING ────────────────────────────────────────────────────
+const HS = 9; // handle half-size px
+
+function renderObjs() {
+  objCtx.clearRect(0, 0, W, H);
+  for (const o of objs) renderShape(objCtx, o);
+  const s = objs.find(o => o.id === selId);
+  if (s) drawHandles(s);
+}
+
+function drawHandles(o) {
+  objCtx.save();
+  objCtx.strokeStyle = '#2ea6ff';
+  objCtx.lineWidth = 1.5;
+  objCtx.setLineDash([4, 3]);
+  objCtx.strokeRect(o.x - 1, o.y - 1, o.w + 2, o.h + 2);
+  objCtx.setLineDash([]);
+  for (const [cx, cy] of [[o.x,o.y],[o.x+o.w,o.y],[o.x,o.y+o.h],[o.x+o.w,o.y+o.h]]) {
+    objCtx.fillStyle = '#fff';
+    objCtx.fillRect(cx - HS, cy - HS, HS*2, HS*2);
+    objCtx.strokeStyle = '#2ea6ff';
+    objCtx.lineWidth = 2;
+    objCtx.strokeRect(cx - HS, cy - HS, HS*2, HS*2);
+  }
+  objCtx.restore();
+}
+
+// ─── SHAPE DRAWING ───────────────────────────────────────────────────────
+function renderShape(ctx, o) {
+  ctx.save();
+  ctx.strokeStyle = o.color;
+  ctx.fillStyle   = o.color;
+  ctx.lineWidth   = o.lw;
+  ctx.lineCap     = 'round';
+  ctx.lineJoin    = 'round';
+
+  const {type, x, y, w, h} = o;
+  const cx = x + w/2, cy = y + h/2;
+  const rx = Math.abs(w/2), ry = Math.abs(h/2);
+
+  // Special shapes that need multi-pass rendering
+  if (type === 'sun') {
+    drawSun(ctx, cx, cy, Math.min(rx, ry), o.color, o.lw, o.fill);
+    ctx.restore(); return;
+  }
+  if (type === 'speech') {
+    drawSpeech(ctx, x, y, w, h, o.color, o.lw, o.fill);
+    ctx.restore(); return;
+  }
+  if (type === 'cylinder') {
+    drawCylinder(ctx, x, y, w, h, o.color, o.lw, o.fill);
+    ctx.restore(); return;
+  }
+
+  ctx.beginPath();
+  switch (type) {
+    case 'rect':
+      ctx.rect(x, y, w, h); break;
+    case 'square': {
+      const s = Math.min(Math.abs(w), Math.abs(h));
+      ctx.rect(x, y, s * Math.sign(w), s * Math.sign(h)); break;
+    }
+    case 'roundrect':
+      roundRect(ctx, x, y, w, h, Math.min(rx,ry)*0.2); break;
+    case 'ellipse':
+      ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI*2); break;
+    case 'circle': {
+      const r = Math.min(rx, ry);
+      ctx.arc(cx, cy, r, 0, Math.PI*2); break;
+    }
+    case 'triangle':
+      ctx.moveTo(cx, y); ctx.lineTo(x+w, y+h); ctx.lineTo(x, y+h); ctx.closePath(); break;
+    case 'rtriangle':
+      ctx.moveTo(x, y); ctx.lineTo(x+w, y+h); ctx.lineTo(x, y+h); ctx.closePath(); break;
+    case 'diamond':
+      ctx.moveTo(cx, y); ctx.lineTo(x+w, cy); ctx.lineTo(cx, y+h); ctx.lineTo(x, cy); ctx.closePath(); break;
+    case 'pentagon':  polyPath(ctx, cx, cy, rx, ry, 5, -Math.PI/2); break;
+    case 'hexagon':   polyPath(ctx, cx, cy, rx, ry, 6, 0); break;
+    case 'octagon':   polyPath(ctx, cx, cy, rx, ry, 8, Math.PI/8); break;
+    case 'star5':     starPath(ctx, cx, cy, rx, ry, 5); break;
+    case 'star4':     starPath(ctx, cx, cy, rx, ry, 4); break;
+    case 'star6':     starPath(ctx, cx, cy, rx, ry, 6); break;
+    case 'heart':     heartPath(ctx, cx, cy, rx, ry); break;
+    case 'cloud':     cloudPath(ctx, x, y, w, h); break;
+    case 'lightning': lightningPath(ctx, x, y, w, h); break;
+    case 'arrow':     arrowPath(ctx, x, y, w, h, false); break;
+    case 'dblarrow':  arrowPath(ctx, x, y, w, h, true); break;
+    case 'curvarrow': curvedArrowPath(ctx, x, y, w, h); break;
+    case 'plus':      plusPath(ctx, cx, cy, rx, ry); break;
+    case 'minus':     ctx.rect(x, cy - ry*0.25, w, ry*0.5); break;
+    case 'cross':     crossPath(ctx, cx, cy, rx, ry); break;
+    case 'line':      ctx.moveTo(x, cy); ctx.lineTo(x+w, cy); break;
+    case 'moon':      moonPath(ctx, cx, cy, rx, ry); break;
+    case 'bang':      bangPath(ctx, cx, cy, rx, ry); break;
+    case 'parallelogram': {
+      const sk = rx*0.25;
+      ctx.moveTo(x+sk, y); ctx.lineTo(x+w, y);
+      ctx.lineTo(x+w-sk, y+h); ctx.lineTo(x, y+h); ctx.closePath(); break;
+    }
+    case 'trapezoid': {
+      const in_ = rx*0.25;
+      ctx.moveTo(x+in_, y); ctx.lineTo(x+w-in_, y);
+      ctx.lineTo(x+w, y+h); ctx.lineTo(x, y+h); ctx.closePath(); break;
+    }
+    default:
+      ctx.rect(x, y, w, h);
+  }
+
+  if (o.fill) { ctx.fill(); }
+  ctx.stroke();
+  ctx.restore();
+}
+
+// ─── SHAPE PATH HELPERS ──────────────────────────────────────────────────
+function roundRect(ctx, x, y, w, h, r) {
+  r = Math.min(Math.abs(r), Math.abs(w)/2, Math.abs(h)/2);
+  const x2=x+w, y2=y+h;
+  ctx.moveTo(x+r, y);
+  ctx.lineTo(x2-r, y); ctx.arcTo(x2, y,  x2, y+r,  r);
+  ctx.lineTo(x2, y2-r); ctx.arcTo(x2, y2, x2-r, y2, r);
+  ctx.lineTo(x+r, y2);  ctx.arcTo(x,  y2, x,  y2-r, r);
+  ctx.lineTo(x, y+r);   ctx.arcTo(x,  y,  x+r, y,   r);
+  ctx.closePath();
+}
+
+function polyPath(ctx, cx, cy, rx, ry, n, off) {
+  for (let i=0; i<n; i++) {
+    const a = off + 2*Math.PI*i/n;
+    const px = cx + rx*Math.cos(a), py = cy + ry*Math.sin(a);
+    i===0 ? ctx.moveTo(px,py) : ctx.lineTo(px,py);
+  }
+  ctx.closePath();
+}
+
+function starPath(ctx, cx, cy, rx, ry, n) {
+  const inner = Math.min(rx, ry) * 0.42;
+  for (let i=0; i<n*2; i++) {
+    const a = -Math.PI/2 + Math.PI*i/n;
+    const r = i%2===0 ? Math.min(rx,ry) : inner;
+    const px = cx + r*Math.cos(a), py = cy + r*Math.sin(a);
+    i===0 ? ctx.moveTo(px,py) : ctx.lineTo(px,py);
+  }
+  ctx.closePath();
+}
+
+function heartPath(ctx, cx, cy, rx, ry) {
+  const s = Math.min(rx, ry) * 0.95;
+  ctx.moveTo(cx, cy + s*0.65);
+  ctx.bezierCurveTo(cx - s*2, cy - s*0.4, cx - s*2, cy - s*1.4, cx, cy - s*0.25);
+  ctx.bezierCurveTo(cx + s*2, cy - s*1.4, cx + s*2, cy - s*0.4, cx, cy + s*0.65);
+}
+
+function cloudPath(ctx, x, y, w, h) {
+  const cx=x+w/2, cy=y+h/2;
+  const rw=w/2, rh=h/2;
+  // bottom flat arc then bumps
+  ctx.arc(cx - rw*0.3, cy + rh*0.15, rw*0.38, Math.PI*0.05, Math.PI, true);
+  ctx.arc(cx - rw*0.6, cy - rh*0.1,  rw*0.3,  Math.PI,      Math.PI*1.85);
+  ctx.arc(cx - rw*0.1, cy - rh*0.45, rw*0.38, Math.PI*1.2,  Math.PI*0.1, false);
+  ctx.arc(cx + rw*0.35,cy - rh*0.3,  rw*0.3,  Math.PI*1.6,  Math.PI*0.2, false);
+  ctx.arc(cx + rw*0.6, cy + rh*0.1,  rw*0.28, Math.PI*1.7,  Math.PI*2.9, false);
+  ctx.closePath();
+}
+
+function lightningPath(ctx, x, y, w, h) {
+  const mx = x + w/2;
+  ctx.moveTo(mx + w*0.1,  y);
+  ctx.lineTo(mx - w*0.15, y + h*0.44);
+  ctx.lineTo(mx + w*0.05, y + h*0.44);
+  ctx.lineTo(mx - w*0.1,  y + h);
+  ctx.lineTo(mx + w*0.15, y + h*0.56);
+  ctx.lineTo(mx - w*0.02, y + h*0.56);
+  ctx.closePath();
+}
+
+function arrowPath(ctx, x, y, w, h, both) {
+  const cy = y + h/2;
+  const hw = Math.abs(h)*0.42, hl = Math.abs(w)*0.28;
+  const tw = hw*0.35;
+  ctx.moveTo(x + (both ? hl : 0), cy - tw);
+  ctx.lineTo(x + w - hl, cy - tw);
+  ctx.lineTo(x + w - hl, cy - hw);
+  ctx.lineTo(x + w,      cy);
+  ctx.lineTo(x + w - hl, cy + hw);
+  ctx.lineTo(x + w - hl, cy + tw);
+  ctx.lineTo(x + (both ? hl : 0), cy + tw);
+  if (both) {
+    ctx.lineTo(x + hl, cy + hw);
+    ctx.lineTo(x,       cy);
+    ctx.lineTo(x + hl, cy - hw);
+    ctx.lineTo(x + hl, cy - tw);
+  }
+  ctx.closePath();
+}
+
+function curvedArrowPath(ctx, x, y, w, h) {
+  const cx = x + w/2, cy = y + h/2;
+  const r  = Math.min(Math.abs(w), Math.abs(h)) * 0.38;
+  const hw = r * 0.45;
+  ctx.arc(cx, cy, r, Math.PI, Math.PI*1.8);
+  const ex = cx + r*Math.cos(Math.PI*1.8);
+  const ey = cy + r*Math.sin(Math.PI*1.8);
+  // arrowhead at end
+  ctx.lineTo(ex + hw, ey - hw*0.5);
+  ctx.moveTo(ex, ey);
+  ctx.lineTo(ex - hw*0.5, ey + hw);
+}
+
+function plusPath(ctx, cx, cy, rx, ry) {
+  const tx = rx*0.38, ty = ry*0.38;
+  ctx.moveTo(cx - tx, cy - ry); ctx.lineTo(cx + tx, cy - ry);
+  ctx.lineTo(cx + tx, cy - ty); ctx.lineTo(cx + rx, cy - ty);
+  ctx.lineTo(cx + rx, cy + ty); ctx.lineTo(cx + tx, cy + ty);
+  ctx.lineTo(cx + tx, cy + ry); ctx.lineTo(cx - tx, cy + ry);
+  ctx.lineTo(cx - tx, cy + ty); ctx.lineTo(cx - rx, cy + ty);
+  ctx.lineTo(cx - rx, cy - ty); ctx.lineTo(cx - tx, cy - ty);
+  ctx.closePath();
+}
+
+function crossPath(ctx, cx, cy, rx, ry) {
+  // X shape
+  const t = Math.min(rx, ry) * 0.3;
+  ctx.moveTo(cx - rx, cy - ry); ctx.lineTo(cx - rx + t, cy - ry);
+  ctx.lineTo(cx, cy - t);       ctx.lineTo(cx + rx - t, cy - ry);
+  ctx.lineTo(cx + rx, cy - ry); ctx.lineTo(cx + rx, cy - ry + t);
+  ctx.lineTo(cx + t, cy);       ctx.lineTo(cx + rx, cy + ry - t);
+  ctx.lineTo(cx + rx, cy + ry); ctx.lineTo(cx + rx - t, cy + ry);
+  ctx.lineTo(cx, cy + t);       ctx.lineTo(cx - rx + t, cy + ry);
+  ctx.lineTo(cx - rx, cy + ry); ctx.lineTo(cx - rx, cy + ry - t);
+  ctx.lineTo(cx - t, cy);       ctx.lineTo(cx - rx, cy - ry + t);
+  ctx.closePath();
+}
+
+function moonPath(ctx, cx, cy, rx, ry) {
+  const r = Math.min(rx, ry);
+  ctx.arc(cx, cy, r, Math.PI*0.3, Math.PI*1.7);
+  ctx.arc(cx - r*0.25, cy, r*0.7, Math.PI*1.7, Math.PI*0.3, true);
+}
+
+function bangPath(ctx, cx, cy, rx, ry) {
+  const n = 12;
+  for (let i=0; i<n*2; i++) {
+    const a  = -Math.PI/2 + Math.PI*i/n;
+    const r  = i%2===0 ? Math.max(rx,ry) : Math.max(rx,ry)*0.72;
+    const px = cx + r*Math.cos(a), py = cy + r*Math.sin(a);
+    i===0 ? ctx.moveTo(px,py) : ctx.lineTo(px,py);
+  }
+  ctx.closePath();
+}
+
+function drawSun(ctx, cx, cy, r, clr, lw_, filled) {
+  // Core circle
+  ctx.beginPath();
+  ctx.arc(cx, cy, r*0.42, 0, Math.PI*2);
+  if (filled) ctx.fill();
+  ctx.stroke();
+  // Rays
+  const rays = 8;
+  ctx.beginPath();
+  for (let i=0; i<rays; i++) {
+    const a = 2*Math.PI*i/rays;
+    ctx.moveTo(cx + r*0.52*Math.cos(a), cy + r*0.52*Math.sin(a));
+    ctx.lineTo(cx + r*0.95*Math.cos(a), cy + r*0.95*Math.sin(a));
+  }
+  ctx.stroke();
+}
+
+function drawSpeech(ctx, x, y, w, h, clr, lw_, filled) {
+  const tailH = Math.abs(h)*0.22;
+  const bh    = h - tailH;
+  const r     = Math.min(Math.abs(w), Math.abs(bh)) * 0.12;
+  ctx.beginPath();
+  roundRect(ctx, x, y, w, bh, r);
+  if (filled) ctx.fill();
+  ctx.stroke();
+  // Tail
+  ctx.beginPath();
+  ctx.moveTo(x + w*0.18, y + bh);
+  ctx.lineTo(x + w*0.08, y + h);
+  ctx.lineTo(x + w*0.34, y + bh);
+  ctx.closePath();
+  if (filled) ctx.fill();
+  ctx.stroke();
+}
+
+function drawCylinder(ctx, x, y, w, h, clr, lw_, filled) {
+  const ry = Math.abs(h)*0.12;
+  const rx2 = Math.abs(w)/2;
+  const cx  = x + w/2;
+  // Body
+  ctx.beginPath();
+  ctx.rect(x, y + ry, w, h - ry*2);
+  if (filled) ctx.fill();
+  ctx.stroke();
+  // Top ellipse
+  ctx.beginPath();
+  ctx.ellipse(cx, y + ry, rx2, ry, 0, 0, Math.PI*2);
+  if (filled) ctx.fill();
+  ctx.stroke();
+  // Bottom ellipse
+  ctx.beginPath();
+  ctx.ellipse(cx, y + h - ry, rx2, ry, 0, 0, Math.PI);
+  ctx.stroke();
+}
+
+// ─── FREE DRAW ───────────────────────────────────────────────────────────
+const FREE_SHAPE_TOOLS = ['line','arrow','rect','ellipse'];
+
+function getPos(e) {
+  const rect = bgC.getBoundingClientRect();
+  const src  = e.changedTouches ? e.changedTouches[0] : (e.touches ? e.touches[0] : e);
+  return {
+    x: (src.clientX - rect.left) * (W / rect.width),
+    y: (src.clientY - rect.top)  * (H / rect.height)
+  };
+}
+
+function applyFreeCtx() {
+  bgCtx.lineCap  = 'round';
+  bgCtx.lineJoin = 'round';
+  if (freeTool === 'eraser') {
+    bgCtx.globalCompositeOperation = 'destination-out';
+    bgCtx.strokeStyle = 'rgba(0,0,0,1)';
+    bgCtx.lineWidth   = lw * 2;
+    bgCtx.globalAlpha = 1;
+  } else {
+    bgCtx.globalCompositeOperation = 'source-over';
+    bgCtx.strokeStyle = color;
+    bgCtx.fillStyle   = color;
+    bgCtx.lineWidth   = freeTool === 'brush' ? lw * 3 : lw;
+    bgCtx.globalAlpha = freeTool === 'brush' ? 0.35 : 1;
+  }
+}
+
+function freePointerDown(e) {
+  e.preventDefault();
+  painting = true;
+  const p = getPos(e);
+  sx = p.x; sy = p.y;
+  applyFreeCtx();
+  if (FREE_SHAPE_TOOLS.includes(freeTool)) {
+    freeSnap = bgCtx.getImageData(0, 0, W, H);
+  } else {
+    pushSnap();
+    bgCtx.beginPath();
+    bgCtx.moveTo(p.x, p.y);
+    if (freeTool === 'spray') sprayAt(p.x, p.y);
+  }
+}
+
+function freePointerMove(e) {
+  if (!painting) return;
+  e.preventDefault();
+  const p = getPos(e);
+  applyFreeCtx();
+  switch(freeTool) {
+    case 'pen':
+    case 'brush':
+    case 'eraser':
+      bgCtx.lineTo(p.x, p.y);
+      bgCtx.stroke();
+      break;
+    case 'spray':
+      sprayAt(p.x, p.y);
+      break;
+    case 'line':
+      bgCtx.putImageData(freeSnap, 0, 0);
+      bgCtx.beginPath();
+      bgCtx.moveTo(sx, sy); bgCtx.lineTo(p.x, p.y); bgCtx.stroke();
+      break;
+    case 'arrow': {
+      bgCtx.putImageData(freeSnap, 0, 0);
+      bgCtx.beginPath();
+      bgCtx.moveTo(sx, sy); bgCtx.lineTo(p.x, p.y); bgCtx.stroke();
+      const dx=p.x-sx, dy=p.y-sy, len=Math.sqrt(dx*dx+dy*dy);
+      if (len<5) break;
+      const hl=Math.max(12, len*0.22), ang=Math.atan2(dy,dx);
+      bgCtx.beginPath();
+      bgCtx.moveTo(p.x, p.y);
+      bgCtx.lineTo(p.x-hl*Math.cos(ang-Math.PI/6), p.y-hl*Math.sin(ang-Math.PI/6));
+      bgCtx.moveTo(p.x, p.y);
+      bgCtx.lineTo(p.x-hl*Math.cos(ang+Math.PI/6), p.y-hl*Math.sin(ang+Math.PI/6));
+      bgCtx.stroke();
+      break;
+    }
+    case 'rect':
+      bgCtx.putImageData(freeSnap, 0, 0);
+      bgCtx.beginPath();
+      bgCtx.rect(sx, sy, p.x-sx, p.y-sy); bgCtx.stroke();
+      break;
+    case 'ellipse':
+      bgCtx.putImageData(freeSnap, 0, 0);
+      bgCtx.beginPath();
+      bgCtx.ellipse(sx+(p.x-sx)/2, sy+(p.y-sy)/2,
+        Math.abs(p.x-sx)/2, Math.abs(p.y-sy)/2, 0, 0, Math.PI*2);
+      bgCtx.stroke();
+      break;
+  }
+}
+
+function freePointerUp(e) {
+  if (!painting) return;
+  painting = false;
+  if (FREE_SHAPE_TOOLS.includes(freeTool)) {
+    pushSnap();
+    freeSnap = null;
+  }
+  bgCtx.globalAlpha = 1;
+  bgCtx.globalCompositeOperation = 'source-over';
+  bgCtx.beginPath();
+}
+
+function sprayAt(x, y) {
+  bgCtx.globalCompositeOperation = 'source-over';
+  bgCtx.globalAlpha = 1;
+  bgCtx.fillStyle = color;
+  const density = lw * 3, radius = lw * 4;
+  for (let i=0; i<density; i++) {
+    const a = Math.random()*Math.PI*2, r = Math.random()*radius;
+    bgCtx.beginPath();
+    bgCtx.arc(x + r*Math.cos(a), y + r*Math.sin(a), 0.7, 0, Math.PI*2);
+    bgCtx.fill();
+  }
+}
+
+// ─── SHAPE OBJECT INTERACTION ────────────────────────────────────────────
+function hitObj(o, px, py) {
+  return px >= o.x && px <= o.x+o.w && py >= o.y && py <= o.y+o.h;
+}
+
+function hitHandle(o, px, py) {
+  const corners = [
+    ['resize-tl', o.x,     o.y    ],
+    ['resize-tr', o.x+o.w, o.y    ],
+    ['resize-bl', o.x,     o.y+o.h],
+    ['resize-br', o.x+o.w, o.y+o.h],
+  ];
+  for (const [m, hx, hy] of corners) {
+    if (Math.abs(px-hx) < HS+2 && Math.abs(py-hy) < HS+2) return m;
+  }
+  return hitObj(o, px, py) ? 'move' : null;
+}
+
+function shapePointerDown(e) {
+  e.preventDefault();
+  const p = getPos(e);
+
+  if (shapeTool === 'select') {
+    const sel = objs.find(o => o.id === selId);
+    if (sel) {
+      const m = hitHandle(sel, p.x, p.y);
+      if (m) { drag=true; dragMode=m; dragBase={...sel}; dragP0=p; return; }
+    }
+    let found = null;
+    for (let i=objs.length-1; i>=0; i--) {
+      if (hitObj(objs[i], p.x, p.y)) { found=objs[i]; break; }
+    }
+    selId = found ? found.id : null;
+    if (found) { drag=true; dragMode='move'; dragBase={...found}; dragP0=p; }
+    renderObjs(); updSelInfo();
+    return;
+  }
+
+  // draw mode
+  drag = true; dragMode = 'draw'; dragP0 = p;
+  sx = p.x; sy = p.y;
+}
+
+function shapePointerMove(e) {
+  if (!drag) return;
+  e.preventDefault();
+  const p = getPos(e);
+
+  if (dragMode === 'draw') {
+    renderObjs();
+    const bx=Math.min(p.x,sx), by=Math.min(p.y,sy);
+    const bw=Math.abs(p.x-sx), bh=Math.abs(p.y-sy);
+    if (bw<4 || bh<4) return;
+    renderShape(objCtx, {id:'__prev',type:shapeType,x:bx,y:by,w:bw,h:bh,color,lw,fill:fillOn});
+    return;
+  }
+
+  const obj = objs.find(o => o.id === selId);
+  if (!obj || !dragBase) return;
+  const dx = p.x - dragP0.x, dy = p.y - dragP0.y;
+  if (dragMode === 'move') {
+    obj.x = dragBase.x + dx; obj.y = dragBase.y + dy;
+  } else if (dragMode === 'resize-br') {
+    obj.w = Math.max(10, dragBase.w + dx); obj.h = Math.max(10, dragBase.h + dy);
+  } else if (dragMode === 'resize-tr') {
+    obj.w = Math.max(10, dragBase.w + dx);
+    obj.y = dragBase.y + dy; obj.h = Math.max(10, dragBase.h - dy);
+  } else if (dragMode === 'resize-bl') {
+    obj.x = dragBase.x + dx; obj.w = Math.max(10, dragBase.w - dx);
+    obj.h = Math.max(10, dragBase.h + dy);
+  } else if (dragMode === 'resize-tl') {
+    obj.x = dragBase.x + dx; obj.y = dragBase.y + dy;
+    obj.w = Math.max(10, dragBase.w - dx); obj.h = Math.max(10, dragBase.h - dy);
+  }
+  renderObjs();
+}
+
+function shapePointerUp(e) {
+  if (!drag) return;
+  drag = false;
+
+  if (dragMode === 'draw') {
+    const p = getPos(e);
+    const bx=Math.min(p.x,sx), by=Math.min(p.y,sy);
+    const bw=Math.abs(p.x-sx), bh=Math.abs(p.y-sy);
+    if (bw >= 6 && bh >= 6) {
+      objs.push({id: genId(), type:shapeType, x:bx, y:by, w:bw, h:bh, color, lw, fill:fillOn});
+      selId = objs[objs.length-1].id;
+      pushSnap();
+    }
+  } else if (dragMode) {
+    pushSnap();
+  }
+
+  dragMode = null; dragBase = null; dragP0 = null;
+  renderObjs(); updSelInfo();
+}
+
+// ─── CANVAS EVENT ROUTING ─────────────────────────────────────────────────
+function onDown(e) { mode==='free' ? freePointerDown(e) : shapePointerDown(e); }
+function onMove(e) { mode==='free' ? freePointerMove(e) : shapePointerMove(e); }
+function onUp(e)   { mode==='free' ? freePointerUp(e)   : shapePointerUp(e);   }
+
+['mousedown','touchstart'].forEach(ev => objC.addEventListener(ev, onDown, {passive:false}));
+['mousemove','touchmove' ].forEach(ev => objC.addEventListener(ev, onMove, {passive:false}));
+['mouseup','touchend','mouseleave','touchcancel'].forEach(ev => objC.addEventListener(ev, onUp));
+
+// ─── BAKE OBJECTS → BG ───────────────────────────────────────────────────
+function bakeObjs() {
+  if (!objs.length) return;
+  for (const o of objs) renderShape(bgCtx, o);
+  objs = []; selId = null;
+  renderObjs();
+  pushSnap();
+}
+
+// ─── CLEAR ────────────────────────────────────────────────────────────────
+function clearAll() {
+  bgCtx.fillStyle = '#fff'; bgCtx.fillRect(0,0,W,H);
+  objs = []; selId = null;
+  renderObjs(); updSelInfo();
+  pushSnap();
+}
+
+// ─── DELETE SELECTED ─────────────────────────────────────────────────────
+function deleteSelected() {
+  if (!selId) { showToast('⚠️ Avval shaklni tanlang'); return; }
+  objs = objs.filter(o => o.id !== selId);
+  selId = null;
+  renderObjs(); updSelInfo(); pushSnap();
+}
+
+function updSelInfo() {
+  const el = document.getElementById('sel-info');
+  const s  = objs.find(o => o.id === selId);
+  el.textContent = s ? `✅ ${SHAPE_NAMES[s.type]||s.type} tanlangan` :
+                   objs.length ? `${objs.length} shakl` : '';
+}
+
+const SHAPE_NAMES = {
+  rect:'To\'rtburchak', square:'Kvadrat', roundrect:'Yumaloq', ellipse:'Ellips',
+  circle:'Doira', triangle:'Uchburchak', rtriangle:'To\'g\'ri burchak', diamond:'Romb',
+  pentagon:'Beshburchak', hexagon:'Olti burchak', octagon:'Sakkiz burchak',
+  star5:'Yulduz', star4:'4-Yulduz', star6:'6-Yulduz',
+  heart:'Yurak', cloud:'Bulut', lightning:'Chaqmoq',
+  arrow:'Strelka', dblarrow:'Ikki strelka', curvarrow:'Egri strelka',
+  plus:'Plus', minus:'Minus', cross:'X-Belgi', line:'Chiziq',
+  moon:'Oy', sun:'Quyosh', speech:'Nutq pufagi', bang:'Portlash',
+  cylinder:'Silindr', parallelogram:'Parallelogramm', trapezoid:'Trapetsiya'
+};
+
+// ─── MODE TABS ────────────────────────────────────────────────────────────
+document.querySelectorAll('.mode-tab').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const nm = btn.dataset.mode;
+    if (nm === mode) return;
+    if (mode === 'shape') bakeObjs();
+    mode = nm;
+    document.querySelectorAll('.mode-tab').forEach(b => b.classList.toggle('active', b.dataset.mode===nm));
+    document.getElementById('pan-free').classList.toggle('visible', nm==='free');
+    document.getElementById('pan-shape').classList.toggle('visible', nm==='shape');
+    objC.style.cursor = nm==='shape' && shapeTool==='select' ? 'default' : 'crosshair';
+  });
+});
+
+// ─── FREE TOOL BUTTONS ────────────────────────────────────────────────────
+document.querySelectorAll('[data-ftool]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    freeTool = btn.dataset.ftool;
+    document.querySelectorAll('[data-ftool]').forEach(b => b.classList.toggle('active', b===btn));
+    sizeInner.style.background = freeTool==='eraser' ? '#ccc' : color;
+  });
+});
+
+// ─── SHAPE DRAW / SELECT BUTTONS ──────────────────────────────────────────
+const btnSD = document.getElementById('btn-sdraw');
+const btnSS = document.getElementById('btn-sselect');
+function setShapeTool(t) {
+  shapeTool = t;
+  btnSD.classList.toggle('active', t==='draw');
+  btnSS.classList.toggle('active', t==='select');
+  objC.style.cursor = t==='select' ? 'default' : 'crosshair';
+}
+btnSD.addEventListener('click', () => setShapeTool('draw'));
+btnSS.addEventListener('click', () => setShapeTool('select'));
+
+// ─── SHAPE BUTTONS ────────────────────────────────────────────────────────
+document.querySelectorAll('.sh-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    shapeType = btn.dataset.shape;
+    document.querySelectorAll('.sh-btn').forEach(b => b.classList.toggle('active', b===btn));
+    setShapeTool('draw');
+  });
+});
+
+// ─── FILL BUTTON ──────────────────────────────────────────────────────────
+const fillBtn = document.getElementById('fill-btn');
+fillBtn.addEventListener('click', () => {
+  fillOn = !fillOn;
+  fillBtn.classList.toggle('on', fillOn);
+  fillBtn.textContent = fillOn ? '■ To\'ldirilgan' : '▣ To\'ldir';
+  const s = objs.find(o => o.id===selId);
+  if (s) { s.fill = fillOn; renderObjs(); pushSnap(); }
+});
+
+// ─── SIZE SLIDER ──────────────────────────────────────────────────────────
+const slider   = document.getElementById('size-slider');
+const sizeInner = document.getElementById('size-inner');
+slider.addEventListener('input', () => {
+  lw = parseInt(slider.value);
+  const s = Math.min(lw*1.6, 20);
+  sizeInner.style.width = sizeInner.style.height = s + 'px';
+  const sel = objs.find(o => o.id===selId);
+  if (sel) { sel.lw = lw; renderObjs(); }
+});
+
+// ─── COLOR ────────────────────────────────────────────────────────────────
+function setColor(c) {
+  color = c;
+  document.querySelectorAll('.color-swatch').forEach(s =>
+    s.classList.toggle('active', s.dataset.color === c)
+  );
+  sizeInner.style.background = freeTool==='eraser' ? '#ccc' : color;
+  if (freeTool === 'eraser') {
+    freeTool = 'pen';
+    document.querySelectorAll('[data-ftool]').forEach(b =>
+      b.classList.toggle('active', b.dataset.ftool==='pen')
+    );
+  }
+  const sel = objs.find(o => o.id===selId);
+  if (sel) { sel.color = color; renderObjs(); }
+}
+
+document.querySelectorAll('.color-swatch').forEach(sw =>
+  sw.addEventListener('click', () => setColor(sw.dataset.color))
+);
+const cpickBtn   = document.getElementById('cpick-btn');
+const cpickInput = document.getElementById('cpick-input');
+cpickBtn.addEventListener('click', () => cpickInput.click());
+cpickInput.addEventListener('input', () => {
+  document.querySelectorAll('.color-swatch').forEach(s => s.classList.remove('active'));
+  setColor(cpickInput.value);
+});
+
+// ─── ACTIONS ─────────────────────────────────────────────────────────────
+document.getElementById('btn-undo').addEventListener('click',  doUndo);
+document.getElementById('btn-redo').addEventListener('click',  doRedo);
+document.getElementById('btn-del').addEventListener('click',   deleteSelected);
+document.getElementById('btn-clear').addEventListener('click', () => {
+  if (confirm('Kanvasni tozalaysizmi?')) clearAll();
+});
+
+// ─── TOAST ────────────────────────────────────────────────────────────────
+let toastT;
+function showToast(msg, ms=2200) {
+  const el = document.getElementById('toast');
+  el.textContent = msg; el.classList.add('show');
+  clearTimeout(toastT);
+  toastT = setTimeout(() => el.classList.remove('show'), ms);
+}
+
+// ─── WORD OVERLAY ─────────────────────────────────────────────────────────
+document.getElementById('btn-close-word').addEventListener('click', () =>
+  document.getElementById('word-overlay').classList.remove('show')
+);
+document.getElementById('word-overlay').addEventListener('click', e => {
+  if (e.target === document.getElementById('word-overlay'))
+    document.getElementById('word-overlay').classList.remove('show');
+});
+
+async function fetchWord() {
+  const url = `/api/draw/word?session=${encodeURIComponent(SESSION)}&chat_id=${encodeURIComponent(CHAT_ID)}&init_data=${encodeURIComponent(INIT_DATA)}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(res.status);
+  return (await res.json()).word;
+}
+
+document.getElementById('btn-see').addEventListener('click', async () => {
+  if (currentWord) {
+    document.getElementById('current-word').textContent = currentWord;
+    document.getElementById('word-overlay').classList.add('show');
+    return;
+  }
+  try {
+    currentWord = await fetchWord();
+    document.getElementById('current-word').textContent = currentWord;
+    document.getElementById('word-overlay').classList.add('show');
+  } catch { showToast('❌ So\'zni yuklab bo\'lmadi.'); }
+});
+
+// ─── 30 SONIYALIK PREVIEW ─────────────────────────────────────────────────
+let previewInterval = null;
+let previewSending  = false;
+let gameFinished    = false;
+
+function isCanvasBlank() {
+  const tmp = document.createElement('canvas');
+  tmp.width = W; tmp.height = H;
+  const c = tmp.getContext('2d');
+  c.fillStyle = '#fff'; c.fillRect(0, 0, W, H);
+  return bgC.toDataURL() === tmp.toDataURL();
+}
+
+async function sendPreview() {
+  if (previewSending || gameFinished || !SESSION || !CHAT_ID) return;
+  if (isCanvasBlank()) return;   // Kanvas bo'sh bo'lsa preview yubormaymiz
+
+  previewSending = true;
+  try {
+    const imageBase64 = bgC.toDataURL('image/png');
+    const res = await fetch('/api/draw/preview', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({
+        session_id:   SESSION,
+        chat_id:      CHAT_ID,
+        init_data:    INIT_DATA || '',
+        image_base64: imageBase64,
+      }),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      // O'yin tugagan bo'lsa — preview to'xtatiladi
+      if (data.status && data.status !== 'waiting') {
+        stopPreviewInterval();
+        gameFinished = true;
+      }
+    }
+  } catch(err) {
+    console.warn('Preview error:', err);
+  } finally {
+    previewSending = false;
+  }
+}
+
+function startPreviewInterval() {
+  if (previewInterval) return;
+  previewInterval = setInterval(sendPreview, 30000);
+}
+
+function stopPreviewInterval() {
+  if (previewInterval) {
+    clearInterval(previewInterval);
+    previewInterval = null;
+  }
+}
+
+// ─── SEND ─────────────────────────────────────────────────────────────────
+document.getElementById('btn-send').addEventListener('click', async () => {
+  bakeObjs(); // finalize any remaining shape objects
+
+  if (isCanvasBlank()) {
+    showToast('⚠️ Kanvas bo\'sh! Avval rasm chizing.'); return;
+  }
+
+  if (!SESSION || !CHAT_ID) {
+    showToast('❌ Sessiya ma\'lumotlari topilmadi.'); return;
+  }
+
+  // Submit paytida preview to'xtatiladi
+  stopPreviewInterval();
+  gameFinished = true;
+
+  const btn = document.getElementById('btn-send');
+  btn.disabled = true; btn.textContent = '⏳ Yuborilmoqda...';
+  showToast('📤 Rasm guruhga yuborilmoqda...', 5000);
+
+  try {
+    const imageBase64 = bgC.toDataURL('image/png');
+    const payload = {
+      session_id:   SESSION,
+      chat_id:      CHAT_ID,
+      init_data:    INIT_DATA || '',
+      image_base64: imageBase64,
+    };
+
+    const res = await fetch('/api/draw/submit', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify(payload),
+    });
+
+    let resData = {};
+    try { resData = await res.json(); } catch(_) {}
+
+    if (!res.ok) {
+      throw new Error(resData.error || `Server xatosi: ${res.status}`);
+    }
+
+    showToast('✅ Rasm guruhga yuborildi! O\'yin boshlanadi...', 3500);
+    btn.textContent = '✅ Yuborildi';
+    setTimeout(() => { if (tg) tg.close(); }, 3000);
+  } catch(err) {
+    console.error('Submit error:', err);
+    showToast('❌ Xatolik: ' + err.message, 4000);
+    btn.disabled = false;
+    btn.textContent = '📤 Yuborish';
+    // Xatolik bo'lsa preview qaytadan ishga tushishi mumkin
+    gameFinished = false;
+    startPreviewInterval();
+  }
+});
+
+// ─── HELPERS ──────────────────────────────────────────────────────────────
+function genId() { return Math.random().toString(36).slice(2,9); }
+
+// ─── INIT ─────────────────────────────────────────────────────────────────
+async function init() {
+  resize();
+  pushSnap(); // blank canvas as first history entry
+  document.getElementById('loading').style.display = 'none';
+  try {
+    currentWord = await fetchWord();
+    document.getElementById('current-word').textContent = currentWord;
+    document.getElementById('word-overlay').classList.add('show');
+  } catch { /* non-fatal */ }
+  // 30 soniyalik preview interval — so'z muvaffaqiyatli yuklanganda boshlanadi
+  if (SESSION && CHAT_ID) {
+    startPreviewInterval();
+  }
+}
+
+init();
+})();
+</script>
+</body>
+</html>
