@@ -105,6 +105,12 @@
   .lbName { flex:1; text-align:left; color:#6b3d12; font-weight:700; font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .lbScore { font-weight:900; color:#2f6fd6; font-size:13px; }
   .lbEmpty { color:#8a5a22; font-size:12.5px; font-weight:600; padding:10px 0; }
+  .lbTabsRow { display:flex; gap:8px; justify-content:center; margin:2px 0 12px; }
+  .lbTab {
+    padding:7px 22px; border-radius:10px; border:2px solid #c99a4e; background:#fff2cf;
+    color:#6b3d12; font-weight:800; cursor:pointer; font-size:clamp(12px,2.8vw,14px);
+  }
+  .lbTab.active { background:#f5a623; color:#fff; }
 
   #touchZones { position:absolute; top:0; left:0; width:100%; height:100%; display:flex; pointer-events:none; }
 
@@ -144,6 +150,12 @@
     border:2px solid #c99a4e; display:none;
   }
   .admin-preview.show { display:block; }
+  #playerPreview.show {
+    background-image:
+      linear-gradient(45deg,#ccc 25%,transparent 25%), linear-gradient(-45deg,#ccc 25%,transparent 25%),
+      linear-gradient(45deg,transparent 75%,#ccc 75%), linear-gradient(-45deg,transparent 75%,#ccc 75%);
+    background-size:16px 16px; background-position:0 0,0 8px,8px -8px,-8px 0px; background-color:#fff;
+  }
   .admin-preview-audio { display:none; width:100%; margin-top:8px; height:32px; }
   .admin-preview-audio.show { display:block; }
   .clear-btn {
@@ -190,6 +202,10 @@
   <div class="screen" id="leaderboardScreen">
     <div class="panel">
       <div class="title" style="font-size:clamp(22px,6vw,34px)">Reytinglar</div>
+      <div class="lbTabsRow" id="lbTabsMain">
+        <div class="lbTab active" data-scope="global">Global</div>
+        <div class="lbTab" data-scope="group">Guruh</div>
+      </div>
       <div class="lbList" id="lbListMain"></div>
       <button class="btn secondary" id="btnLbBack" style="margin-top:16px;">Orqaga</button>
     </div>
@@ -248,6 +264,10 @@
       <div class="stat" id="goCoins" style="margin-bottom:14px;">+0 tanga</div>
       <div id="submitStatus" style="min-height:22px;margin:6px 0 4px;color:#6b3d12;font-weight:700;font-size:clamp(12px,2.8vw,15px);"></div>
       <div class="lbTitle">Ushbu o'yin reytingi</div>
+      <div class="lbTabsRow" id="lbTabsGo">
+        <div class="lbTab active" data-scope="global">Global</div>
+        <div class="lbTab" data-scope="group">Guruh</div>
+      </div>
       <div class="lbList" id="goLeaderboard"></div>
       <button class="btn" id="btnRestart">Qayta o'ynash</button><br>
       <button class="btn secondary" id="btnGoMenu">Bosh menyu</button>
@@ -456,8 +476,11 @@ async function submitScore(finalScore, finalCoins){
     scoreSubmitted = true;       // one successful submission per run — no retries needed
     setSubmitStatus("Reytingga yuborildi ✓", "#1f5f1f");
     // refresh the leaderboard shown on the game-over screen now that our
-    // new score has been recorded on the backend
-    loadLeaderboardInto(document.getElementById('goLeaderboard'));
+    // new score has been recorded on the backend (keep whichever tab is active)
+    {
+      const activeTab = document.querySelector('#lbTabsGo .lbTab.active');
+      loadLeaderboardInto(document.getElementById('goLeaderboard'), activeTab ? activeTab.dataset.scope : 'global');
+    }
   }catch(e){
     // Failed — leave scoreSubmitted false so a future run can still submit.
     setSubmitStatus("Yuborilmadi", "#a11d1d");
@@ -476,10 +499,13 @@ function escapeHtml(s){
   return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
-async function fetchLeaderboard(){
-  if(!CHAT_ID) return null; // no chat context — nothing to show
+async function fetchLeaderboard(scope){
+  // scope: 'global' (all players, all chats) or 'group' (current Telegram chat only)
+  if(scope === 'group' && !CHAT_ID) return null; // no chat context — nothing to show
   try{
-    const res = await fetch('/api/scores?game=daraxt-kesuvchi&chat_id=' + CHAT_ID);
+    let url = '/api/scores?game=daraxt-kesuvchi&scope=' + scope;
+    if(scope === 'group') url += '&chat_id=' + CHAT_ID;
+    const res = await fetch(url);
     if(!res.ok) throw new Error('HTTP ' + res.status);
     const data = await res.json();
     const list = Array.isArray(data) ? data : (Array.isArray(data.leaderboard) ? data.leaderboard : null);
@@ -514,10 +540,26 @@ function renderLeaderboardInto(container, list){
   }).join('');
 }
 
-function loadLeaderboardInto(container){
+function loadLeaderboardInto(container, scope){
   if(!container) return;
   container.innerHTML = '<div class="lbEmpty">Yuklanmoqda...</div>';
-  fetchLeaderboard().then(list => renderLeaderboardInto(container, list));
+  fetchLeaderboard(scope || 'global').then(list => renderLeaderboardInto(container, list));
+}
+
+/* Wires a row of .lbTab buttons (global/group) to reload a leaderboard
+   container when clicked, and does the initial (global) load. */
+function setupLbTabs(tabsEl, container){
+  if(!tabsEl || !container) return;
+  const btns = tabsEl.querySelectorAll('.lbTab');
+  btns.forEach(b => {
+    b.onclick = () => {
+      btns.forEach(x => x.classList.remove('active'));
+      b.classList.add('active');
+      loadLeaderboardInto(container, b.dataset.scope);
+    };
+  });
+  const activeBtn = tabsEl.querySelector('.lbTab.active') || btns[0];
+  loadLeaderboardInto(container, activeBtn ? activeBtn.dataset.scope : 'global');
 }
 
 /* ----------------------------- Audio (WebAudio synth) -------------------- */
@@ -1634,8 +1676,8 @@ function showGameOver(){
   hud.classList.remove('active');
   pauseBgMusic();
 
-  // Show this game's Telegram leaderboard for the current chat.
-  loadLeaderboardInto(document.getElementById('goLeaderboard'));
+  // Show this game's leaderboard (global by default, group on tab switch).
+  setupLbTabs(document.getElementById('lbTabsGo'), document.getElementById('goLeaderboard'));
 
   // Submit the score automatically now that the run has ended.
   setSubmitStatus("");
@@ -1654,7 +1696,7 @@ document.getElementById('btnShop').onclick = ()=>{ renderShop(); showOnly('shop'
 document.getElementById('btnShopBack').onclick = ()=>{ refreshMenuStats(); showOnly('menu'); };
 document.getElementById('btnLeaderboard').onclick = ()=>{
   showOnly('leaderboard');
-  loadLeaderboardInto(document.getElementById('lbListMain'));
+  setupLbTabs(document.getElementById('lbTabsMain'), document.getElementById('lbListMain'));
 };
 document.getElementById('btnLbBack').onclick = ()=> showOnly('menu');
 
@@ -1900,6 +1942,41 @@ function buildAdminUI(user, isOwner){
     reader.readAsDataURL(file);
   }
 
+  /* Chroma-key: turns green-screen pixels transparent so an uploaded
+     character/prop photo (shot in front of a green background) shows up
+     in-game without its green backdrop. Only used for the PLAYER image —
+     the scene background is left untouched. */
+  function removeGreenScreen(dataUrl){
+    return new Promise(resolve => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0);
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const data = imageData.data;
+        for (let i = 0; i < data.length; i += 4){
+          const r = data[i], g = data[i+1], b = data[i+2];
+          const greenness = g - Math.max(r, b);
+          if (g > 60 && greenness > 40){
+            data[i+3] = 0; // solidly green — fully transparent
+          } else if (g > 50 && greenness > 15){
+            // edge pixel — fade out + pull the green fringe toward neutral
+            const t = (greenness - 15) / (40 - 15);
+            data[i+3] = Math.round(data[i+3] * (1 - t));
+            data[i+1] = Math.round(g - t * (g - Math.max(r, b)));
+          }
+        }
+        ctx.putImageData(imageData, 0, 0);
+        resolve(canvas.toDataURL('image/png'));
+      };
+      img.onerror = () => resolve(dataUrl); // fall back to the original on failure
+      img.src = dataUrl;
+    });
+  }
+
   const bgPreview = modal.querySelector('#bgPreview');
   const playerPreview = modal.querySelector('#playerPreview');
   const musicPreview = modal.querySelector('#musicPreview');
@@ -1987,9 +2064,13 @@ function buildAdminUI(user, isOwner){
     const file = e.target.files[0];
     if (!file) return;
     readFileAsDataURL(file, url => {
-      pending.player = url;
-      playerPreview.src = url;
       playerPreview.classList.add('show');
+      playerPreview.style.opacity = '0.5';
+      removeGreenScreen(url).then(cleanUrl => {
+        pending.player = cleanUrl;
+        playerPreview.src = cleanUrl;
+        playerPreview.style.opacity = '1';
+      });
     });
   });
   modal.querySelector('#musicFileInput').addEventListener('change', e => {
