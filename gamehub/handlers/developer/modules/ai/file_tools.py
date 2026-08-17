@@ -193,6 +193,59 @@ def _send_chunks(text: str, parse_mode: str | None = None):
     return [text[i: i + _TG_MAX] for i in range(0, max(len(text), 1), _TG_MAX)]
 
 
+def _escaped_pre_chunks(text: str, *, reserve: int = 350) -> list[str]:
+    """Escape `text` for safe use inside <pre></pre>, then split into
+    pieces that individually stay under Telegram's 4096-char message
+    limit — never breaking in the middle of an HTML entity.
+
+    HTML-escaping can expand a character up to 6x (e.g. ``'`` becomes
+    ``&#x27;``), so slicing the RAW text into 4096-char pieces first (the
+    old approach) could produce an escaped + <pre>-wrapped message that no
+    longer fits, causing Telegram's "message is too long" error — this
+    happens easily on real source files full of quotes/angle brackets.
+    Escaping first and slicing the escaped result avoids that regardless
+    of how much the content inflates. `reserve` leaves room for the
+    <pre></pre> wrapper, an optional header line, and a safety margin.
+    """
+    escaped = html_lib.escape(text)
+    budget = max(500, _TG_MAX - reserve)
+    if len(escaped) <= budget:
+        return [escaped]
+    chunks: list[str] = []
+    start, n = 0, len(escaped)
+    while start < n:
+        end = min(start + budget, n)
+        if end < n:
+            # Don't cut inside an entity (&lt; &gt; &amp; &#x27; &quot;) —
+            # back off to just before the last unterminated '&' near the
+            # boundary, if any (entities are at most 6 chars long).
+            amp = escaped.rfind("&", max(start, end - 6), end)
+            if amp != -1 and ";" not in escaped[amp:end]:
+                end = amp
+        chunks.append(escaped[start:end])
+        start = end
+    return chunks
+
+
+def _safe_escaped_preview(text: str, max_chars: int = 800) -> str:
+    """Escape `text` and truncate the ESCAPED result to `max_chars`.
+
+    Truncating the raw text first and escaping second (the old approach
+    at every preview site below) can inflate past the intended budget —
+    same root cause as _escaped_pre_chunks() above. Escaping first and
+    trimming the escaped string guarantees the visible preview always
+    fits, regardless of how many `<`/`>`/`&`/quotes the content has.
+    """
+    escaped = html_lib.escape(text)
+    if len(escaped) <= max_chars:
+        return escaped
+    cut = escaped[:max_chars]
+    amp = cut.rfind("&", max(0, max_chars - 6), max_chars)
+    if amp != -1 and ";" not in cut[amp:]:
+        cut = cut[:amp]
+    return cut + "\n... (qisqartirildi)"
+
+
 async def _download_document(m: Message) -> tuple[bytes, str] | None:
     """If the message carries a Telegram document, download it fully.
 
@@ -329,7 +382,7 @@ async def msg_file_create_content(m: Message, state: FSMContext) -> None:
             preview += f"\n... +{len(lines) - 30} qator"
         body = (
             f"Qatorlar: {len(lines)}\n\n"
-            f"<pre>{html_lib.escape(preview[:800])}</pre>"
+            f"<pre>{_safe_escaped_preview(preview, 800)}</pre>"
         )
     else:
         body = f"Binar fayl — {len(raw)} bayt. (Matn ko'rinishida ko'rsatib bo'lmaydi.)"
@@ -422,13 +475,16 @@ async def msg_file_read(m: Message, state: FSMContext) -> None:
         # Kept (without an active FSM state) purely so the "PDF qilib
         # yuklash" button below knows which file to export afterwards.
         await state.update_data(pdf_path=rel)
-        header  = (f"<b>Fayl:</b> <code>{rel}</code>\n"
+        header  = (f"<b>Fayl:</b> <code>{html_lib.escape(rel)}</code>\n"
                    f"<b>Hajm:</b> {len(content)} bayt | "
                    f"{len(content.splitlines())} qator\n\n")
-        chunks  = _send_chunks(content)
+        # Reserve extra room on top of the header for <pre></pre> (11
+        # chars) and a safety margin — see _escaped_pre_chunks() docstring
+        # for why raw-text chunking alone isn't safe here.
+        chunks  = _escaped_pre_chunks(content, reserve=len(header) + 60)
         for i, chunk in enumerate(chunks):
             kb = _read_result_kb() if i == len(chunks) - 1 else None
-            text = (header if i == 0 else "") + f"<pre>{html_lib.escape(chunk)}</pre>"
+            text = (header if i == 0 else "") + f"<pre>{chunk}</pre>"
             await m.answer(text, reply_markup=kb, parse_mode="HTML")
         await log_action(m.from_user.id, "FILE_READ", str(rel), "ok")
     except Exception as exc:
@@ -510,7 +566,7 @@ async def msg_file_edit_path(m: Message, state: FSMContext) -> None:
         await m.answer(
             f"Fayl: <code>{rel}</code>\n"
             f"Joriy kontent ({len(old_content.splitlines())} qator):\n"
-            f"<pre>{html_lib.escape(preview[:600])}</pre>\n\n"
+            f"<pre>{_safe_escaped_preview(preview, 600)}</pre>\n\n"
             "Yangi kontent yuboring (to'liq fayl):",
             reply_markup=_cancel_kb(), parse_mode="HTML",
         )
@@ -558,13 +614,10 @@ async def msg_file_edit_content(m: Message, state: FSMContext) -> None:
 
     if new_text is not None:
         diff = _diff_text(old_content, new_text, path.rsplit("/", 1)[-1])
-        diff_preview = diff[:1200]
-        if len(diff) > 1200:
-            diff_preview += "\n..."
         body = (
             f"Eski: {len(old_content.splitlines())} qator  "
             f"Yangi: {len(new_text.splitlines())} qator\n\n"
-            f"<pre>{html_lib.escape(diff_preview)}</pre>"
+            f"<pre>{_safe_escaped_preview(diff, 1200)}</pre>"
         )
     else:
         body = f"Binar fayl bilan almashtiriladi — {len(raw)} bayt. (Diff ko'rsatib bo'lmaydi.)"
