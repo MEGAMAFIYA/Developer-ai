@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Zombi Omon Qolish</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
 <style>
   :root{
     --neon-green:#00ff9d;
@@ -132,6 +133,22 @@
     text-shadow:0 0 4px var(--neon-green);
   }
   #reloadIndicator{color:var(--neon-yellow); font-weight:bold;}
+  #btn-weapon{
+    align-self:flex-start;
+    margin-top:6px;
+    background:rgba(0,0,0,0.5);
+    border:1px solid var(--neon-red);
+    color:var(--neon-red);
+    text-shadow:0 0 4px var(--neon-red);
+    border-radius:8px;
+    padding:6px 14px;
+    font-size:13px;
+    font-weight:bold;
+    font-family:inherit;
+    cursor:pointer;
+    pointer-events:auto;
+  }
+  #btn-weapon:active{transform:scale(0.95);}
 
   #controls{
     position:absolute; bottom:0; left:0; right:0;
@@ -171,6 +188,23 @@
     letter-spacing:1px;
   }
   #btn-shoot:active{transform:scale(0.94);}
+
+  #shoot-wrap{position:relative; width:96px; height:96px;}
+  #btn-mine{
+    position:absolute; left:50%; top:-68px; transform:translateX(-50%);
+    width:54px; height:54px; border-radius:50%;
+    background:rgba(0,0,0,0.55);
+    border:2px solid var(--neon-yellow);
+    color:var(--neon-yellow);
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    font-size:11px; font-weight:bold; line-height:1.1;
+    text-shadow:0 0 4px var(--neon-yellow);
+    box-shadow:0 0 12px rgba(255,230,0,0.55);
+    pointer-events:auto;
+  }
+  #btn-mine span:first-child{font-size:18px;}
+  #btn-mine:active{transform:translateX(-50%) scale(0.92);}
+  #btn-mine.hidden{display:none;}
 
   .overlay{
     position:absolute; inset:0; z-index:20;
@@ -293,6 +327,7 @@
         <div class="score-info">Ochko: <span id="scoreNum">0</span></div>
         <div class="coin-info">🪙 <span id="coinNum">0</span></div>
       </div>
+      <button id="btn-weapon">🔫 Pistolet</button>
       <div class="ammo-info">O'q: <span id="ammoNum">10</span>/<span id="ammoMax">10</span> <span id="reloadIndicator"></span></div>
     </div>
 
@@ -303,7 +338,10 @@
       <div id="action-buttons">
         <button id="btn-shop" title="Do'kon">🛒</button>
         <button id="btn-pause" title="Pauza">⏸</button>
-        <button id="btn-shoot">O'Q<br>UZISH</button>
+        <div id="shoot-wrap">
+          <button id="btn-mine" title="Mina qo'yish"><span>💣</span><span id="mineCountNum">0</span></button>
+          <button id="btn-shoot">O'Q<br>UZISH</button>
+        </div>
       </div>
     </div>
   </div>
@@ -384,6 +422,14 @@
         </div>
       </div>
 
+      <div class="shop-item">
+        <h3>💣 Minalar: <span id="mineLevelDisplay">0</span>/3</h3>
+        <div class="row">
+          <span>Narxi: <b>50</b> tanga</span>
+          <button class="small-btn" id="btn-buy-mine">Sotib olish</button>
+        </div>
+      </div>
+
       <div class="modal-buttons">
         <button class="neon-btn" id="btn-close-shop">Davom ettirish</button>
       </div>
@@ -396,6 +442,7 @@
       <div class="stat-line"><span>O'ldirilgan zombilar:</span><span id="finalWave">0</span></div>
       <div class="stat-line"><span>Ochko:</span><span id="finalScore">0</span></div>
       <div class="stat-line"><span>Rekord:</span><span id="finalBest">0</span></div>
+      <div id="submitStatus" style="min-height:20px;margin:6px 0 4px;font-weight:700;font-size:13px;color:var(--neon-blue);"></div>
       <div class="modal-buttons">
         <button class="neon-btn" id="btn-restart-from-gameover">Qayta boshlash</button>
         <button class="neon-btn blue" id="btn-menu-from-gameover">Bosh menyu</button>
@@ -439,6 +486,71 @@ let bestScore = parseInt(localStorage.getItem(LS_BEST) || '0', 10);
 let soundEnabled = localStorage.getItem(LS_SOUND) !== 'false';
 
 /* =========================================================================
+   TELEGRAM WEBAPP INTEGRATION
+   - Initializes the Telegram WebApp SDK (this is also required for the
+     admin panel below to be able to identify who's opening the game).
+   - Reads chat_id from the ?cid= URL parameter.
+   - Submits the final score exactly once per finished run, from endGame()
+     (i.e. after the run has actually ended — never while state==='playing').
+   ========================================================================= */
+const tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null;
+
+if(tg){
+  try{
+    tg.ready();
+    tg.expand();
+    if(tg.setBackgroundColor) tg.setBackgroundColor('#05070a');
+    if(tg.setHeaderColor) tg.setHeaderColor('#05070a');
+    if(tg.disableVerticalSwipes) tg.disableVerticalSwipes();
+  }catch(e){ /* not fatal — game still works standalone for local testing */ }
+}
+
+function getUrlParam(name){
+  try{ return new URLSearchParams(window.location.search).get(name); }
+  catch(e){ return null; }
+}
+const CHAT_ID_RAW = getUrlParam('cid');
+let CHAT_ID = Number(CHAT_ID_RAW);
+if(!Number.isFinite(CHAT_ID)){ CHAT_ID = 0; }
+
+let scoreSubmitted = false;
+
+function setSubmitStatus(text, color){
+  const el = document.getElementById('submitStatus');
+  if(el){ el.textContent = text; el.style.color = color || 'var(--neon-blue)'; }
+}
+
+async function submitScore(finalScore, finalCoins){
+  if(gameState !== 'gameover') return;   // never submit while the game is running
+  if(scoreSubmitted) return;             // already submitted this run
+
+  if(!tg || !tg.initData || !CHAT_ID){
+    setSubmitStatus("Bu faqat Telegram bot ichida ishlaydi", "var(--neon-red)");
+    return;
+  }
+
+  setSubmitStatus("Yuborilmoqda...");
+
+  try{
+    const res = await fetch('/api/scores', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        game: "zombi-omon-qolish",
+        score: Number(finalScore),
+        init_data: tg.initData,  // backend must verify this against the bot token; sent RAW, unmodified
+        chat_id: CHAT_ID
+      })
+    });
+    if(!res.ok) throw new Error('HTTP ' + res.status);
+    scoreSubmitted = true;
+    setSubmitStatus("Reytingga yuborildi ✓", "var(--neon-green)");
+  }catch(e){
+    setSubmitStatus("Yuborilmadi", "var(--neon-red)");
+  }
+}
+
+/* =========================================================================
    ADMIN PANEL — owner + owner-designated admin IDs only.
    Same mechanism as the other games: check the Telegram user against
    OWNER_ID / the persisted admin list; only then build any admin DOM.
@@ -463,6 +575,21 @@ function isAdminId(id){
    green-removed PNG data URLs — see chromaKeyGreen below) */
 const ASSET_KEYS = { bg: 'zb_bg_image', player: 'zb_player_image', zombie: 'zb_zombie_image', boss: 'zb_boss_image', music: 'zb_music' };
 let customBgImg = null;      // Image, replaces the neon grid background when set
+
+/* Admin-adjustable gameplay settings (persisted in localStorage). */
+const SETTINGS_KEY = 'zb_game_settings';
+const DEFAULT_SETTINGS = { initialZombies: 100, playerSpeed: 230 };
+let gameSettings = Object.assign({}, DEFAULT_SETTINGS);
+// Zombilar tezligi endi mustaqil sozlama emas — doim o'yinchi tezligidan
+// 3% kam bo'ladi.
+function zombieBaseSpeed(){ return gameSettings.playerSpeed * 0.97; }
+function loadGameSettings(){
+  try {
+    const raw = localStorage.getItem(SETTINGS_KEY);
+    if (raw){ gameSettings = Object.assign({}, DEFAULT_SETTINGS, JSON.parse(raw)); }
+  } catch (e) { gameSettings = Object.assign({}, DEFAULT_SETTINGS); }
+}
+loadGameSettings();
 let customPlayerImg = null;  // Image, replaces the procedural player circle when set
 let customZombieImg = null;  // Image, replaces the procedural zombie circle when set
 let customBossImg = null;    // Image, replaces the procedural boss look when set
@@ -566,9 +693,37 @@ let player, bullets, zombies, particles, floatTexts;
 let score, coins;
 let survivalTime = 0, zombieSpawnTimer = 0;
 let totalKills = 0, bossCount = 0, nextBossThreshold = 50;
-let ammo, ammoMax = 10;
+
+/* Weapons — switchable with the weapon-swap button under the score.
+   Pistol is the starting weapon; cycling goes pistol -> rifle -> shotgun. */
+const WEAPONS = {
+  pistol:  { name:"Pistolet", ammoMax:10, cooldown:0.32, bulletSpeed:620, bulletLife:1.4,   bulletColor:'#ffe600', damageNearMult:1.0, damageFarMult:1.0, bulletRadius:5,   reloadTime:1.5, icon:'🔫', pellets:1, spreadDeg:0  },
+  rifle:   { name:"Avtomat",  ammoMax:30, cooldown:0.11, bulletSpeed:640, bulletLife:1.4,   bulletColor:'#00d9ff', damageNearMult:1.0, damageFarMult:1.0, bulletRadius:5,   reloadTime:1.5, icon:'🔫', pellets:1, spreadDeg:0  },
+  shotgun: { name:"Drabashk", ammoMax:5,  cooldown:0.6,  bulletSpeed:560, bulletLife:0.2112, bulletColor:'#ff2e63', damageNearMult:2.2, damageFarMult:1.0, bulletRadius:2.2, reloadTime:1.8, icon:'💥', pellets:8, spreadDeg:40 }
+};
+// Drabashkning otish masofasi (bulletSpeed*bulletLife) 2.2x oshirilgan: 0.096 -> 0.2112
+
+/* Minalar: eng ko'pi bilan 3 tagacha olib yurish mumkin, do'kondan 1 donasi
+   50 tangaga sotib olinadi. Portlash radiusi drabashkning otish masofasiga
+   teng, portlash ichidagi har bir zombiga oddiy o'qdan 5 marta tekkandek
+   zarar yetadi. */
+const MINE_MAX = 3;
+const MINE_COST = 50;
+const MINE_TRIGGER_RADIUS = 26;
+let mines = [];
+let mineCount = 0;
+function mineExplosionRadius(){
+  const w = WEAPONS.shotgun;
+  return w.bulletSpeed * w.bulletLife;
+}
+function ordinaryBulletDamage(){
+  return BASE_DAMAGE + (upgrades.damageLevel-1)*DAMAGE_PER_LEVEL;
+}
+const WEAPON_ORDER = ['pistol','rifle','shotgun'];
+let currentWeaponKey = 'pistol';
+
+let ammo, ammoMax = WEAPONS[currentWeaponKey].ammoMax;
 let reloading = false, reloadTimer = 0;
-const RELOAD_TIME = 1.5;
 let lastShotTime = -999;
 
 /* =========================================================================
@@ -641,8 +796,6 @@ function collidesObstacle(x, y, radius){
 }
 
 // moves an {x,y,radius} entity by (dx,dy), resolving each axis separately so
-// it slides along obstacles/world edges instead of just stopping dead
-// moves an {x,y,radius} entity by (dx,dy), resolving each axis separately so
 // it slides along obstacles/world edges instead of just stopping dead.
 // Clamping (rather than rejecting) the target position also lets zombies
 // that spawn just outside the world bounds actually walk in, instead of
@@ -656,6 +809,50 @@ function tryMove(entity, dx, dy){
   if(!collidesObstacle(entity.x, ny, entity.radius)){
     entity.y = ny;
   }
+}
+
+// Steers a zombie toward the player, but routes it around obstacles instead
+// of walking straight into them and getting stuck: if the direct line is
+// blocked, it samples angles fanning out from that direction (alternating
+// left/right) and picks the first clear one, so it walks around the
+// obstacle's edge. It remembers which side it chose to avoid flickering
+// back and forth between left/right every frame.
+function moveZombieTowardPlayer(z, dt){
+  const dx = player.x - z.x, dy = player.y - z.y;
+  const baseAngle = Math.atan2(dy, dx);
+  const lookAhead = z.radius + 18;
+
+  function clearAt(ang){
+    const tx = z.x + Math.cos(ang)*lookAhead, ty = z.y + Math.sin(ang)*lookAhead;
+    return !collidesObstacle(tx, ty, z.radius);
+  }
+
+  let angle = baseAngle;
+  if(clearAt(baseAngle)){
+    z.avoidOffset = undefined;
+  } else {
+    const offsets = [];
+    if(z.avoidOffset !== undefined) offsets.push(z.avoidOffset);
+    [20,-20,40,-40,60,-60,80,-80,100,-100,130,-130,160,-160,180].forEach(deg=>{
+      const rad = deg*Math.PI/180;
+      if(!offsets.includes(rad)) offsets.push(rad);
+    });
+    let found = false;
+    for(const off of offsets){
+      const ang = baseAngle + off;
+      if(clearAt(ang)){
+        angle = ang;
+        z.avoidOffset = off;
+        found = true;
+        break;
+      }
+    }
+    if(!found){ angle = baseAngle; z.avoidOffset = undefined; } // fully boxed in — rare
+  }
+
+  tryMove(z, Math.cos(angle)*z.speed*dt, Math.sin(angle)*z.speed*dt);
+  z.facingAngle = angle;
+  z.walkPhase = (z.walkPhase||0) + dt * (z.speed/16);
 }
 
 function updateCamera(){
@@ -673,20 +870,25 @@ const joystick = { active:false, dx:0, dy:0, touchId:null };
 
 function initGame(){
   generateWorld();
-  player = { x:WORLD_W/2, y:WORLD_H/2, radius:20, speed:230, hp:100, maxHp:100, angle:0, hitFlash:0 };
+  player = { x:WORLD_W/2, y:WORLD_H/2, radius:20, speed:gameSettings.playerSpeed, hp:100, maxHp:100, angle:0, hitFlash:0, moveAngle:0, walkPhase:0, moving:false };
   updateCamera();
   bullets = [];
   zombies = [];
   particles = [];
   floatTexts = [];
+  mines = []; mineCount = 0;
+  updateMineButton();
   score = 0; coins = 0;
   survivalTime = 0; zombieSpawnTimer = 0;
   totalKills = 0; bossCount = 0; nextBossThreshold = 50;
+  ammoMax = WEAPONS[currentWeaponKey].ammoMax;
   ammo = ammoMax;
   reloading = false; reloadTimer = 0;
+  const weaponBtnEl = document.getElementById('btn-weapon');
+  if(weaponBtnEl) weaponBtnEl.textContent = WEAPONS[currentWeaponKey].icon + ' ' + WEAPONS[currentWeaponKey].name;
   upgrades = { damageLevel:1, rateLevel:1 };
-  // start with 10 zombies already on the map
-  for(let i=0;i<10;i++) spawnZombie();
+  // start with the admin-configured number of zombies already on the map
+  for(let i=0;i<gameSettings.initialZombies;i++) spawnZombie();
   updateHUD();
 }
 
@@ -714,13 +916,15 @@ function spawnZombie(){
     type:'normal',
     x, y,
     radius: isFast ? 16 : 20,
-    speed: isFast ? 100 : 60,
+    speed: isFast ? zombieBaseSpeed()*1.67 : zombieBaseSpeed(),
     hp: isFast ? baseHp*0.55 : baseHp,
     maxHp: isFast ? baseHp*0.55 : baseHp,
     dmg: 8,
     attackCooldown: 0,
     isFast,
-    hitFlash:0
+    hitFlash:0,
+    walkPhase: Math.random()*6.28,
+    facingAngle: 0
   });
 }
 
@@ -743,7 +947,7 @@ function spawnBoss(){
     type:'boss',
     x, y,
     radius: BASE_BOSS_RADIUS,
-    speed: BASE_BOSS_SPEED,
+    speed: zombieBaseSpeed()*0.7,
     hp, maxHp: hp,
     dmg: BASE_BOSS_DMG * mult,
     attackCooldown: 0,
@@ -780,15 +984,27 @@ function updateHUD(){
 }
 
 function currentCooldown(){
-  return Math.max(MIN_COOLDOWN, BASE_COOLDOWN - (upgrades.rateLevel-1)*COOLDOWN_REDUCTION);
+  return Math.max(MIN_COOLDOWN, WEAPONS[currentWeaponKey].cooldown - (upgrades.rateLevel-1)*COOLDOWN_REDUCTION);
 }
-function currentDamage(){
-  return BASE_DAMAGE + (upgrades.damageLevel-1)*DAMAGE_PER_LEVEL;
+// Base damage at the muzzle (near) and at the point a bullet is about to
+// expire (far). Equal for pistol/rifle (no falloff); the shotgun's pellets
+// start stronger and decay down to this same "ordinary bullet" damage by
+// the time they reach the end of their (now much shorter) range.
+function weaponDamageNear(){
+  return (BASE_DAMAGE + (upgrades.damageLevel-1)*DAMAGE_PER_LEVEL) * WEAPONS[currentWeaponKey].damageNearMult;
+}
+function weaponDamageFar(){
+  return (BASE_DAMAGE + (upgrades.damageLevel-1)*DAMAGE_PER_LEVEL) * WEAPONS[currentWeaponKey].damageFarMult;
 }
 
-function findNearestZombie(){
+// Only zombies actually visible on screen are auto-targeted. When none are
+// visible, tryShoot() below falls back to firing wherever the player is
+// currently facing/moving.
+function findNearestVisibleZombie(){
   let nearest = null, nd = Infinity;
   for(const z of zombies){
+    if(z.x < camera.x - z.radius || z.x > camera.x + W + z.radius ||
+       z.y < camera.y - z.radius || z.y > camera.y + H + z.radius) continue;
     const dx=z.x-player.x, dy=z.y-player.y;
     const d = dx*dx+dy*dy;
     if(d<nd){ nd=d; nearest=z; }
@@ -804,24 +1020,49 @@ function tryShoot(nowSec){
   lastShotTime = nowSec;
   ammo--;
 
-  const target = findNearestZombie();
+  const target = findNearestVisibleZombie();
   let ang;
   if(target){
     ang = Math.atan2(target.y-player.y, target.x-player.x);
   } else {
+    // no zombie on screen — shoot the direction the player is currently
+    // moving/facing instead
     ang = player.angle;
   }
   player.angle = ang;
 
-  const spd = 620;
-  bullets.push({
-    x: player.x + Math.cos(ang)*player.radius,
-    y: player.y + Math.sin(ang)*player.radius,
-    vx: Math.cos(ang)*spd, vy: Math.sin(ang)*spd,
-    damage: currentDamage(), radius:5, life:1.4
-  });
+  const w = WEAPONS[currentWeaponKey];
+  const dmgNear = weaponDamageNear(), dmgFar = weaponDamageFar();
+  const pellets = w.pellets || 1;
+  const spreadRad = (w.spreadDeg||0) * Math.PI/180;
+
+  // Shotgun fires several pellets in one shot, spread evenly across the
+  // full cone (e.g. 8 pellets over ±20° = 40° total); other weapons just
+  // fire the single shot straight down the aim line.
+  for(let p=0; p<pellets; p++){
+    const pelletAngle = pellets > 1 ? (ang - spreadRad/2 + spreadRad*(p/(pellets-1))) : ang;
+    bullets.push({
+      x: player.x + Math.cos(pelletAngle)*player.radius,
+      y: player.y + Math.sin(pelletAngle)*player.radius,
+      vx: Math.cos(pelletAngle)*w.bulletSpeed, vy: Math.sin(pelletAngle)*w.bulletSpeed,
+      damageNear: dmgNear, damageFar: dmgFar, initialLife: w.bulletLife,
+      radius: w.bulletRadius, life: w.bulletLife, color: w.bulletColor
+    });
+  }
   sndShoot();
   if(ammo<=0) startReload();
+  updateHUD();
+}
+
+function switchWeapon(){
+  const idx = WEAPON_ORDER.indexOf(currentWeaponKey);
+  currentWeaponKey = WEAPON_ORDER[(idx+1) % WEAPON_ORDER.length];
+  const w = WEAPONS[currentWeaponKey];
+  ammoMax = w.ammoMax;
+  ammo = ammoMax;           // fresh clip when swapping weapons
+  reloading = false; reloadTimer = 0;
+  const btn = document.getElementById('btn-weapon');
+  if(btn) btn.textContent = w.icon + ' ' + w.name;
   updateHUD();
 }
 
@@ -878,14 +1119,24 @@ function update(dt){
   if(len > 0.05){
     mvx/=len; mvy/=len;
     tryMove(player, mvx*player.speed*dt, mvy*player.speed*dt);
-    player.angle = Math.atan2(mvy,mvx);
+    player.moveAngle = Math.atan2(mvy,mvx);
+    player.moving = true;
+    player.walkPhase += dt * (player.speed/22);
+    // Facing follows movement only while NOT shooting. While the shoot
+    // button is held, the character keeps facing wherever the bullets are
+    // going (aim direction), even while still walking in another direction.
+    if(!shootHeld){
+      player.angle = player.moveAngle;
+    }
+  } else {
+    player.moving = false;
   }
   if(player.hitFlash>0) player.hitFlash -= dt;
   updateCamera();
 
   if(reloading){
     reloadTimer += dt;
-    if(reloadTimer >= RELOAD_TIME){
+    if(reloadTimer >= WEAPONS[currentWeaponKey].reloadTime){
       reloading = false; ammo = ammoMax; updateHUD();
     }
   }
@@ -919,7 +1170,12 @@ function update(dt){
       const z = zombies[j];
       const dx=z.x-b.x, dy=z.y-b.y;
       if(dx*dx+dy*dy <= (z.radius+b.radius)*(z.radius+b.radius)){
-        z.hp -= b.damage;
+        // damage decays linearly from damageNear (at the muzzle) down to
+        // damageFar (by the time the bullet is about to expire) — for
+        // pistol/rifle these are equal, so this is a no-op for them
+        const fraction = 1 - (b.life / b.initialLife);
+        const dmg = b.damageNear + (b.damageFar - b.damageNear) * fraction;
+        z.hp -= dmg;
         z.hitFlash = 0.15;
         addParticles(b.x,b.y,'#00ff9d',4);
         sndHit();
@@ -930,11 +1186,22 @@ function update(dt){
     }
   }
 
+  for(let i=mines.length-1;i>=0;i--){
+    const m = mines[i];
+    m.pulse += dt;
+    let hit = false;
+    for(const z of zombies){
+      const dx=z.x-m.x, dy=z.y-m.y;
+      if(dx*dx+dy*dy <= (MINE_TRIGGER_RADIUS+z.radius)*(MINE_TRIGGER_RADIUS+z.radius)){ hit = true; break; }
+    }
+    if(hit) explodeMine(m, i);
+  }
+
   for(let i=zombies.length-1;i>=0;i--){
     const z = zombies[i];
     const dx = player.x - z.x, dy = player.y - z.y;
     const d = Math.hypot(dx,dy) || 1;
-    tryMove(z, (dx/d)*z.speed*dt, (dy/d)*z.speed*dt);
+    moveZombieTowardPlayer(z, dt);
     if(z.hitFlash>0) z.hitFlash -= dt;
     if(z.attackCooldown>0) z.attackCooldown -= dt;
 
@@ -1113,6 +1380,52 @@ function drawObstacles(){
   }
 }
 
+// Draws the currently-equipped weapon in the player's hands, in local
+// (already rotated-to-aim) coordinates, +x pointing forward. Each weapon
+// gets its own distinct silhouette plus a soft ground shadow.
+function drawHeldWeapon(key){
+  if(key === 'pistol'){
+    // compact handgun: short slide/barrel over a small grip
+    ctx.fillStyle = 'rgba(0,0,0,0.35)';
+    ctx.fillRect(6,-0.6,10,3.2);
+    ctx.fillStyle = '#22262b';
+    ctx.fillRect(6,-1.6,10,3.2); // slide
+    ctx.fillStyle = '#15181c';
+    ctx.beginPath(); ctx.roundRect(2,-1,3.4,6,1.2); ctx.fill(); // grip, angled down
+    ctx.fillStyle = '#3a4046';
+    ctx.fillRect(15,-1,2.4,2); // barrel tip
+    ctx.fillStyle = 'rgba(255,230,0,0.75)';
+    ctx.fillRect(16.8,-0.6,1,1.2);
+  } else if(key === 'shotgun'){
+    // wide pump-action shotgun: thick barrel, pump grip, tube magazine
+    ctx.fillStyle = 'rgba(0,0,0,0.35)';
+    ctx.fillRect(6,-1.4,24,5.4);
+    ctx.fillStyle = '#3a2a1c'; // wooden stock
+    ctx.fillRect(2,-1.6,7,3.2);
+    ctx.fillStyle = '#26221c';
+    ctx.fillRect(8,-2.6,20,4.6); // barrel body
+    ctx.fillStyle = '#15130f';
+    ctx.fillRect(11,1.4,10,2.2); // pump/tube magazine underneath
+    ctx.fillStyle = '#4a4640';
+    ctx.fillRect(26,-2.6,3.5,4.6); // muzzle
+    ctx.fillStyle = 'rgba(255,46,99,0.75)';
+    ctx.fillRect(29,-1.6,1.3,2.4);
+  } else {
+    // rifle/avtomat: longer body, stock, magazine, sight
+    ctx.fillStyle = 'rgba(0,0,0,0.35)';
+    ctx.fillRect(9,-1,18,4.4);
+    ctx.fillStyle = '#15181c';
+    ctx.fillRect(9,-2,18,4);
+    ctx.fillStyle = '#1e2226';
+    ctx.fillRect(11,1.2,3,4); // magazine
+    ctx.fillRect(6,-1.3,4,2.6); // stock toward the body
+    ctx.fillStyle = '#3a4046';
+    ctx.fillRect(23,-1.3,4,2.6);
+    ctx.fillStyle = 'rgba(0,217,255,0.7)';
+    ctx.fillRect(26,-0.7,1.4,1.4);
+  }
+}
+
 function drawPlayer(){
   if(customPlayerImg){
     const size = player.radius * 2.6;
@@ -1132,26 +1445,68 @@ function drawPlayer(){
     }
     return;
   }
+
+  const flashAlpha = player.hitFlash>0 ? Math.min(0.6, player.hitFlash*2) : 0;
+
   ctx.save();
   ctx.translate(player.x, player.y);
-  const flashAlpha = player.hitFlash>0 ? Math.min(0.6, player.hitFlash*2) : 0;
-  ctx.beginPath();
-  ctx.fillStyle = '#0b3d2c';
-  ctx.arc(0,0,player.radius,0,Math.PI*2);
-  ctx.fill();
-  ctx.lineWidth = 3;
-  ctx.strokeStyle = '#00ff9d';
-  ctx.shadowColor = '#00ff9d';
-  ctx.shadowBlur = 14;
-  ctx.stroke();
-  ctx.shadowBlur = 0;
+
+  // ground shadow beneath the whole character
+  ctx.fillStyle = 'rgba(0,0,0,0.32)';
+  ctx.beginPath(); ctx.ellipse(0,3,11,5.5,0,0,Math.PI*2); ctx.fill();
+
+  // Legs — small walking swing, oriented to the movement direction
+  // (independent of where the player is aiming)
+  ctx.save();
+  ctx.rotate(player.moveAngle||0);
+  const swing = player.moving ? Math.sin(player.walkPhase)*6 : 0;
+  [1,-1].forEach(side=>{
+    const s = swing*side;
+    ctx.save();
+    ctx.translate(-2, side*4.4 - s*0.3);
+    ctx.rotate(s*0.06);
+    ctx.fillStyle = '#2b2b30';
+    ctx.beginPath(); ctx.roundRect(-2,-1.7,6.5,3.4,1.7); ctx.fill();
+    ctx.fillStyle = '#0c0c0c';
+    ctx.beginPath(); ctx.roundRect(3,-1.8,3.4,3.6,1.4); ctx.fill(); // boot
+    ctx.restore();
+  });
+  ctx.restore();
+
+  // Arms, gun (with its shadow) & head — oriented toward the aim direction
+  ctx.save();
   ctx.rotate(player.angle);
-  ctx.strokeStyle = '#00d9ff';
-  ctx.lineWidth = 4;
-  ctx.beginPath();
-  ctx.moveTo(0,0);
-  ctx.lineTo(player.radius+16, 0);
-  ctx.stroke();
+
+  drawHeldWeapon(currentWeaponKey);
+
+  // arms with hands — reach to where each weapon's grip actually is
+  const gripX = currentWeaponKey==='pistol' ? 4 : currentWeaponKey==='shotgun' ? 6 : 8;
+  [-4,4].forEach(oy=>{
+    ctx.strokeStyle = '#0e5a3c'; ctx.lineWidth = 3; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(1,oy*0.55); ctx.lineTo(gripX,oy*0.28); ctx.stroke();
+    ctx.fillStyle = '#e2ab7a';
+    ctx.beginPath(); ctx.arc(gripX,oy*0.28,1.7,0,Math.PI*2); ctx.fill(); // hand
+  });
+
+  // head — skin tone with ear, jaw shading and a cap with visor
+  ctx.fillStyle = '#e2ab7a';
+  ctx.beginPath(); ctx.arc(0,0,8.5,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#d69a68';
+  ctx.beginPath(); ctx.ellipse(-5,7.5,2.4,3.2,0,0,Math.PI*2); ctx.fill(); // ear
+  ctx.fillStyle = 'rgba(0,0,0,0.16)';
+  ctx.beginPath(); ctx.arc(-2.5,3.5,5.5,0,Math.PI*2); ctx.fill(); // jaw shading
+  ctx.fillStyle = 'rgba(255,255,255,0.18)';
+  ctx.beginPath(); ctx.ellipse(2,-4,3.5,2.4,0.4,0,Math.PI*2); ctx.fill(); // highlight
+  // cap
+  ctx.fillStyle = '#0e5a3c';
+  ctx.beginPath(); ctx.arc(0,0,8.7,-2.7,-0.35); ctx.lineTo(0,0); ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = '#00d9ff'; ctx.lineWidth = 1.6;
+  ctx.beginPath(); ctx.arc(0,0,8.9,-1.7,-0.5); ctx.stroke();
+  // brim, pointing the direction the player is facing/aiming
+  ctx.fillStyle = '#083a28';
+  ctx.beginPath(); ctx.ellipse(6,-3,4,1.8,0.5,0,Math.PI*2); ctx.fill();
+
+  ctx.restore();
   ctx.restore();
 
   if(flashAlpha>0){
@@ -1199,19 +1554,82 @@ function drawZombie(z){
   }
   ctx.save();
   ctx.translate(z.x,z.y);
+  ctx.rotate(z.facingAngle||0);
+
+  const skinColor = z.isFast ? '#8a5a5a' : '#7a8a6a';
+  const skinShadow = z.isFast ? '#5a3232' : '#4a5a3e';
+  const clothColor = z.isFast ? '#3a0d1e' : '#241033';
+  const glowColor = z.isFast ? '#ff8fae' : '#ff2e63';
+  const r = z.radius;
+  const swing = Math.sin(z.walkPhase||0) * (z.isFast ? 8 : 5.5);
+
+  // legs — bony, uneven shambling gait, tattered trouser hems
+  [1,-1].forEach(side=>{
+    const s = swing*side*(side>0?1:1.4);
+    ctx.save();
+    ctx.translate(-r*0.18, side*r*0.34 - s*0.4);
+    ctx.rotate(s*0.07*side);
+    ctx.fillStyle = clothColor;
+    ctx.beginPath(); ctx.roundRect(-2.4,-2,r*0.5,3.6,1.6); ctx.fill();
+    ctx.fillStyle = skinShadow;
+    ctx.beginPath(); ctx.roundRect(r*0.5-3,-1.6,r*0.3,3,1.4); ctx.fill(); // exposed shin
+    // jagged torn hem
+    ctx.beginPath();
+    ctx.moveTo(-2.4,2); ctx.lineTo(0,3.4); ctx.lineTo(2,2); ctx.lineTo(4,3.6); ctx.lineTo(6,2);
+    ctx.fillStyle = clothColor; ctx.fill();
+    ctx.restore();
+  });
+
+  // arms — thin, bony, reaching forward with a clawed hand
+  const armSwing = Math.sin((z.walkPhase||0)+Math.PI) * 3;
+  [ -5, 5 ].forEach(oy=>{
+    const end = { x:r*0.95, y: oy>0 ? 3-armSwing : -3+armSwing };
+    ctx.strokeStyle = skinShadow; ctx.lineWidth = 3.4; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(-1,oy*0.7); ctx.lineTo(end.x,end.y); ctx.stroke();
+    // claw fingers
+    ctx.strokeStyle = skinShadow; ctx.lineWidth = 1.4;
+    for(let f=-1;f<=1;f++){
+      ctx.beginPath(); ctx.moveTo(end.x,end.y); ctx.lineTo(end.x+3.5, end.y+f*2.4); ctx.stroke();
+    }
+  });
+
+  // hunched torso — tattered shirt over decayed skin, jagged bottom edge
+  const torsoG = ctx.createRadialGradient(-r*0.2,0,2,0,0,r*0.9);
+  torsoG.addColorStop(0, clothColor);
+  torsoG.addColorStop(1, skinShadow);
+  ctx.fillStyle = torsoG;
+  ctx.beginPath(); ctx.ellipse(0,0, r*0.207, r*0.16, 0, 0, Math.PI*2); ctx.fill();
+  // torn shirt flaps + exposed wound patches
+  ctx.fillStyle = clothColor;
   ctx.beginPath();
-  ctx.fillStyle = z.isFast ? '#3a0d1e' : '#241033';
-  ctx.arc(0,0,z.radius,0,Math.PI*2);
+  ctx.moveTo(-r*0.16,-r*0.053); ctx.lineTo(-r*0.08,-r*0.133); ctx.lineTo(0,-r*0.08);
+  ctx.lineTo(r*0.053,-r*0.133); ctx.lineTo(r*0.107,-r*0.04); ctx.lineTo(-r*0.16,-r*0.053);
   ctx.fill();
-  ctx.lineWidth = 3;
-  ctx.strokeStyle = z.isFast ? '#ff8fae' : '#ff2e63';
-  ctx.shadowColor = ctx.strokeStyle;
-  ctx.shadowBlur = 10;
-  ctx.stroke();
-  ctx.shadowBlur = 0;
+  ctx.fillStyle = 'rgba(120,20,20,0.55)';
+  ctx.beginPath(); ctx.ellipse(r*0.033,r*0.05,1.1,0.7,0.3,0,Math.PI*2); ctx.fill();
+
+  // head — gaunt shape, sunken cheek shading, messy hair, open jaw, glowing eyes
+  ctx.fillStyle = skinColor;
+  ctx.beginPath(); ctx.arc(r*0.42, 0, r*0.4, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = 'rgba(0,0,0,0.28)';
+  ctx.beginPath(); ctx.arc(r*0.3, r*0.16, r*0.16, 0, Math.PI*2); ctx.fill(); // sunken cheek
+  // messy hair tufts
+  ctx.fillStyle = '#1a1418';
+  for(let i=-1;i<=1;i++){
+    ctx.beginPath();
+    ctx.moveTo(r*0.3+i*3, -r*0.32); ctx.lineTo(r*0.36+i*3, -r*0.32);
+    ctx.lineTo(r*0.32+i*3, -r*0.5-Math.abs(i)*2); ctx.closePath(); ctx.fill();
+  }
+  // open jaw / mouth gap
+  ctx.fillStyle = '#160808';
+  ctx.beginPath(); ctx.ellipse(r*0.5, r*0.16, 2.6, 2, 0, 0, Math.PI*2); ctx.fill();
+  // glowing eyes
   ctx.fillStyle = '#ffe600';
-  ctx.beginPath(); ctx.arc(-z.radius*0.35,-z.radius*0.15,2.5,0,Math.PI*2); ctx.fill();
-  ctx.beginPath(); ctx.arc(z.radius*0.35,-z.radius*0.15,2.5,0,Math.PI*2); ctx.fill();
+  ctx.shadowColor = '#ffe600'; ctx.shadowBlur = 5;
+  ctx.beginPath(); ctx.arc(r*0.42+2,-2.6,1.7,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(r*0.42+2, 2.6,1.7,0,Math.PI*2); ctx.fill();
+  ctx.shadowBlur = 0;
+
   ctx.restore();
 
   if(z.hitFlash>0){
@@ -1295,10 +1713,31 @@ function drawBoss(z){
 function drawBullet(b){
   ctx.save();
   ctx.beginPath();
-  ctx.fillStyle = '#ffe600';
-  ctx.shadowColor = '#ffe600';
+  const c = b.color || '#ffe600';
+  ctx.fillStyle = c;
+  ctx.shadowColor = c;
   ctx.shadowBlur = 8;
   ctx.arc(b.x,b.y,b.radius,0,Math.PI*2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawMine(m){
+  ctx.save();
+  ctx.translate(m.x,m.y);
+  const glow = 0.55 + Math.sin(m.pulse*6)*0.35;
+  ctx.beginPath();
+  ctx.fillStyle = '#1a1a1a';
+  ctx.arc(0,0,m.radius,0,Math.PI*2);
+  ctx.fill();
+  ctx.lineWidth = 2.5;
+  ctx.strokeStyle = '#ff2e63';
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.fillStyle = `rgba(255,46,99,${glow})`;
+  ctx.shadowColor = '#ff2e63';
+  ctx.shadowBlur = 10;
+  ctx.arc(0,0,3.5,0,Math.PI*2);
   ctx.fill();
   ctx.restore();
 }
@@ -1336,6 +1775,7 @@ function draw(){
   drawRoads();
   drawObstacles();
   drawParticles();
+  for(const m of mines) drawMine(m);
   for(const b of bullets) drawBullet(b);
   for(const z of zombies) drawZombie(z);
   drawPlayer();
@@ -1371,6 +1811,15 @@ function endGame(){
   document.getElementById('finalScore').textContent = score;
   document.getElementById('finalBest').textContent = bestScore;
   openOverlay('overlay-gameover');
+
+  // Submit the score automatically now that the run has ended.
+  scoreSubmitted = false; // new run — allow exactly one submission once it ends
+  setSubmitStatus("");
+  if(!tg || !tg.initData || !CHAT_ID){
+    setSubmitStatus("Bu faqat Telegram bot ichida ishlaydi", "var(--neon-red)");
+  } else {
+    submitScore(score, coins);
+  }
 }
 
 function dmgCost(){ return 20 * upgrades.damageLevel; }
@@ -1384,6 +1833,45 @@ function refreshShopUI(){
   document.getElementById('rateCostDisplay').textContent = rateCost();
   document.getElementById('btn-buy-damage').disabled = coins < dmgCost();
   document.getElementById('btn-buy-rate').disabled = coins < rateCost();
+  document.getElementById('mineLevelDisplay').textContent = mineCount;
+  document.getElementById('btn-buy-mine').disabled = coins < MINE_COST || mineCount >= MINE_MAX;
+}
+
+// Mina qo'yish tugmasi: minalar qolmasa avtomatik yashiriladi
+function updateMineButton(){
+  const btn = document.getElementById('btn-mine');
+  if(!btn) return;
+  document.getElementById('mineCountNum').textContent = mineCount;
+  btn.classList.toggle('hidden', mineCount <= 0);
+}
+
+function placeMine(){
+  if(gameState !== 'playing' || mineCount <= 0) return;
+  mineCount--;
+  mines.push({ x: player.x, y: player.y, radius: 12, pulse: 0 });
+  updateMineButton();
+  updateHUD();
+}
+
+// Mina portlaganda, portlash radiusi ichidagi har bir zombiga oddiy o'qdan
+// 5 marta tekkandek zarar yetadi. Portlash radiusi drabashkning otish
+// masofasiga teng.
+function explodeMine(mine, idx){
+  const radius = mineExplosionRadius();
+  const dmg = ordinaryBulletDamage() * 5;
+  for(let j=zombies.length-1;j>=0;j--){
+    const z = zombies[j];
+    const dx = z.x-mine.x, dy = z.y-mine.y;
+    if(dx*dx+dy*dy <= radius*radius){
+      z.hp -= dmg;
+      z.hitFlash = 0.15;
+      if(z.hp<=0) killZombie(z,j);
+    }
+  }
+  addParticles(mine.x, mine.y, '#ff8a2b', 30);
+  addParticles(mine.x, mine.y, '#ffe600', 16);
+  beep(150, 0.3, 'sawtooth', 0.22);
+  mines.splice(idx,1);
 }
 
 document.getElementById('btn-buy-damage').addEventListener('click', ()=>{
@@ -1405,6 +1893,21 @@ document.getElementById('btn-buy-rate').addEventListener('click', ()=>{
     refreshShopUI();
     updateHUD();
   }
+});
+document.getElementById('btn-buy-mine').addEventListener('click', ()=>{
+  if(mineCount >= MINE_MAX) return;
+  if(coins >= MINE_COST){
+    coins -= MINE_COST;
+    mineCount++;
+    sndCoin();
+    refreshShopUI();
+    updateHUD();
+    updateMineButton();
+  }
+});
+document.getElementById('btn-mine').addEventListener('click', (e)=>{
+  e.preventDefault();
+  placeMine();
 });
 
 document.getElementById('btn-start').addEventListener('click', ()=>{
@@ -1511,6 +2014,9 @@ shootBtn.addEventListener('touchstart', shootPressStart, {passive:false});
 shootBtn.addEventListener('touchend', shootPressEnd, {passive:false});
 shootBtn.addEventListener('touchcancel', shootPressEnd, {passive:false});
 
+const weaponBtn = document.getElementById('btn-weapon');
+weaponBtn.addEventListener('click', (e)=>{ e.preventDefault(); switchWeapon(); });
+
 const joyZone = document.getElementById('joystick-zone');
 const joyBase = document.getElementById('joystick-base');
 const joyKnob = document.getElementById('joystick-knob');
@@ -1584,7 +2090,6 @@ document.addEventListener('visibilitychange', ()=>{
    ====================================================================== */
 function checkTelegramAuth(){
   try {
-    const tg = window.Telegram && window.Telegram.WebApp;
     if (!tg) return;
     const user = tg.initDataUnsafe && tg.initDataUnsafe.user;
     if (!user) return;
@@ -1656,6 +2161,23 @@ function buildAdminUI(user, isOwner){
         <audio id="musicPreview" class="admin-preview-audio" controls></audio>
       </div>
 
+      <div class="admin-section">
+        <h3>⚙️ O'yin sozlamalari</h3>
+        <div class="admin-row" style="flex-direction:column; align-items:stretch; gap:12px;">
+          <label style="font-size:12.5px; color:#cdeee0;">
+            Boshlang'ich zombilar soni
+            <input type="number" id="setInitialZombies" min="1" max="100" step="1"
+                   style="width:100%; margin-top:5px; padding:8px 10px; border-radius:8px; border:1px solid var(--neon-blue); background:rgba(0,0,0,0.4); color:#eafff6; font-size:14px;">
+          </label>
+          <label style="font-size:12.5px; color:#cdeee0;">
+            O'yinchi tezligi
+            <input type="number" id="setPlayerSpeed" min="50" max="1000" step="10"
+                   style="width:100%; margin-top:5px; padding:8px 10px; border-radius:8px; border:1px solid var(--neon-blue); background:rgba(0,0,0,0.4); color:#eafff6; font-size:14px;">
+          </label>
+        </div>
+        <div class="admin-note">Zombilar tezligi endi alohida sozlanmaydi — u avtomatik ravishda o'yinchi tezligidan 3% kam bo'ladi. O'zgarishlar keyingi yangi o'yin boshlanganda kuchga kiradi.</div>
+      </div>
+
       ${isOwner ? `
       <div class="admin-section">
         <h3>👥 Administratorlarni boshqarish</h3>
@@ -1678,6 +2200,10 @@ function buildAdminUI(user, isOwner){
     </div>
   `;
   document.body.appendChild(overlay);
+
+  // pre-fill the gameplay settings fields with the currently active values
+  overlay.querySelector('#setInitialZombies').value = gameSettings.initialZombies;
+  overlay.querySelector('#setPlayerSpeed').value = gameSettings.playerSpeed;
 
   let pending = { bg: undefined, player: undefined, zombie: undefined, boss: undefined, music: undefined };
 
@@ -1824,6 +2350,12 @@ function buildAdminUI(user, isOwner){
       if (pending.music === null){ localStorage.removeItem(ASSET_KEYS.music); bgMusicEl.removeAttribute('src'); }
       else if (pending.music){ localStorage.setItem(ASSET_KEYS.music, pending.music); bgMusicEl.src = pending.music; }
 
+      // gameplay settings — clamp to sane ranges before saving
+      const initialZombies = Math.max(1, Math.min(100, parseInt(overlay.querySelector('#setInitialZombies').value, 10) || DEFAULT_SETTINGS.initialZombies));
+      const playerSpeed = Math.max(50, Math.min(1000, parseInt(overlay.querySelector('#setPlayerSpeed').value, 10) || DEFAULT_SETTINGS.playerSpeed));
+      gameSettings = { initialZombies, playerSpeed };
+      localStorage.setItem(SETTINGS_KEY, JSON.stringify(gameSettings));
+
       closeAdminModal();
     } catch (err){
       alert("Saqlashda xatolik: fayl(lar) hajmi juda katta bo'lishi mumkin.");
@@ -1836,8 +2368,9 @@ function buildAdminUI(user, isOwner){
 
 (function bootstrap(){
   player = { x:0,y:0, radius:20, speed:230, hp:100, maxHp:100, angle:0, hitFlash:0 };
-  bullets=[]; zombies=[]; particles=[]; floatTexts=[];
+  bullets=[]; zombies=[]; particles=[]; floatTexts=[]; mines=[]; mineCount=0;
   score=0; coins=0; ammo=ammoMax;
+  updateMineButton();
 })();
 checkTelegramAuth();
 </script>
