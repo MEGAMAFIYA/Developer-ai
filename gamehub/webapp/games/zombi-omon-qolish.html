@@ -189,22 +189,39 @@
   }
   #btn-shoot:active{transform:scale(0.94);}
 
-  #shoot-wrap{position:relative; width:96px; height:96px;}
+  #shoot-stack{display:flex; flex-direction:column; align-items:center; gap:8px;}
   #btn-mine{
-    position:absolute; left:50%; top:-68px; transform:translateX(-50%);
-    width:54px; height:54px; border-radius:50%;
-    background:rgba(0,0,0,0.55);
+    width:52px; height:52px; border-radius:50%;
+    background:radial-gradient(circle at 35% 30%, #ffd27d, #b8730a);
     border:2px solid var(--neon-yellow);
-    color:var(--neon-yellow);
-    display:flex; flex-direction:column; align-items:center; justify-content:center;
-    font-size:11px; font-weight:bold; line-height:1.1;
-    text-shadow:0 0 4px var(--neon-yellow);
-    box-shadow:0 0 12px rgba(255,230,0,0.55);
-    pointer-events:auto;
+    color:#2a1600; font-weight:bold; font-size:12px;
+    box-shadow:0 0 12px rgba(255,230,0,0.6);
+    align-self:center;
   }
-  #btn-mine span:first-child{font-size:18px;}
-  #btn-mine:active{transform:translateX(-50%) scale(0.92);}
+  #btn-mine:active{transform:scale(0.92);}
   #btn-mine.hidden{display:none;}
+
+  /* ---- Leaderboard ---- */
+  .lbTitle{ font-size:clamp(13px,3vw,16px); font-weight:800; color:var(--neon-blue); text-shadow:0 0 4px var(--neon-blue); margin:14px 0 8px; }
+  .lbList{
+    display:flex; flex-direction:column; gap:6px; max-width:420px; width:100%;
+    max-height:38vh; overflow-y:auto; margin:0 auto 6px;
+  }
+  .lbRow{
+    display:flex; align-items:center; gap:10px; background:rgba(0,0,0,0.4);
+    border:1px solid var(--neon-blue); border-radius:10px; padding:8px 12px;
+  }
+  .lbRow.lbMe{ border-color:var(--neon-green); background:rgba(0,255,157,0.12); }
+  .lbRank{ font-weight:900; color:var(--neon-yellow); min-width:28px; text-align:left; }
+  .lbName{ flex:1; text-align:left; color:#eafff6; font-weight:700; font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .lbScore{ font-weight:900; color:var(--neon-blue); font-size:13px; }
+  .lbEmpty{ color:#9fb; opacity:0.75; font-size:12.5px; font-weight:600; padding:10px 0; }
+  .lbTabsRow{ display:flex; gap:8px; justify-content:center; margin:2px 0 12px; }
+  .lbTab{
+    padding:7px 22px; border-radius:10px; border:1px solid var(--neon-blue); background:rgba(0,0,0,0.4);
+    color:var(--neon-blue); font-weight:800; cursor:pointer; font-size:clamp(12px,2.8vw,14px);
+  }
+  .lbTab.active{ background:var(--neon-blue); color:#04121a; }
 
   .overlay{
     position:absolute; inset:0; z-index:20;
@@ -253,7 +270,6 @@
   }
   .small-btn:disabled{opacity:0.35; cursor:not-allowed;}
   .toggle-row{display:flex; align-items:center; justify-content:space-between; margin:14px 0;}
-  #gameOverTitle{color:var(--neon-red); text-shadow:0 0 8px var(--neon-red);}
 
   @media (max-width:480px){
     .hud-top{font-size:12px; gap:8px;}
@@ -311,10 +327,20 @@
     <div class="subtitle">ZOMBILARGA BARDOSH BERING VA HAYOT QOLING</div>
     <div class="menu-buttons">
       <button class="neon-btn" id="btn-start">O'yinni boshlash</button>
-      <button class="neon-btn blue" id="btn-highscore">Eng yaxshi natija</button>
       <button class="neon-btn yellow" id="btn-howto">Qanday o'ynaladi</button>
       <button class="neon-btn red" id="btn-settings">Sozlamalar</button>
+      <button class="neon-btn blue" id="btn-leaderboard">Reytinglar</button>
     </div>
+  </div>
+
+  <div id="screen-leaderboard" class="screen">
+    <h1 class="title neon-text" style="font-size:clamp(22px,6vw,34px)">REYTINGLAR</h1>
+    <div class="lbTabsRow" id="lbTabsMain">
+      <div class="lbTab active" data-scope="global">Global</div>
+      <div class="lbTab" data-scope="group">Guruh</div>
+    </div>
+    <div class="lbList" id="lbListMain"></div>
+    <button class="neon-btn" id="btn-leaderboard-back" style="margin-top:16px;">Orqaga</button>
   </div>
 
   <div id="screen-game" class="screen">
@@ -338,8 +364,8 @@
       <div id="action-buttons">
         <button id="btn-shop" title="Do'kon">🛒</button>
         <button id="btn-pause" title="Pauza">⏸</button>
-        <div id="shoot-wrap">
-          <button id="btn-mine" title="Mina qo'yish"><span>💣</span><span id="mineCountNum">0</span></button>
+        <div id="shoot-stack">
+          <button id="btn-mine">💣 <span id="mineCountDisplay">3</span></button>
           <button id="btn-shoot">O'Q<br>UZISH</button>
         </div>
       </div>
@@ -380,15 +406,6 @@
     </div>
   </div>
 
-  <div id="overlay-highscore" class="overlay">
-    <div class="modal">
-      <h2>ENG YAXSHI NATIJA</h2>
-      <div class="stat-line"><span>Rekord ochko:</span><span id="bestScoreDisplay">0</span></div>
-      <div class="modal-buttons">
-        <button class="neon-btn" onclick="closeOverlay('overlay-highscore')">Yopish</button>
-      </div>
-    </div>
-  </div>
 
   <div id="overlay-pause" class="overlay">
     <div class="modal">
@@ -423,9 +440,9 @@
       </div>
 
       <div class="shop-item">
-        <h3>💣 Minalar: <span id="mineLevelDisplay">0</span>/3</h3>
+        <h3>💣 Minalar: <span id="mineLevelDisplay">3</span> ta</h3>
         <div class="row">
-          <span>Narxi: <b>50</b> tanga</span>
+          <span>Narxi: <b>50</b> tanga (1 dona)</span>
           <button class="small-btn" id="btn-buy-mine">Sotib olish</button>
         </div>
       </div>
@@ -438,11 +455,15 @@
 
   <div id="overlay-gameover" class="overlay">
     <div class="modal">
-      <h2 id="gameOverTitle">SIZ MAG'LUB BO'LDINGIZ</h2>
-      <div class="stat-line"><span>O'ldirilgan zombilar:</span><span id="finalWave">0</span></div>
+      <h2>O'YIN TUGADI!</h2>
       <div class="stat-line"><span>Ochko:</span><span id="finalScore">0</span></div>
-      <div class="stat-line"><span>Rekord:</span><span id="finalBest">0</span></div>
       <div id="submitStatus" style="min-height:20px;margin:6px 0 4px;font-weight:700;font-size:13px;color:var(--neon-blue);"></div>
+      <div class="lbTitle">Ushbu o'yin reytingi</div>
+      <div class="lbTabsRow" id="lbTabsGo">
+        <div class="lbTab active" data-scope="global">Global</div>
+        <div class="lbTab" data-scope="group">Guruh</div>
+      </div>
+      <div class="lbList" id="goLeaderboard"></div>
       <div class="modal-buttons">
         <button class="neon-btn" id="btn-restart-from-gameover">Qayta boshlash</button>
         <button class="neon-btn blue" id="btn-menu-from-gameover">Bosh menyu</button>
@@ -545,9 +566,89 @@ async function submitScore(finalScore, finalCoins){
     if(!res.ok) throw new Error('HTTP ' + res.status);
     scoreSubmitted = true;
     setSubmitStatus("Reytingga yuborildi ✓", "var(--neon-green)");
+    // refresh the leaderboard shown on the game-over screen now that our
+    // new score has been recorded on the backend (keep whichever tab is active)
+    {
+      const activeTab = document.querySelector('#lbTabsGo .lbTab.active');
+      loadLeaderboardInto(document.getElementById('goLeaderboard'), activeTab ? activeTab.dataset.scope : 'global');
+    }
   }catch(e){
     setSubmitStatus("Yuborilmadi", "var(--neon-red)");
   }
+}
+
+/* =========================================================================
+   LEADERBOARD (Telegram rankings for this game)
+   Reads the ranking list from the backend via GET /api/scores — the read
+   counterpart of the POST /api/scores used by submitScore() above. The
+   backend is expected to answer with either { leaderboard: [...] } or a
+   bare array of entries shaped like { name, score }.
+   ========================================================================= */
+function escapeHtml(s){
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+async function fetchLeaderboard(scope){
+  // scope: 'global' (all players, all chats) or 'group' (current Telegram chat only)
+  if(scope === 'group' && !CHAT_ID) return null; // no chat context — nothing to show
+  try{
+    let url = '/api/scores?game=zombi-omon-qolish&scope=' + scope;
+    if(scope === 'group') url += '&chat_id=' + CHAT_ID;
+    const res = await fetch(url);
+    if(!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    const list = Array.isArray(data) ? data : (Array.isArray(data.leaderboard) ? data.leaderboard : null);
+    return list;
+  }catch(e){
+    return null;
+  }
+}
+
+/* Renders a leaderboard list (or an empty/error state) into a container. */
+function renderLeaderboardInto(container, list){
+  if(!container) return;
+  if(list === null){
+    container.innerHTML = '<div class="lbEmpty">Reytingni yuklab bo\'lmadi.</div>';
+    return;
+  }
+  if(list.length === 0){
+    container.innerHTML = '<div class="lbEmpty">Hozircha reyting mavjud emas.</div>';
+    return;
+  }
+  const myId = (tg && tg.initDataUnsafe && tg.initDataUnsafe.user) ? String(tg.initDataUnsafe.user.id) : null;
+  container.innerHTML = list.map((row, i) => {
+    const name = row.name || row.first_name || row.username || ("O'yinchi " + (i+1));
+    const sc = (row.score !== undefined) ? row.score : (row.best_score !== undefined ? row.best_score : '');
+    const rowId = row.user_id !== undefined ? row.user_id : (row.id !== undefined ? row.id : (row.telegram_id !== undefined ? row.telegram_id : null));
+    const isMe = myId !== null && rowId !== null && String(rowId) === myId;
+    return '<div class="lbRow' + (isMe ? ' lbMe' : '') + '">'
+      + '<span class="lbRank">#' + (i+1) + '</span>'
+      + '<span class="lbName">' + escapeHtml(name) + '</span>'
+      + '<span class="lbScore">' + escapeHtml(sc) + '</span>'
+      + '</div>';
+  }).join('');
+}
+
+function loadLeaderboardInto(container, scope){
+  if(!container) return;
+  container.innerHTML = '<div class="lbEmpty">Yuklanmoqda...</div>';
+  fetchLeaderboard(scope || 'global').then(list => renderLeaderboardInto(container, list));
+}
+
+/* Wires a row of .lbTab buttons (global/group) to reload a leaderboard
+   container when clicked, and does the initial (global) load. */
+function setupLbTabs(tabsEl, container){
+  if(!tabsEl || !container) return;
+  const btns = tabsEl.querySelectorAll('.lbTab');
+  btns.forEach(b => {
+    b.onclick = () => {
+      btns.forEach(x => x.classList.remove('active'));
+      b.classList.add('active');
+      loadLeaderboardInto(container, b.dataset.scope);
+    };
+  });
+  const activeBtn = tabsEl.querySelector('.lbTab.active') || btns[0];
+  loadLeaderboardInto(container, activeBtn ? activeBtn.dataset.scope : 'global');
 }
 
 /* =========================================================================
@@ -580,9 +681,6 @@ let customBgImg = null;      // Image, replaces the neon grid background when se
 const SETTINGS_KEY = 'zb_game_settings';
 const DEFAULT_SETTINGS = { initialZombies: 100, playerSpeed: 230 };
 let gameSettings = Object.assign({}, DEFAULT_SETTINGS);
-// Zombilar tezligi endi mustaqil sozlama emas — doim o'yinchi tezligidan
-// 3% kam bo'ladi.
-function zombieBaseSpeed(){ return gameSettings.playerSpeed * 0.97; }
 function loadGameSettings(){
   try {
     const raw = localStorage.getItem(SETTINGS_KEY);
@@ -701,30 +799,61 @@ const WEAPONS = {
   rifle:   { name:"Avtomat",  ammoMax:30, cooldown:0.11, bulletSpeed:640, bulletLife:1.4,   bulletColor:'#00d9ff', damageNearMult:1.0, damageFarMult:1.0, bulletRadius:5,   reloadTime:1.5, icon:'🔫', pellets:1, spreadDeg:0  },
   shotgun: { name:"Drabashk", ammoMax:5,  cooldown:0.6,  bulletSpeed:560, bulletLife:0.2112, bulletColor:'#ff2e63', damageNearMult:2.2, damageFarMult:1.0, bulletRadius:2.2, reloadTime:1.8, icon:'💥', pellets:8, spreadDeg:40 }
 };
-// Drabashkning otish masofasi (bulletSpeed*bulletLife) 2.2x oshirilgan: 0.096 -> 0.2112
-
-/* Minalar: eng ko'pi bilan 3 tagacha olib yurish mumkin, do'kondan 1 donasi
-   50 tangaga sotib olinadi. Portlash radiusi drabashkning otish masofasiga
-   teng, portlash ichidagi har bir zombiga oddiy o'qdan 5 marta tekkandek
-   zarar yetadi. */
-const MINE_MAX = 3;
-const MINE_COST = 50;
-const MINE_TRIGGER_RADIUS = 26;
-let mines = [];
-let mineCount = 0;
-function mineExplosionRadius(){
-  const w = WEAPONS.shotgun;
-  return w.bulletSpeed * w.bulletLife;
-}
-function ordinaryBulletDamage(){
-  return BASE_DAMAGE + (upgrades.damageLevel-1)*DAMAGE_PER_LEVEL;
-}
 const WEAPON_ORDER = ['pistol','rifle','shotgun'];
 let currentWeaponKey = 'pistol';
 
 let ammo, ammoMax = WEAPONS[currentWeaponKey].ammoMax;
 let reloading = false, reloadTimer = 0;
 let lastShotTime = -999;
+
+/* Mines — proximity-triggered explosives. Blast radius matches the
+   shotgun's (now 2.2x longer) firing distance; each zombie caught in the
+   blast takes damage equal to 5 ordinary (pistol) bullet hits. */
+let mines = [];
+let mineCount = 3;
+const MINE_PRICE = 50;
+const MINE_TRIGGER_RADIUS = 16; // how close a zombie must get to set it off
+const MINE_ARM_DELAY = 0.4;     // avoids it detonating the instant it's placed
+function mineBlastRadius(){
+  return WEAPONS.shotgun.bulletSpeed * WEAPONS.shotgun.bulletLife;
+}
+function pistolBaselineDamage(){
+  return (BASE_DAMAGE + (upgrades.damageLevel-1)*DAMAGE_PER_LEVEL) * WEAPONS.pistol.damageNearMult;
+}
+
+function updateMineButton(){
+  const btn = document.getElementById('btn-mine');
+  const countEl = document.getElementById('mineCountDisplay');
+  if(!btn) return;
+  countEl.textContent = mineCount;
+  btn.classList.toggle('hidden', mineCount <= 0);
+}
+
+function placeMine(){
+  if(gameState !== 'playing') return;
+  if(mineCount <= 0) return;
+  mines.push({ x:player.x, y:player.y, armTimer: MINE_ARM_DELAY, blinkPhase:0 });
+  mineCount--;
+  updateMineButton();
+  // placement puff effect
+  addParticles(player.x, player.y, '#ffe600', 10);
+}
+
+function explodeMine(mine){
+  const radius = mineBlastRadius();
+  const dmg = pistolBaselineDamage() * 5;
+  for(let j=zombies.length-1;j>=0;j--){
+    const z = zombies[j];
+    const dx = z.x-mine.x, dy = z.y-mine.y;
+    if(dx*dx+dy*dy <= radius*radius){
+      z.hp -= dmg;
+      z.hitFlash = 0.2;
+      if(z.hp<=0) killZombie(z,j);
+    }
+  }
+  addParticles(mine.x, mine.y, '#ff2e63', 36);
+  sndHit();
+}
 
 /* =========================================================================
    WORLD MAP — 4x bigger than the screen, with grass + roads (walkable)
@@ -876,17 +1005,17 @@ function initGame(){
   zombies = [];
   particles = [];
   floatTexts = [];
-  mines = []; mineCount = 0;
-  updateMineButton();
   score = 0; coins = 0;
   survivalTime = 0; zombieSpawnTimer = 0;
   totalKills = 0; bossCount = 0; nextBossThreshold = 50;
+  currentWeaponKey = 'pistol'; // every new game starts on the pistol
   ammoMax = WEAPONS[currentWeaponKey].ammoMax;
   ammo = ammoMax;
   reloading = false; reloadTimer = 0;
   const weaponBtnEl = document.getElementById('btn-weapon');
   if(weaponBtnEl) weaponBtnEl.textContent = WEAPONS[currentWeaponKey].icon + ' ' + WEAPONS[currentWeaponKey].name;
   upgrades = { damageLevel:1, rateLevel:1 };
+  mines = []; mineCount = 3; updateMineButton();
   // start with the admin-configured number of zombies already on the map
   for(let i=0;i<gameSettings.initialZombies;i++) spawnZombie();
   updateHUD();
@@ -912,11 +1041,13 @@ function spawnZombie(){
 
   const isFast = Math.random() < 0.2;
   const baseHp = 55;
+  // Zombie speed is always 3% slower than the player's current speed.
+  const baseZombieSpeed = player.speed * 0.97;
   zombies.push({
     type:'normal',
     x, y,
     radius: isFast ? 16 : 20,
-    speed: isFast ? zombieBaseSpeed()*1.67 : zombieBaseSpeed(),
+    speed: isFast ? baseZombieSpeed*1.67 : baseZombieSpeed,
     hp: isFast ? baseHp*0.55 : baseHp,
     maxHp: isFast ? baseHp*0.55 : baseHp,
     dmg: 8,
@@ -947,7 +1078,7 @@ function spawnBoss(){
     type:'boss',
     x, y,
     radius: BASE_BOSS_RADIUS,
-    speed: zombieBaseSpeed()*0.7,
+    speed: player.speed * 0.97 * 0.7,
     hp, maxHp: hp,
     dmg: BASE_BOSS_DMG * mult,
     attackCooldown: 0,
@@ -1186,17 +1317,6 @@ function update(dt){
     }
   }
 
-  for(let i=mines.length-1;i>=0;i--){
-    const m = mines[i];
-    m.pulse += dt;
-    let hit = false;
-    for(const z of zombies){
-      const dx=z.x-m.x, dy=z.y-m.y;
-      if(dx*dx+dy*dy <= (MINE_TRIGGER_RADIUS+z.radius)*(MINE_TRIGGER_RADIUS+z.radius)){ hit = true; break; }
-    }
-    if(hit) explodeMine(m, i);
-  }
-
   for(let i=zombies.length-1;i>=0;i--){
     const z = zombies[i];
     const dx = player.x - z.x, dy = player.y - z.y;
@@ -1208,6 +1328,24 @@ function update(dt){
     if(d < z.radius+player.radius+4 && z.attackCooldown<=0){
       damagePlayer(z.dmg);
       z.attackCooldown = 0.8;
+    }
+  }
+
+  for(let i=mines.length-1;i>=0;i--){
+    const m = mines[i];
+    m.blinkPhase += dt*4;
+    if(m.armTimer > 0){ m.armTimer -= dt; continue; }
+    let triggered = false;
+    for(const z of zombies){
+      const dx = z.x-m.x, dy = z.y-m.y;
+      if(dx*dx+dy*dy <= (MINE_TRIGGER_RADIUS+z.radius)*(MINE_TRIGGER_RADIUS+z.radius)){
+        triggered = true;
+        break;
+      }
+    }
+    if(triggered){
+      explodeMine(m);
+      mines.splice(i,1);
     }
   }
 
@@ -1722,26 +1860,6 @@ function drawBullet(b){
   ctx.restore();
 }
 
-function drawMine(m){
-  ctx.save();
-  ctx.translate(m.x,m.y);
-  const glow = 0.55 + Math.sin(m.pulse*6)*0.35;
-  ctx.beginPath();
-  ctx.fillStyle = '#1a1a1a';
-  ctx.arc(0,0,m.radius,0,Math.PI*2);
-  ctx.fill();
-  ctx.lineWidth = 2.5;
-  ctx.strokeStyle = '#ff2e63';
-  ctx.stroke();
-  ctx.beginPath();
-  ctx.fillStyle = `rgba(255,46,99,${glow})`;
-  ctx.shadowColor = '#ff2e63';
-  ctx.shadowBlur = 10;
-  ctx.arc(0,0,3.5,0,Math.PI*2);
-  ctx.fill();
-  ctx.restore();
-}
-
 function drawParticles(){
   for(const p of particles){
     ctx.save();
@@ -1767,6 +1885,33 @@ function drawFloatTexts(){
   }
 }
 
+function drawMines(){
+  for(const m of mines){
+    ctx.save();
+    ctx.translate(m.x, m.y);
+    // faint blast-radius ring while armed, for a bit of readability
+    if(m.armTimer<=0){
+      ctx.strokeStyle = 'rgba(255,46,99,0.15)';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.arc(0,0,mineBlastRadius(),0,Math.PI*2); ctx.stroke();
+    }
+    ctx.fillStyle = 'rgba(0,0,0,0.4)';
+    ctx.beginPath(); ctx.ellipse(0,2,9,4,0,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#2a2a2e';
+    ctx.beginPath(); ctx.arc(0,0,7,0,Math.PI*2); ctx.fill();
+    ctx.strokeStyle = '#111'; ctx.lineWidth = 1.4;
+    for(let s=0;s<6;s++){
+      const a = s*(Math.PI/3);
+      ctx.beginPath(); ctx.moveTo(Math.cos(a)*4,Math.sin(a)*4); ctx.lineTo(Math.cos(a)*8,Math.sin(a)*8); ctx.stroke();
+    }
+    const blink = 0.5+0.5*Math.sin(m.blinkPhase);
+    ctx.fillStyle = m.armTimer>0 ? `rgba(255,230,0,${0.4+0.4*blink})` : `rgba(255,46,99,${0.5+0.5*blink})`;
+    ctx.shadowColor = ctx.fillStyle; ctx.shadowBlur = 6;
+    ctx.beginPath(); ctx.arc(0,0,2.4,0,Math.PI*2); ctx.fill();
+    ctx.restore();
+  }
+}
+
 function draw(){
   ctx.clearRect(0,0,W,H);
   ctx.save();
@@ -1774,8 +1919,8 @@ function draw(){
   drawWorldBackground();
   drawRoads();
   drawObstacles();
+  drawMines();
   drawParticles();
-  for(const m of mines) drawMine(m);
   for(const b of bullets) drawBullet(b);
   for(const z of zombies) drawZombie(z);
   drawPlayer();
@@ -1807,10 +1952,11 @@ function endGame(){
     bestScore = score;
     localStorage.setItem(LS_BEST, String(bestScore));
   }
-  document.getElementById('finalWave').textContent = totalKills;
   document.getElementById('finalScore').textContent = score;
-  document.getElementById('finalBest').textContent = bestScore;
   openOverlay('overlay-gameover');
+
+  // Show this game's leaderboard (global by default, group on tab switch).
+  setupLbTabs(document.getElementById('lbTabsGo'), document.getElementById('goLeaderboard'));
 
   // Submit the score automatically now that the run has ended.
   scoreSubmitted = false; // new run — allow exactly one submission once it ends
@@ -1834,44 +1980,7 @@ function refreshShopUI(){
   document.getElementById('btn-buy-damage').disabled = coins < dmgCost();
   document.getElementById('btn-buy-rate').disabled = coins < rateCost();
   document.getElementById('mineLevelDisplay').textContent = mineCount;
-  document.getElementById('btn-buy-mine').disabled = coins < MINE_COST || mineCount >= MINE_MAX;
-}
-
-// Mina qo'yish tugmasi: minalar qolmasa avtomatik yashiriladi
-function updateMineButton(){
-  const btn = document.getElementById('btn-mine');
-  if(!btn) return;
-  document.getElementById('mineCountNum').textContent = mineCount;
-  btn.classList.toggle('hidden', mineCount <= 0);
-}
-
-function placeMine(){
-  if(gameState !== 'playing' || mineCount <= 0) return;
-  mineCount--;
-  mines.push({ x: player.x, y: player.y, radius: 12, pulse: 0 });
-  updateMineButton();
-  updateHUD();
-}
-
-// Mina portlaganda, portlash radiusi ichidagi har bir zombiga oddiy o'qdan
-// 5 marta tekkandek zarar yetadi. Portlash radiusi drabashkning otish
-// masofasiga teng.
-function explodeMine(mine, idx){
-  const radius = mineExplosionRadius();
-  const dmg = ordinaryBulletDamage() * 5;
-  for(let j=zombies.length-1;j>=0;j--){
-    const z = zombies[j];
-    const dx = z.x-mine.x, dy = z.y-mine.y;
-    if(dx*dx+dy*dy <= radius*radius){
-      z.hp -= dmg;
-      z.hitFlash = 0.15;
-      if(z.hp<=0) killZombie(z,j);
-    }
-  }
-  addParticles(mine.x, mine.y, '#ff8a2b', 30);
-  addParticles(mine.x, mine.y, '#ffe600', 16);
-  beep(150, 0.3, 'sawtooth', 0.22);
-  mines.splice(idx,1);
+  document.getElementById('btn-buy-mine').disabled = coins < MINE_PRICE;
 }
 
 document.getElementById('btn-buy-damage').addEventListener('click', ()=>{
@@ -1895,19 +2004,14 @@ document.getElementById('btn-buy-rate').addEventListener('click', ()=>{
   }
 });
 document.getElementById('btn-buy-mine').addEventListener('click', ()=>{
-  if(mineCount >= MINE_MAX) return;
-  if(coins >= MINE_COST){
-    coins -= MINE_COST;
+  if(coins >= MINE_PRICE){
+    coins -= MINE_PRICE;
     mineCount++;
+    updateMineButton();
     sndCoin();
     refreshShopUI();
     updateHUD();
-    updateMineButton();
   }
-});
-document.getElementById('btn-mine').addEventListener('click', (e)=>{
-  e.preventDefault();
-  placeMine();
 });
 
 document.getElementById('btn-start').addEventListener('click', ()=>{
@@ -1917,11 +2021,12 @@ document.getElementById('btn-start').addEventListener('click', ()=>{
   showScreen('screen-game');
   playBgMusicIfAny();
 });
-document.getElementById('btn-highscore').addEventListener('click', ()=>{
-  document.getElementById('bestScoreDisplay').textContent = bestScore;
-  openOverlay('overlay-highscore');
-});
 document.getElementById('btn-howto').addEventListener('click', ()=> openOverlay('overlay-howto'));
+document.getElementById('btn-leaderboard').addEventListener('click', ()=>{
+  showScreen('screen-leaderboard');
+  setupLbTabs(document.getElementById('lbTabsMain'), document.getElementById('lbListMain'));
+});
+document.getElementById('btn-leaderboard-back').addEventListener('click', ()=> showScreen('screen-menu'));
 document.getElementById('btn-settings').addEventListener('click', ()=>{
   document.getElementById('btn-toggle-sound').textContent = soundEnabled ? 'YOQILGAN' : "O'CHIRILGAN";
   openOverlay('overlay-settings');
@@ -2016,6 +2121,10 @@ shootBtn.addEventListener('touchcancel', shootPressEnd, {passive:false});
 
 const weaponBtn = document.getElementById('btn-weapon');
 weaponBtn.addEventListener('click', (e)=>{ e.preventDefault(); switchWeapon(); });
+
+const mineBtn = document.getElementById('btn-mine');
+mineBtn.addEventListener('click', (e)=>{ e.preventDefault(); placeMine(); });
+mineBtn.addEventListener('touchstart', (e)=>{ e.preventDefault(); placeMine(); }, {passive:false});
 
 const joyZone = document.getElementById('joystick-zone');
 const joyBase = document.getElementById('joystick-base');
@@ -2175,7 +2284,7 @@ function buildAdminUI(user, isOwner){
                    style="width:100%; margin-top:5px; padding:8px 10px; border-radius:8px; border:1px solid var(--neon-blue); background:rgba(0,0,0,0.4); color:#eafff6; font-size:14px;">
           </label>
         </div>
-        <div class="admin-note">Zombilar tezligi endi alohida sozlanmaydi — u avtomatik ravishda o'yinchi tezligidan 3% kam bo'ladi. O'zgarishlar keyingi yangi o'yin boshlanganda kuchga kiradi.</div>
+        <div class="admin-note">Zombilar tezligi har doim o'yinchi tezligidan 3% kam bo'ladi. O'zgarishlar keyingi yangi o'yin boshlanganda kuchga kiradi.</div>
       </div>
 
       ${isOwner ? `
@@ -2368,9 +2477,8 @@ function buildAdminUI(user, isOwner){
 
 (function bootstrap(){
   player = { x:0,y:0, radius:20, speed:230, hp:100, maxHp:100, angle:0, hitFlash:0 };
-  bullets=[]; zombies=[]; particles=[]; floatTexts=[]; mines=[]; mineCount=0;
+  bullets=[]; zombies=[]; particles=[]; floatTexts=[];
   score=0; coins=0; ammo=ammoMax;
-  updateMineButton();
 })();
 checkTelegramAuth();
 </script>
